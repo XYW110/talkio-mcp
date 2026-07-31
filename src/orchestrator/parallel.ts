@@ -12,6 +12,7 @@ import type {
   ChatResult,
 } from "../providers/adapter.js";
 import { getAdapter } from "../providers/registry.js";
+import { resolveProviderCredentials } from "../config.js";
 
 /** Per-expert outcome of a single-round consultation. */
 export interface ConsultationItem {
@@ -49,8 +50,10 @@ export function buildExpertMessages(
 
 /**
  * Resolve a provider adapter + credentials for an expert from AppConfig.
- * Returns null when the referenced provider is not configured, in which case
- * the caller surfaces a clear error rather than crashing.
+ * Credentials are resolved lazily from environment variables via
+ * resolveProviderCredentials (design §7). Returns null when the referenced
+ * provider is not configured, in which case the caller surfaces a clear
+ * error rather than crashing.
  */
 function resolveProvider(expert: ExpertConfig, config: AppConfig) {
   const providerConfig = config.providers[expert.provider];
@@ -59,10 +62,7 @@ function resolveProvider(expert: ExpertConfig, config: AppConfig) {
   }
   return {
     adapter: getAdapter(providerConfig.type),
-    creds: {
-      apiKey: providerConfig.apiKey ?? "",
-      baseUrl: providerConfig.baseUrl,
-    },
+    creds: resolveProviderCredentials(config, expert.provider),
   };
 }
 
@@ -148,7 +148,10 @@ export async function runConsultation(
       if (s.status === "fulfilled") return s.value;
       const err =
         s.reason instanceof Error ? s.reason.message : String(s.reason);
-      return { expert: experts[i], ok: false, error: err };
+      const expert = experts[i];
+      if (!expert)
+        throw new Error("unreachable: allSettled index always aligns");
+      return { expert, ok: false as const, error: err };
     });
   }
 

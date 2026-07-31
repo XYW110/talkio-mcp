@@ -34,7 +34,7 @@ function makeChatParams(overrides: Partial<ChatParams> = {}): ChatParams {
 function makeResponse(
   status: number,
   body: unknown,
-  headers: Record<string, string> = { "content-type": "application/json" },
+  headers: Record<string, string> = { "content-type": "application/json" }
 ): Response {
   return new Response(typeof body === "string" ? body : JSON.stringify(body), {
     status,
@@ -60,7 +60,11 @@ describe("fetchWithRetry 重试策略", () => {
       .mockResolvedValueOnce(makeResponse(429, { error: "rate limited" }))
       .mockResolvedValueOnce(makeResponse(200, { ok: true }));
 
-    const res = await fetchWithRetry("https://api.example.com/x", {}, { timeoutMs: 5000, retries: 3 });
+    const res = await fetchWithRetry(
+      "https://api.example.com/x",
+      {},
+      { timeoutMs: 5000, maxAttempts: 3 }
+    );
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(res.status).toBe(200);
@@ -71,7 +75,11 @@ describe("fetchWithRetry 重试策略", () => {
       .mockResolvedValueOnce(makeResponse(502, "bad gateway"))
       .mockResolvedValueOnce(makeResponse(200, { ok: true }));
 
-    const res = await fetchWithRetry("https://api.example.com/x", {}, { timeoutMs: 5000, retries: 3 });
+    const res = await fetchWithRetry(
+      "https://api.example.com/x",
+      {},
+      { timeoutMs: 5000, maxAttempts: 3 }
+    );
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(res.status).toBe(200);
@@ -81,32 +89,50 @@ describe("fetchWithRetry 重试策略", () => {
     fetchMock.mockResolvedValue(makeResponse(401, { error: "unauthorized" }));
 
     await expect(
-      fetchWithRetry("https://api.example.com/x", {}, { timeoutMs: 5000, retries: 3 }),
+      fetchWithRetry(
+        "https://api.example.com/x",
+        {},
+        { timeoutMs: 5000, maxAttempts: 3 }
+      )
     ).rejects.toThrow();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("400 / 403 → 不重试，直接抛错", async () => {
-    fetchMock.mockResolvedValueOnce(makeResponse(400, { error: "bad request" }));
+    fetchMock.mockResolvedValueOnce(
+      makeResponse(400, { error: "bad request" })
+    );
     await expect(
-      fetchWithRetry("https://api.example.com/x", {}, { timeoutMs: 5000, retries: 3 }),
+      fetchWithRetry(
+        "https://api.example.com/x",
+        {},
+        { timeoutMs: 5000, maxAttempts: 3 }
+      )
     ).rejects.toThrow();
 
     fetchMock.mockResolvedValueOnce(makeResponse(403, { error: "forbidden" }));
     await expect(
-      fetchWithRetry("https://api.example.com/x", {}, { timeoutMs: 5000, retries: 3 }),
+      fetchWithRetry(
+        "https://api.example.com/x",
+        {},
+        { timeoutMs: 5000, maxAttempts: 3 }
+      )
     ).rejects.toThrow();
 
     expect(fetchMock).toHaveBeenCalledTimes(2); // 各 1 次，无重试
   });
 
-  it("429 连续超过重试上限后抛错（调用次数 = 1 + retries）", async () => {
+  it("429 连续超过重试上限后抛错（调用次数 = maxAttempts）", async () => {
     fetchMock.mockResolvedValue(makeResponse(429, { error: "rate limited" }));
 
     await expect(
-      fetchWithRetry("https://api.example.com/x", {}, { timeoutMs: 5000, retries: 3 }),
+      fetchWithRetry(
+        "https://api.example.com/x",
+        {},
+        { timeoutMs: 5000, maxAttempts: 4 }
+      )
     ).rejects.toThrow();
-    // 首次 + 3 次重试 = 4 次
+    // maxAttempts = 4 → 1 次首次 + 3 次重试 = 4 次
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
@@ -115,7 +141,11 @@ describe("fetchWithRetry 重试策略", () => {
       .mockRejectedValueOnce(new TypeError("fetch failed"))
       .mockResolvedValueOnce(makeResponse(200, { ok: true }));
 
-    const res = await fetchWithRetry("https://api.example.com/x", {}, { timeoutMs: 5000, retries: 3 });
+    const res = await fetchWithRetry(
+      "https://api.example.com/x",
+      {},
+      { timeoutMs: 5000, maxAttempts: 3 }
+    );
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(res.status).toBe(200);
@@ -127,13 +157,19 @@ describe("fetchWithRetry 重试策略", () => {
       (_url: string, init?: RequestInit) =>
         new Promise<Response>((_resolve, reject) => {
           init?.signal?.addEventListener("abort", () => {
-            reject(new DOMException("The operation was aborted.", "AbortError"));
+            reject(
+              new DOMException("The operation was aborted.", "AbortError")
+            );
           });
-        }),
+        })
     );
 
     await expect(
-      fetchWithRetry("https://api.example.com/slow", {}, { timeoutMs: 50, retries: 0 }),
+      fetchWithRetry(
+        "https://api.example.com/slow",
+        {},
+        { timeoutMs: 50, maxAttempts: 1 }
+      )
     ).rejects.toThrow(TimeoutError);
   });
 
@@ -143,11 +179,13 @@ describe("fetchWithRetry 重试策略", () => {
     const err = await fetchWithRetry(
       "https://api.example.com/x",
       { headers: { Authorization: "Bearer sk-secret-should-not-leak" } },
-      { timeoutMs: 5000, retries: 0 },
+      { timeoutMs: 5000, maxAttempts: 1 }
     ).catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(Error);
-    expect(String((err as Error).message)).not.toContain("sk-secret-should-not-leak");
+    expect(String((err as Error).message)).not.toContain(
+      "sk-secret-should-not-leak"
+    );
   });
 });
 
@@ -163,18 +201,21 @@ describe("openai-compatible adapter", () => {
     vi.unstubAllGlobals();
   });
 
-  it.each(["openai", "openai-compatible"])("getAdapter(%s) 返回带 chat 方法的 adapter", (type) => {
-    const adapter = getAdapter(type);
-    expect(adapter).toBeDefined();
-    expect(typeof adapter.chat).toBe("function");
-  });
+  it.each(["openai", "openai-compatible"])(
+    "getAdapter(%s) 返回带 chat 方法的 adapter",
+    (type) => {
+      const adapter = getAdapter(type);
+      expect(adapter).toBeDefined();
+      expect(typeof adapter.chat).toBe("function");
+    }
+  );
 
   it("请求：POST {baseUrl}/chat/completions，带 Bearer 头与正确请求体", async () => {
     fetchMock.mockResolvedValue(
       makeResponse(200, {
         choices: [{ message: { role: "assistant", content: "回答内容" } }],
         usage: { prompt_tokens: 10, completion_tokens: 20 },
-      }),
+      })
     );
 
     const adapter = getAdapter("openai-compatible");
@@ -203,7 +244,7 @@ describe("openai-compatible adapter", () => {
       makeResponse(200, {
         choices: [{ message: { role: "assistant", content: "专家回答" } }],
         usage: { prompt_tokens: 11, completion_tokens: 22 },
-      }),
+      })
     );
 
     const adapter = getAdapter("openai");
@@ -227,14 +268,17 @@ describe("anthropic adapter", () => {
     vi.unstubAllGlobals();
   });
 
-  const anthropicCreds = { apiKey: "sk-ant-test", baseUrl: "https://api.anthropic.com" };
+  const anthropicCreds = {
+    apiKey: "sk-ant-test",
+    baseUrl: "https://api.anthropic.com",
+  };
 
   function mockAnthropicOk(): void {
     fetchMock.mockResolvedValue(
       makeResponse(200, {
         content: [{ type: "text", text: "Claude 回答" }],
         usage: { input_tokens: 7, output_tokens: 13 },
-      }),
+      })
     );
   }
 
@@ -290,7 +334,9 @@ describe("registry 边界行为", () => {
     try {
       // mock 开关在模块加载时读取，需重新 import registry 才能生效
       vi.resetModules();
-      const { getAdapter: freshGetAdapter } = await import("../src/providers/registry.js");
+      const { getAdapter: freshGetAdapter } = await import(
+        "../src/providers/registry.js"
+      );
       const adapter = freshGetAdapter("openai");
 
       const result = await adapter.chat(makeChatParams(), CREDS);

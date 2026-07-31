@@ -1,16 +1,17 @@
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadConfig } from "../src/config.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { loadConfig, resolveProviderCredentials } from "../src/config.js";
 
 /**
  * config.ts 契约（见 design.md §4 与任务书）：
- *   loadConfig(configPath?: string): AppConfig
+ *   loadConfig(configPath?: string): Promise<AppConfig>
  *   - 读取 experts.json，zod 校验
  *   - defaults 合并进每个 expert（expert 级字段覆盖 defaults）
- *   - providers[name].apiKeyEnv 指定环境变量名，key 从 process.env 解析
- *   - 缺必填字段 / 引用不存在的 provider → 抛错（fail fast）
+ *   - providers[name].apiKeyEnv 指定环境变量名，key 从 process.env 惰性解析
+ *   - 校验失败 → 打印错误 + process.exit(1)（fail fast，测试中 mock 掉 exit）
+ *   - apiKey 不在 AppConfig.providers 上暴露；由 resolveProviderCredentials 惰性解析
  */
 
 /** 构造一份合法的 experts.json fixture（基于 design.md §4 模板精简） */
@@ -65,6 +66,11 @@ describe("loadConfig", () => {
   const touchedEnvKeys = new Set<string>();
   const originalEnv = { ...process.env };
 
+  // loadConfig 校验失败时 process.exit(1)；测试中 mock 掉以避免杀死 vitest 进程
+  const exitMock = vi.spyOn(process, "exit").mockImplementation((code) => {
+    throw new Error(`process.exit(${code})`);
+  });
+
   function setEnv(key: string, value: string | undefined): void {
     touchedEnvKeys.add(key);
     if (value === undefined) {
@@ -101,16 +107,15 @@ describe("loadConfig", () => {
   });
 
   describe("合法配置", () => {
-    it("加载合法 experts.json 成功并返回 experts/providers/defaults", () => {
-      const config = loadConfig(writeFixture(makeValidExpertsJson()));
+    it("加载合法 experts.json 成功并返回 experts/providers", async () => {
+      const config = await loadConfig(writeFixture(makeValidExpertsJson()));
 
       expect(config.experts).toHaveLength(2);
       expect(config.providers).toHaveProperty("openai");
       expect(config.providers).toHaveProperty("anthropic");
-      expect(config.defaults).toBeDefined();
     });
 
-    it("defaults 合并：expert 未指定的字段继承 defaults", () => {
+    it("defaults 合并：expert 未指定的字段继承 defaults", async () => {
       const fixture = makeValidExpertsJson({
         experts: [
           {
@@ -123,7 +128,7 @@ describe("loadConfig", () => {
           },
         ],
       });
-      const config = loadConfig(writeFixture(fixture));
+      const config = await loadConfig(writeFixture(fixture));
       const expert = config.experts.find((e) => e.id === "minimal");
 
       expect(expert).toBeDefined();
@@ -134,8 +139,8 @@ describe("loadConfig", () => {
       expect(expert!.timeoutMs).toBe(120000);
     });
 
-    it("defaults 合并：expert 级字段覆盖 defaults", () => {
-      const config = loadConfig(writeFixture(makeValidExpertsJson()));
+    it("defaults 合并：expert 级字段覆盖 defaults", async () => {
+      const config = await loadConfig(writeFixture(makeValidExpertsJson()));
       const architect = config.experts.find((e) => e.id === "architect");
 
       // fixture 中 architect 显式指定了 provider/model
@@ -147,7 +152,7 @@ describe("loadConfig", () => {
   });
 
   describe("校验失败（fail fast）", () => {
-    it("expert 缺必填字段（如 systemPrompt）时抛错", () => {
+    it("expert 缺必填字段（如 systemPrompt）时抛错", async () => {
       const fixture = makeValidExpertsJson({
         experts: [
           {
@@ -160,10 +165,10 @@ describe("loadConfig", () => {
           },
         ],
       });
-      expect(() => loadConfig(writeFixture(fixture))).toThrow();
+      await expect(loadConfig(writeFixture(fixture))).rejects.toThrow();
     });
 
-    it("expert 引用不存在的 provider 时抛错", () => {
+    it("expert 引用不存在的 provider 时抛错", async () => {
       const fixture = makeValidExpertsJson({
         experts: [
           {
@@ -176,55 +181,60 @@ describe("loadConfig", () => {
           },
         ],
       });
-      expect(() => loadConfig(writeFixture(fixture))).toThrow(/provider/i);
+      // loadConfig 校验失败时调 process.exit(1)（已被 mock 为 throw）
+      await expect(loadConfig(writeFixture(fixture))).rejects.toThrow(
+        "process.exit(1)"
+      );
     });
 
-    it("experts 数组为空时抛错", () => {
+    it("experts 数组为空时抛错", async () => {
       const fixture = makeValidExpertsJson({ experts: [] });
-      expect(() => loadConfig(writeFixture(fixture))).toThrow();
+      await expect(loadConfig(writeFixture(fixture))).rejects.toThrow();
     });
 
-    it("JSON 语法损坏时抛错", () => {
-      expect(() => loadConfig(writeFixture("{ not valid json !!!"))).toThrow();
+    it("JSON 语法损坏时抛错", async () => {
+      await expect(
+        loadConfig(writeFixture("{ not valid json !!!"))
+      ).rejects.toThrow();
     });
 
-    it("配置文件不存在时抛错", () => {
+    it("配置文件不存在时抛错", async () => {
       const missing = join(workDir, "does-not-exist.json");
-      expect(() => loadConfig(missing)).toThrow();
+      await expect(loadConfig(missing)).rejects.toThrow();
     });
   });
 
   describe("apiKeyEnv 环境变量解析", () => {
-    it("provider 的 apiKey 从 apiKeyEnv 指定的环境变量解析", () => {
+    it("provider 的 apiKey 从 apiKeyEnv 指定的环境变量惰性解析", async () => {
       setEnv("OPENAI_API_KEY", "sk-resolved-key-12345");
-      const config = loadConfig(writeFixture(makeValidExpertsJson()));
+      const config = await loadConfig(writeFixture(makeValidExpertsJson()));
 
-      // 契约：AppConfig 中 provider 解析后应能拿到 key。
-      // 假设 AppConfig.providers[name] 上暴露解析后的 apiKey 字段
-      // （若实现改为惰性解析，本断言需调整为触发 adapter 调用后检查）。
-      const openai = config.providers.openai as Record<string, unknown>;
-      expect(openai.apiKey).toBe("sk-resolved-key-12345");
+      // 契约：apiKey 不在 loadConfig 返回的 AppConfig 上暴露；
+      // 通过 resolveProviderCredentials(config, providerName) 惰性解析 apiKeyEnv → process.env
+      const creds = resolveProviderCredentials(config, "openai");
+      expect(creds.apiKey).toBe("sk-resolved-key-12345");
     });
 
-    it("修改环境变量后重新 loadConfig 解析到新值", () => {
+    it("修改环境变量后重新解析得到新值", async () => {
       setEnv("OPENAI_API_KEY", "sk-first");
-      const first = loadConfig(writeFixture(makeValidExpertsJson()));
+      const config = await loadConfig(writeFixture(makeValidExpertsJson()));
+
+      expect(resolveProviderCredentials(config, "openai").apiKey).toBe(
+        "sk-first"
+      );
 
       setEnv("OPENAI_API_KEY", "sk-second");
-      const second = loadConfig(writeFixture(makeValidExpertsJson()));
-
-      expect((first.providers.openai as Record<string, unknown>).apiKey).toBe("sk-first");
-      expect((second.providers.openai as Record<string, unknown>).apiKey).toBe("sk-second");
+      expect(resolveProviderCredentials(config, "openai").apiKey).toBe(
+        "sk-second"
+      );
     });
 
-    it("apiKeyEnv 对应的环境变量缺失时不把 undefined 当作合法 key", () => {
+    it("apiKeyEnv 对应的环境变量缺失时 resolveProviderCredentials 抛错", async () => {
       setEnv("OPENAI_API_KEY", undefined);
-      const config = loadConfig(writeFixture(makeValidExpertsJson()));
-      const openai = config.providers.openai as Record<string, unknown>;
+      const config = await loadConfig(writeFixture(makeValidExpertsJson()));
 
-      // 契约（design.md §7）：缺 key 惰性失败（调用时 expert 报错），
-      // 启动只 warn 不 fail —— 因此 loadConfig 不应抛错，但 apiKey 不应是有效字符串
-      expect(openai.apiKey == null || openai.apiKey === "").toBe(true);
+      // 契约（design.md §7）：惰性解析缺失 key 时 throw（调用时 expert 报错）
+      expect(() => resolveProviderCredentials(config, "openai")).toThrow();
     });
   });
 });
