@@ -1,0 +1,9 @@
+services:
+  talkio-mcp:
+    build: .
+    ports:
+      - "3100:3100"
+    env_file: .env
+    volumes:
+      - ./experts.json:/app/experts.json:ro
+    restart: unless-stopped
