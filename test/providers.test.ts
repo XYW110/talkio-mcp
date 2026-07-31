@@ -134,7 +134,7 @@ describe("fetchWithRetry 重试策略", () => {
     ).rejects.toThrow();
     // maxAttempts = 4 → 1 次首次 + 3 次重试 = 4 次
     expect(fetchMock).toHaveBeenCalledTimes(4);
-  });
+  }, 15000); // 退避延迟 1+2+4=7s，给 15s 余量
 
   it("网络错误（TypeError）会重试", async () => {
     fetchMock
