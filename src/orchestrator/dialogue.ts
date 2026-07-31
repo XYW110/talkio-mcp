@@ -13,8 +13,13 @@
  * transcript block is capped at ~12k chars (ol turns dropped first).
  */
 import type { AppConfig, ExpertConfig } from "../types.js";
-import type { ChatMessage, ChatParams, ChatResult } from "../providers/adapter.js";
-import { getAdapter } from "../providers/registry.js";
+import type {
+  ChatMessage,
+  ChatParams,
+  ChatResult,
+} from "../providers/adapter.js";
+import { getAdapter, isMockProviderEnabled } from "../providers/registry.js";
+import { resolveProviderCredentials } from "../config.js";
 
 /** A single turn in the dialogue transcript. */
 export interface DialogueTurn {
@@ -70,9 +75,16 @@ const TRANSCRIPT_BUDGET_CHARS = 12000;
 function resolveProvider(expert: ExpertConfig, config: AppConfig) {
   const providerConfig = config.providers[expert.provider];
   if (!providerConfig) return null;
+  // When mock provider is enabled, skip credential resolution (no API key needed).
+  if (isMockProviderEnabled()) {
+    return {
+      adapter: getAdapter(providerConfig.type),
+      creds: { apiKey: "mock", baseUrl: providerConfig.baseUrl },
+    };
+  }
   return {
     adapter: getAdapter(providerConfig.type),
-    creds: { apiKey: providerConfig.apiKey ?? "", baseUrl: providerConfig.baseUrl },
+    creds: resolveProviderCredentials(config, expert.provider),
   };
 }
 
@@ -93,7 +105,9 @@ export function formatTranscriptForPrompt(turns: DialogueTurn[]): string {
       text = "…" + text.slice(-PER_TURN_TRUNCATE_CHARS);
       truncated = true;
     }
-    lines.push(`【${turn.icon} ${turn.expertName}】(第${turn.round}轮): ${text}`);
+    lines.push(
+      `【${turn.icon} ${turn.expertName}】(第${turn.round}轮): ${text}`
+    );
   }
   let block = lines.join("\n\n");
   if (block.length > TRANSCRIPT_BUDGET_CHARS) {
@@ -114,7 +128,7 @@ export function formatTranscriptForPrompt(turns: DialogueTurn[]): string {
 async function askExpert(
   expert: ExpertConfig,
   userContent: string,
-  config: AppConfig,
+  config: AppConfig
 ): Promise<string> {
   const resolved = resolveProvider(expert, config);
   if (!resolved) {
@@ -150,7 +164,7 @@ async function askExpert(
  */
 export async function runDialogue(
   opts: DialogueOptions,
-  config: AppConfig,
+  config: AppConfig
 ): Promise<DialogueResult> {
   const rounds = Math.max(1, Math.min(5, Math.trunc(opts.rounds)));
   const experts = opts.experts;
@@ -165,11 +179,12 @@ export async function runDialogue(
       // Seed round: every expert answers the topic fresh (parallel).
       const results = await Promise.allSettled(
         experts.map((expert) =>
-          askExpert(expert, `${opts.topic}\n\n${SEED_INSTRUCTION}`, config),
-        ),
+          askExpert(expert, `${opts.topic}\n\n${SEED_INSTRUCTION}`, config)
+        )
       );
       results.forEach((res, i) => {
         const expert = experts[i];
+        if (!expert) return;
         if (res.status === "fulfilled") {
           turns.push({
             round,
@@ -179,7 +194,10 @@ export async function runDialogue(
             content: res.value,
           });
         } else {
-          const msg = res.reason instanceof Error ? res.reason.message : String(res.reason);
+          const msg =
+            res.reason instanceof Error
+              ? res.reason.message
+              : String(res.reason);
           turns.push({
             round,
             expertId: expert.id,
@@ -198,10 +216,11 @@ export async function runDialogue(
       const transcript = formatTranscriptForPrompt(prevRoundTurns);
       const userContent = `${opts.topic}\n\n${DEBATE_INSTRUCTION}\n\n上一轮发言:\n${transcript}`;
       const results = await Promise.allSettled(
-        experts.map((expert) => askExpert(expert, userContent, config)),
+        experts.map((expert) => askExpert(expert, userContent, config))
       );
       results.forEach((res, i) => {
         const expert = experts[i];
+        if (!expert) return;
         if (res.status === "fulfilled") {
           turns.push({
             round,
@@ -211,7 +230,10 @@ export async function runDialogue(
             content: res.value,
           });
         } else {
-          const msg = res.reason instanceof Error ? res.reason.message : String(res.reason);
+          const msg =
+            res.reason instanceof Error
+              ? res.reason.message
+              : String(res.reason);
           turns.push({
             round,
             expertId: expert.id,
@@ -256,30 +278,35 @@ export async function runDialogue(
   let summary: string | undefined;
   if (opts.summarize && experts.length > 0 && turns.length > 0) {
     const summarizer = experts[0];
-    const fullTranscript = formatTranscriptForPrompt(turns);
-    const userContent = `${SUMMARIZER_SYSTEM}\n\n讨论主题: ${opts.topic}\n\n讨论实录:\n${fullTranscript}`;
-    try {
-      // Override the system prompt for the summary call so the persona is neutral.
-      const resolved = resolveProvider(summarizer, config);
-      if (resolved) {
-        const { adapter, creds } = resolved;
-        const params: ChatParams = {
-          model: summarizer.model,
-          messages: [
-            { role: "system", content: SUMMARIZER_SYSTEM },
-            { role: "user", content: `讨论主题: ${opts.topic}\n\n讨论实录:\n${fullTranscript}` },
-          ],
-          temperature: summarizer.temperature,
-          maxTokens: summarizer.maxTokens,
-          timeoutMs: summarizer.timeoutMs,
-        };
-        const result = await adapter.chat(params, creds);
-        if (result && typeof result.content === "string") {
-          summary = result.content;
+    if (summarizer) {
+      const fullTranscript = formatTranscriptForPrompt(turns);
+      const userContent = `${SUMMARIZER_SYSTEM}\n\n讨论主题: ${opts.topic}\n\n讨论实录:\n${fullTranscript}`;
+      try {
+        // Override the system prompt for the summary call so the persona is neutral.
+        const resolved = resolveProvider(summarizer, config);
+        if (resolved) {
+          const { adapter, creds } = resolved;
+          const params: ChatParams = {
+            model: summarizer.model,
+            messages: [
+              { role: "system", content: SUMMARIZER_SYSTEM },
+              {
+                role: "user",
+                content: `讨论主题: ${opts.topic}\n\n讨论实录:\n${fullTranscript}`,
+              },
+            ],
+            temperature: summarizer.temperature,
+            maxTokens: summarizer.maxTokens,
+            timeoutMs: summarizer.timeoutMs,
+          };
+          const result = await adapter.chat(params, creds);
+          if (result && typeof result.content === "string") {
+            summary = result.content;
+          }
         }
+      } catch {
+        // Summary is best-effort; leave undefined on failure.
       }
-    } catch {
-      // Summary is best-effort; leave undefined on failure.
     }
   }
 

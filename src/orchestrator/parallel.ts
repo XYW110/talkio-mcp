@@ -11,7 +11,8 @@ import type {
   ChatParams,
   ChatResult,
 } from "../providers/adapter.js";
-import { getAdapter } from "../providers/registry.js";
+import { getAdapter, isMockProviderEnabled } from "../providers/registry.js";
+import { resolveProviderCredentials } from "../config.js";
 
 /** Per-expert outcome of a single-round consultation. */
 export interface ConsultationItem {
@@ -57,12 +58,16 @@ function resolveProvider(expert: ExpertConfig, config: AppConfig) {
   if (!providerConfig) {
     return null;
   }
+  // When mock provider is enabled, skip credential resolution (no API key needed).
+  if (isMockProviderEnabled()) {
+    return {
+      adapter: getAdapter(providerConfig.type),
+      creds: { apiKey: "mock", baseUrl: providerConfig.baseUrl },
+    };
+  }
   return {
     adapter: getAdapter(providerConfig.type),
-    creds: {
-      apiKey: providerConfig.apiKey ?? "",
-      baseUrl: providerConfig.baseUrl,
-    },
+    creds: resolveProviderCredentials(config, expert.provider),
   };
 }
 
@@ -146,9 +151,10 @@ export async function runConsultation(
     // a programming error (e.g. thrown synchronously before try/catch).
     return settled.map((s, i) => {
       if (s.status === "fulfilled") return s.value;
+      const expert = experts[i]!;
       const err =
         s.reason instanceof Error ? s.reason.message : String(s.reason);
-      return { expert: experts[i], ok: false, error: err };
+      return { expert, ok: false, error: err };
     });
   }
 

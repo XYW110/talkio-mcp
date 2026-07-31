@@ -30,11 +30,14 @@ function parseArgs(argv: string[]): CliArgs {
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
+    if (a === undefined) continue;
     switch (a) {
       case "--transport": {
         const v = argv[++i];
         if (v !== "stdio" && v !== "sse") {
-          throw new Error(`--transport 仅支持 stdio 或 sse,收到: "${v}"`);
+          throw new Error(
+            `--transport 仅支持 stdio 或 sse,收到: "${v ?? "(missing)"}"`
+          );
         }
         args.transport = v;
         break;
@@ -42,18 +45,26 @@ function parseArgs(argv: string[]): CliArgs {
       case "--port": {
         const v = argv[++i];
         const n = Number(v);
-        if (!Number.isFinite(n) || n <= 0) {
-          throw new Error(`--port 需要正整数,收到: "${v}"`);
+        if (v === undefined || !Number.isFinite(n) || n <= 0) {
+          throw new Error(`--port 需要正整数,收到: "${v ?? "(missing)"}"`);
         }
         args.port = Math.trunc(n);
         break;
       }
       case "--host": {
-        args.host = argv[++i];
+        const v = argv[++i];
+        if (v === undefined) {
+          throw new Error("--host 需要一个地址参数");
+        }
+        args.host = v;
         break;
       }
       case "--config": {
-        args.config = argv[++i];
+        const v = argv[++i];
+        if (v === undefined) {
+          throw new Error("--config 需要一个文件路径参数");
+        }
+        args.config = v;
         break;
       }
       case "--help":
@@ -68,13 +79,13 @@ function parseArgs(argv: string[]): CliArgs {
             "  --host <addr>           SSE 绑定地址 (默认 127.0.0.1)",
             "  --config <path>         专家配置文件路径",
             "",
-          ].join("\n") + "\n",
+          ].join("\n") + "\n"
         );
         process.exit(0);
         break;
       }
       default:
-        if (a.startsWith("--")) {
+        if (a !== undefined && a.startsWith("--")) {
           throw new Error(`未知参数: ${a}`);
         }
         // Ignore positional args.
@@ -103,13 +114,11 @@ let server: ReturnType<typeof createServer>;
 async function startSse(port: number, host: string): Promise<void> {
   // Security: warn when binding to a non-loopback address (no auth configured).
   const isLoopback =
-    host === "127.0.0.1" ||
-    host === "localhost" ||
-    host === "::1";
+    host === "127.0.0.1" || host === "localhost" || host === "::1";
   if (!isLoopback) {
     log(
       `⚠️ 安全警告: SSE 绑定到非回环地址 ${host}。当前未配置任何认证,` +
-        `任何能访问该地址的客户端都可调用本服务。请确保处于受控网络或增加鉴权层。`,
+        `任何能访问该地址的客户端都可调用本服务。请确保处于受控网络或增加鉴权层。`
     );
   }
 
@@ -130,7 +139,9 @@ async function startSse(port: number, host: string): Promise<void> {
         await server.connect(transport);
         log(`SSE 会话已建立: ${transport.sessionId}`);
       } catch (err) {
-        log(`建立 SSE 流失败: ${err instanceof Error ? err.message : String(err)}`);
+        log(
+          `建立 SSE 流失败: ${err instanceof Error ? err.message : String(err)}`
+        );
         if (!res.headersSent) {
           res.statusCode = 500;
           res.end("SSE stream error");
@@ -168,7 +179,11 @@ async function startSse(port: number, host: string): Promise<void> {
         }
         await transport.handlePostMessage(req, res, parsed);
       } catch (err) {
-        log(`处理 POST 消息失败: ${err instanceof Error ? err.message : String(err)}`);
+        log(
+          `处理 POST 消息失败: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
         if (!res.headersSent) {
           res.statusCode = 500;
           res.end("Error handling request");
@@ -187,7 +202,7 @@ async function startSse(port: number, host: string): Promise<void> {
   });
   log(
     `talkio-mcp-expert-council 已在 SSE 模式启动: http://${host}:${port} ` +
-      `(GET /sse 建立 SSE 流, POST /messages?sessionId=... 发送消息)`,
+      `(GET /sse 建立 SSE 流, POST /messages?sessionId=... 发送消息)`
   );
 
   // Graceful shutdown: close all SSE transports then the HTTP server.
@@ -212,7 +227,7 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
   // Load config (may throw with a clear message on invalid experts.json).
-  const config = loadConfig(args.config);
+  const config = await loadConfig(args.config);
   server = createServer(config);
 
   if (args.transport === "stdio") {
