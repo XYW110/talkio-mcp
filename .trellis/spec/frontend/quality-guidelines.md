@@ -1,51 +1,36 @@
-# Quality Guidelines
+# 质量与测试规范 (Quality & Testing Guidelines)
 
-> Code quality standards for frontend development.
+遵循 `claude-code-rules.md` 中的“危险红线”和开发约定，本项目对于代码质量、健壮性进行高度关注。
 
----
+## 错误处理与禁止空 catch (Error Handling)
 
-## Overview
+- **危险红线**：严禁出现空的 `catch (e) {}` 块。
+- **最佳实践**：如果发生错误，必须做出妥善处理：
+  1. 通过日志上报或控制台输出错误，且避免泄漏敏感用户内容。
+  2. 对于 UI 组件，可依托全局或特定作用域抛出 Toast 提示。
+  3. 如果是预期内的网络问题/超时，应妥善更新状态，让用户能够重试（例如将消息状态变更为 "failed"）。
+- **真实参考**：
+  无论是通过 `useDatabase.ts` 操作 SQLite 还是大模型推流服务，发生异常时，均应使用 `unknown` 定义 `e` 并安全打印或转换成自定义应用 Error。
 
-<!--
-Document your project's quality standards here.
+## 代码复用：三次规则 (The "Rule of Three")
 
-Questions to answer:
-- What patterns are forbidden?
-- What linting rules do you enforce?
-- What are your testing requirements?
-- What code review standards apply?
--->
+- 不要过早抽象：当一份代码逻辑仅重复出现两次时，可以接受其重复以维持直观性；
+- 当相似逻辑出现**三次**及以上时，团队要求**强制抽象提取**（可以抽离为共享 UI 组件、Hooks 或 lib 的辅助函数）。
 
-(To be filled by the team)
+## 提交日志 (Conventional Commits)
 
----
+所有的代码修改必须符合中文化规范的 Git Commit 信息（由于是团队前端子任务，通常由 Lead 统一管理）。
+- **格式**：`type(scope): 简要中文标题`
+- **正文**：2-3段中文解释变更原因、解决的问题与产生价值。
+- **结尾**：携带 `相关文件：` 段落（2-5个相对项目根目录的路径说明）。
 
-## Forbidden Patterns
+## 测试规范 (Testing Strategy)
 
-<!-- Patterns that should never be used and why -->
+- **现状说明**：当前通过探测发现，在 `temp/` 根目录或 `src/` 中暂未部署大范围的自动化测试（如 `vitest`, `jest` 等均未发现），这通常表明当前处于快速迭代的主 UI 建设期。
+- **规范指导 (⚠️ 预防性指南)**：
+  - 若后续引入单元测试，纯粹的领域层函数（在 `lib/utils.ts` 中）和核心状态机必须保证 100% 测试覆盖。
+  - 对于 UI 视觉部分，可依托开发环境直接观察与人工介入验收。
 
-(To be filled by the team)
+## TypeScript 与编译器质量阀 (Compiler as Quality Gate)
 
----
-
-## Required Patterns
-
-<!-- Patterns that must always be used -->
-
-(To be filled by the team)
-
----
-
-## Testing Requirements
-
-<!-- What level of testing is expected -->
-
-(To be filled by the team)
-
----
-
-## Code Review Checklist
-
-<!-- What reviewers should check -->
-
-(To be filled by the team)
+代码必须通过严苛的 TypeScript 检查（`tsc --noEmit`），作为提交至代码库的最低底线，不可跳过或临时忽略（如不合理的 `// @ts-ignore`）。
