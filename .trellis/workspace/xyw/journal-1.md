@@ -30,3 +30,26 @@ Resolved vitest and typecheck errors, merged all teammate branches (tests-docs-d
 ### Status
 
 [OK] **Completed**
+
+
+## Session 2: Populate backend and frontend Trellis spec guidelines
+
+**Date**: 2026-08-01
+**Task**: Populate backend and frontend Trellis spec guidelines
+**Branch**: `master`
+
+### Summary
+
+Completed the 00-bootstrap-guidelines task by filling 12 backend and frontend spec files with accurate codebase examples (using src/ and temp/ respectively). Setup Trellis conventions for future AI assistance. Merged teammate branches and archived the bootstrap task.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9cbe5fc` | (see git log) |
+| `1f88087` | (see git log) |
+| `93251e3` | (see git log) |
+
+### Status
+
+[OK] **Completed**
