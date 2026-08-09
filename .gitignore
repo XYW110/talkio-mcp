@@ -4,3 +4,5 @@ dist/
 experts.local.json
 *.log
 .snow/
+.codebuddy/
+
