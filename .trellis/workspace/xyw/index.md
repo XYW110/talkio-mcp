@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 2
-- **Last Active**: 2026-08-01
+- **Total Sessions**: 3
+- **Last Active**: 2026-08-21
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~55 | Active |
+| `journal-1.md` | ~93 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 3 | 2026-08-21 | 添加 list_experts 并修复 mock 凭据短路 | `4500240` | `master` |
 | 2 | 2026-08-01 | Populate backend and frontend Trellis spec guidelines | `9cbe5fc`, `1f88087`, `93251e3` | `master` |
 | 1 | 2026-08-01 | Complete tests and merge teammate branches | `0b8ba57`, `415d5bb`, `f66c407`, `320b10b`, `bbcaa73` | `master` |
 <!-- @@@/auto:session-history -->
