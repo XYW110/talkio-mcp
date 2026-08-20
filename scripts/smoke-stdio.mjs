@@ -6,9 +6,11 @@
  * 行为：
  *   1. 以 TALKIO_MOCK_PROVIDER=1 spawn `node dist/index.js`
  *   2. 通过 @modelcontextprotocol/sdk Client + StdioClientTransport 建立连接
- *   3. 断言 listTools() 包含 consult_experts 与 brainstorm
- *   4. 调用 consult_experts（question: "测试问题"），断言返回非空 mock 报告
- *   5. 打印 PASS / FAIL，以 0 / 1 退出
+ *   3. 断言 listTools() 包含 list_experts / consult_experts / brainstorm
+ *   4. 调用 list_experts，断言返回启用专家 id
+ *   5. 调用 consult_experts，断言 mock 报告且非 isError
+ *   6. 调用 brainstorm（1 轮、不总结），断言非 isError
+ *   7. 打印 PASS / FAIL，以 0 / 1 退出
  */
 
 import { fileURLToPath } from "node:url";
@@ -28,6 +30,13 @@ function check(label, condition, detail = "") {
     failures += 1;
     console.error(`  ✘ ${label}${detail ? ` — ${detail}` : ""}`);
   }
+}
+
+function textOf(result) {
+  return (result.content ?? [])
+    .filter((c) => c.type === "text")
+    .map((c) => c.text)
+    .join("\n");
 }
 
 const transport = new StdioClientTransport({
@@ -51,25 +60,39 @@ try {
   await client.connect(transport);
   console.error("[smoke] connected via stdio");
 
-  // 1. tools/list
   const { tools } = await client.listTools();
   const names = tools.map((t) => t.name);
+  check("listTools 返回 list_experts", names.includes("list_experts"), `实际: ${names.join(",")}`);
   check("listTools 返回 consult_experts", names.includes("consult_experts"), `实际: ${names.join(",")}`);
   check("listTools 返回 brainstorm", names.includes("brainstorm"), `实际: ${names.join(",")}`);
 
-  // 2. 调用 consult_experts（mock provider echo）
-  const result = await client.callTool({
+  const listed = await client.callTool({ name: "list_experts", arguments: {} });
+  const listedText = textOf(listed);
+  check("list_experts 未返回 isError", listed.isError !== true, JSON.stringify(listed).slice(0, 200));
+  check("list_experts 包含 architect", listedText.includes("architect"));
+  check("list_experts 包含 product", listedText.includes("product"));
+
+  const consult = await client.callTool({
     name: "consult_experts",
-    arguments: { question: "测试问题" },
+    arguments: { question: "测试问题", experts: ["architect"] },
   });
+  const consultText = textOf(consult);
+  check("consult_experts 未返回 isError", consult.isError !== true, JSON.stringify(consult).slice(0, 200));
+  check("consult_experts 返回至少一个 text 内容块", consultText.trim().length > 0);
+  check("consult_experts mock 标记", consultText.includes("[TALKIO-MOCK]"));
 
-  check("consult_experts 未返回 isError", result.isError !== true, JSON.stringify(result).slice(0, 200));
-
-  const textBlocks = (result.content ?? []).filter((c) => c.type === "text");
-  check("consult_experts 返回至少一个 text 内容块", textBlocks.length >= 1);
-
-  const report = textBlocks.map((c) => c.text).join("\n");
-  check("mock 报告非空", typeof report === "string" && report.trim().length > 0);
+  const brainstorm = await client.callTool({
+    name: "brainstorm",
+    arguments: {
+      topic: "测试主题",
+      experts: ["architect"],
+      rounds: 1,
+      summarize: false,
+    },
+  });
+  const brainstormText = textOf(brainstorm);
+  check("brainstorm 未返回 isError", brainstorm.isError !== true, JSON.stringify(brainstorm).slice(0, 200));
+  check("brainstorm mock 报告非空", brainstormText.trim().length > 0);
 } catch (err) {
   failures += 1;
   console.error(`[smoke] 异常: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);

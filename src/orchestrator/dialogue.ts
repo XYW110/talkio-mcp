@@ -18,7 +18,7 @@ import type {
   ChatParams,
   ChatResult,
 } from "../providers/adapter.js";
-import { getAdapter } from "../providers/registry.js";
+import { getAdapter, isMockProviderEnabled } from "../providers/registry.js";
 import { resolveProviderCredentials } from "../config.js";
 
 /** A single turn in the dialogue transcript. */
@@ -75,6 +75,13 @@ const TRANSCRIPT_BUDGET_CHARS = 12000;
 function resolveProvider(expert: ExpertConfig, config: AppConfig) {
   const providerConfig = config.providers[expert.provider];
   if (!providerConfig) return null;
+  // Mock mode must skip env-key lookup so smoke / CI can run without secrets.
+  if (isMockProviderEnabled()) {
+    return {
+      adapter: getAdapter(providerConfig.type),
+      creds: { apiKey: "mock", baseUrl: providerConfig.baseUrl },
+    };
+  }
   return {
     adapter: getAdapter(providerConfig.type),
     creds: resolveProviderCredentials(config, expert.provider),

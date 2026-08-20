@@ -21,6 +21,7 @@ vi.mock("../src/providers/registry.js", () => ({
       throw new Error("test bug: stubHolder.current 未设置就调用了 getAdapter");
     return stubHolder.current;
   },
+  isMockProviderEnabled: () => process.env.TALKIO_MOCK_PROVIDER === "1",
 }));
 
 import { runConsultation } from "../src/orchestrator/parallel.js";
@@ -312,5 +313,33 @@ describe("runDialogue 多轮对话", () => {
         (p) => p.includes("独特观点-1") || p.includes("独特观点-2")
       )
     ).toBe(true);
+  });
+});
+
+describe("TALKIO_MOCK_PROVIDER 凭据短路", () => {
+  it("无 API Key 时 consult 仍成功（不抛 missing env var）", async () => {
+    const original = process.env.TALKIO_MOCK_PROVIDER;
+    const originalKey = process.env.TEST_KEY;
+    process.env.TALKIO_MOCK_PROVIDER = "1";
+    delete process.env.TEST_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      const adapter = makeEchoAdapter("mock-ok");
+      const experts = [makeExpert("a")];
+      const results = await runConsultation(
+        "测试问题",
+        experts,
+        makeConfig(adapter)
+      );
+      expect(results).toHaveLength(1);
+      expect(results[0]?.ok).toBe(true);
+      expect(results[0]?.error).toBeUndefined();
+      expect(results[0]?.content).toContain("mock-ok");
+    } finally {
+      if (original === undefined) delete process.env.TALKIO_MOCK_PROVIDER;
+      else process.env.TALKIO_MOCK_PROVIDER = original;
+      if (originalKey === undefined) delete process.env.TEST_KEY;
+      else process.env.TEST_KEY = originalKey;
+    }
   });
 });

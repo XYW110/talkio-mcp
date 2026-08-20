@@ -1,9 +1,9 @@
 /**
  * MCP server assembly.
  *
- * createServer() builds a high-level McpServer, registers the two tools
- * (consult_experts, brainstorm) with zod raw-shape input schemas, and returns
- * the server instance ready to be connected to a transport.
+ * createServer() builds a high-level McpServer, registers the three tools
+ * (list_experts, consult_experts, brainstorm) with zod raw-shape input schemas,
+ * and returns the server instance ready to be connected to a transport.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AppConfig } from "./types.js";
@@ -11,10 +11,8 @@ import {
   consultExpertsSchema,
   handleConsultExperts,
 } from "./tools/consult-experts.js";
-import {
-  brainstormSchema,
-  handleBrainstorm,
-} from "./tools/brainstorm.js";
+import { brainstormSchema, handleBrainstorm } from "./tools/brainstorm.js";
+import { listExpertsSchema, handleListExperts } from "./tools/list-experts.js";
 
 /** Server identity advertised to MCP clients. */
 export const SERVER_NAME = "talkio-mcp-expert-council";
@@ -27,7 +25,22 @@ export const SERVER_VERSION = "0.1.0";
 export function createServer(config: AppConfig): McpServer {
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
-    { capabilities: { logging: {} } },
+    { capabilities: { logging: {} } }
+  );
+
+  // list_experts: discover configured expert ids before consulting.
+  server.registerTool(
+    "list_experts",
+    {
+      title: "列出专家",
+      description:
+        "列出当前可用的专家 id、名称、provider 与模型。调用 consult_experts / brainstorm 前先用本工具确认专家 id",
+      inputSchema: listExpertsSchema,
+    },
+    async (args) => {
+      const result = await handleListExperts(args, config);
+      return result;
+    }
   );
 
   // consult_experts: single-round parallel consultation.
@@ -43,7 +56,7 @@ export function createServer(config: AppConfig): McpServer {
       // args is already parsed/validated against consultExpertsSchema by the SDK.
       const result = await handleConsultExperts(args, config);
       return result;
-    },
+    }
   );
 
   // brainstorm: multi-round debate / relay dialogue.
@@ -58,7 +71,7 @@ export function createServer(config: AppConfig): McpServer {
     async (args) => {
       const result = await handleBrainstorm(args, config);
       return result;
-    },
+    }
   );
 
   return server;

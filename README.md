@@ -4,6 +4,7 @@
 
 ## 特性
 
+- **`list_experts`** — 列出当前可用专家的 id、名称、provider 与模型。调用其他工具前先用它确认专家 id。
 - **`consult_experts`** — 向一组 AI 专家并行咨询同一个问题，返回结构化的多视角咨询报告。单个专家失败不会阻塞其他专家，失败项以 ⚠️ 标注。
 - **`brainstorm`** — 组织专家围绕主题进行多轮对话（**debate** 辩论 / **relay** 接龙），专家可见彼此观点并相互质疑、补充、深化，最终可选产出总结。
 - **多 Provider 支持** — OpenAI、Anthropic，以及任意 OpenAI 兼容 API（DeepSeek、Moonshot、Qwen 等，纯配置接入，无需新代码）。
@@ -30,17 +31,17 @@ npm run build
 ```jsonc
 {
   "defaults": {
-    "provider": "openai",        // 专家未指定 provider 时使用的缺省值
+    "provider": "openai", // 专家未指定 provider 时使用的缺省值
     "model": "gpt-4o-mini",
     "temperature": 0.7,
     "maxTokens": 2048,
-    "timeoutMs": 120000          // 单次 AI 调用超时（毫秒）
+    "timeoutMs": 120000 // 单次 AI 调用超时（毫秒）
   },
   "providers": {
     "openai": {
-      "type": "openai",          // openai | anthropic | openai-compatible
+      "type": "openai", // openai | anthropic | openai-compatible
       "baseUrl": "https://api.openai.com/v1",
-      "apiKeyEnv": "OPENAI_API_KEY"   // 指向环境变量名，不直接写 key
+      "apiKeyEnv": "OPENAI_API_KEY" // 指向环境变量名，不直接写 key
     },
     "anthropic": {
       "type": "anthropic",
@@ -55,12 +56,12 @@ npm run build
   },
   "experts": [
     {
-      "id": "architect",          // 唯一 id，工具调用时按 id 选择专家
+      "id": "architect", // 唯一 id，工具调用时按 id 选择专家
       "name": "架构师",
       "icon": "🏛️",
       "systemPrompt": "你是一位资深软件架构师……",
-      "provider": "openai",       // 引用 providers 中的 key，可省略走 defaults
-      "model": "gpt-4o",          // 专家级字段覆盖 defaults
+      "provider": "openai", // 引用 providers 中的 key，可省略走 defaults
+      "model": "gpt-4o", // 专家级字段覆盖 defaults
       "temperature": 0.7,
       "enabled": true
     }
@@ -101,9 +102,29 @@ DEEPSEEK_API_KEY=sk-...
 }
 ```
 
+### Cursor
+
+在 Cursor 的 MCP 配置（通常是项目 `.cursor/mcp.json` 或用户级 `mcp.json`）中加入：
+
+```json
+{
+  "mcpServers": {
+    "talkio-mcp": {
+      "command": "node",
+      "args": ["/absolute/path/to/talkio_mcp/dist/index.js"],
+      "env": {
+        "OPENAI_API_KEY": "sk-..."
+      }
+    }
+  }
+}
+```
+
+接入后先调用 `list_experts` 查看可用专家 id，再把这些 id 传给 `consult_experts` / `brainstorm`。
+
 ### Snow CLI
 
-在 Snow CLI 的 MCP 配置中加入（同样支持 `npx talkio-mcp` 形式）：
+在 Snow CLI 的 MCP 配置中加入（本地开发用 `node dist/index.js`；发布到 npm 后才可用 `npx talkio-mcp`）：
 
 ```json
 {
@@ -121,15 +142,31 @@ DEEPSEEK_API_KEY=sk-...
 
 ## 工具用法
 
+### list_experts — 列出可用专家
+
+只读发现工具，不调用任何 AI Provider。默认只返回 `enabled: true` 的专家。
+
+| 参数              | 类型    | 必填 | 说明                           |
+| ----------------- | ------- | ---- | ------------------------------ |
+| `includeDisabled` | boolean | 否   | 是否包含未启用专家，默认 false |
+
+示例：
+
+```json
+{
+  "includeDisabled": false
+}
+```
+
 ### consult_experts — 专家团咨询
 
 并行咨询多个专家，返回 Markdown 咨询报告。
 
-| 参数 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `question` | string | ✅ | 要咨询的问题 |
-| `context` | string | 否 | 背景信息（代码片段、约束等） |
-| `experts` | string[] | 否 | 专家 id 列表；缺省使用所有启用的专家 |
+| 参数       | 类型     | 必填 | 说明                                 |
+| ---------- | -------- | ---- | ------------------------------------ |
+| `question` | string   | ✅   | 要咨询的问题                         |
+| `context`  | string   | 否   | 背景信息（代码片段、约束等）         |
+| `experts`  | string[] | 否   | 专家 id 列表；缺省使用所有启用的专家 |
 
 示例：
 
@@ -145,13 +182,13 @@ DEEPSEEK_API_KEY=sk-...
 
 专家围绕主题多轮对话，输出讨论实录与可选总结。
 
-| 参数 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `topic` | string | ✅ | 讨论主题 |
-| `mode` | `"debate" \| "relay"` | 否 | 辩论（默认）或接龙 |
-| `rounds` | integer | 否 | 轮数，1–5，默认 2 |
-| `experts` | string[] | 否 | 专家 id 列表（上限 6 位） |
-| `summarize` | boolean | 否 | 是否产出总结，默认 true |
+| 参数        | 类型                  | 必填 | 说明                      |
+| ----------- | --------------------- | ---- | ------------------------- |
+| `topic`     | string                | ✅   | 讨论主题                  |
+| `mode`      | `"debate" \| "relay"` | 否   | 辩论（默认）或接龙        |
+| `rounds`    | integer               | 否   | 轮数，1–5，默认 2         |
+| `experts`   | string[]              | 否   | 专家 id 列表（上限 6 位） |
+| `summarize` | boolean               | 否   | 是否产出总结，默认 true   |
 
 示例：
 

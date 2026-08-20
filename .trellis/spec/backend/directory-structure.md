@@ -29,6 +29,7 @@ talkio-mcp-expert-council/
 │   │   ├── parallel.ts       # 单轮并行咨询引擎（consult_experts 工具）
 │   │   └── dialogue.ts       # 多轮对话引擎（brainstorm 工具，辩论/接龙模式）
 │   ├── tools/
+│   │   ├── list-experts.ts    # list_experts MCP 工具定义（发现专家 id）
 │   │   ├── consult-experts.ts # consult_experts MCP 工具定义
 │   │   └── brainstorm.ts     # brainstorm MCP 工具定义
 │   └── utils/
@@ -37,6 +38,7 @@ talkio-mcp-expert-council/
 ├── test/
 │   ├── config.test.ts        # loadConfig + resolveProviderCredentials 契约测试
 │   ├── orchestrator.test.ts  # runConsultation + runDialogue 编排测试
+│   ├── list-experts.test.ts  # list_experts 发现工具测试
 │   └── providers.test.ts     # fetchWithRetry 重试策略 + adapter 实现测试
 ├── scripts/
 │   └── smoke-stdio.mjs       # Stdio 冒烟测试脚本
@@ -51,20 +53,21 @@ talkio-mcp-expert-council/
 
 ## 模块职责
 
-| 模块 | 路径 | 职责 |
-|------|------|------|
-| 入口 | `src/index.ts` | CLI argv 解析（`--transport`/`--port`/`--host`/`--config`），创建 server，连接 stdio 或 SSE 传输 |
-| 服务器 | `src/server.ts` | 创建 MCP 服务器，注册 `consult_experts` 和 `brainstorm` 两个工具 |
-| 配置 | `src/config.ts` | 加载 `experts.json`，zod 校验，defaults 合并，API key 惰性解析 |
-| 类型 | `src/types.ts` | 运行时类型定义（`AppConfig`/`ExpertConfig`/`ProviderConfig`/`ProviderCredentials`） |
-| Provider 抽象 | `src/providers/adapter.ts` | `ProviderAdapter` 接口定义（`chat(params, creds): Promise<ChatResult>`） |
-| Provider 注册 | `src/providers/registry.ts` | 按 type 名获取 adapter，支持 `TALKIO_MOCK_PROVIDER` 环境变量切换 mock |
-| 编排引擎 | `src/orchestrator/parallel.ts` | 单轮并行咨询（`Promise.allSettled`），失败不阻塞整体 |
-| 对话引擎 | `src/orchestrator/dialogue.ts` | 多轮辩论/接龙，Panel 预算控制，可选总结 |
-| 工具 | `src/tools/consult-experts.ts` | `consult_experts` MCP 工具 schema 与 handler |
-| 工具 | `src/tools/brainstorm.ts` | `brainstorm` MCP 工具 schema 与 handler |
-| 重试 | `src/utils/retry.ts` | 带超时与指数退避重试的 `fetch` 封装，密钥脱敏 |
-| 格式化 | `src/utils/format.ts` | 纯函数生成 Markdown 报告，无副作用 |
+| 模块          | 路径                           | 职责                                                                                                                          |
+| ------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| 入口          | `src/index.ts`                 | CLI argv 解析（`--transport`/`--port`/`--host`/`--config`），创建 server，连接 stdio 或 SSE 传输                              |
+| 服务器        | `src/server.ts`                | 创建 MCP 服务器，注册 `list_experts`、`consult_experts` 和 `brainstorm` 三个工具                                              |
+| 配置          | `src/config.ts`                | 加载 `experts.json`，zod 校验，defaults 合并，API key 惰性解析                                                                |
+| 类型          | `src/types.ts`                 | 运行时类型定义（`AppConfig`/`ExpertConfig`/`ProviderConfig`/`ProviderCredentials`）                                           |
+| Provider 抽象 | `src/providers/adapter.ts`     | `ProviderAdapter` 接口定义（`chat(params, creds): Promise<ChatResult>`）                                                      |
+| Provider 注册 | `src/providers/registry.ts`    | 按 type 名获取 adapter，支持 `TALKIO_MOCK_PROVIDER` 环境变量切换 mock                                                         |
+| 编排引擎      | `src/orchestrator/parallel.ts` | 单轮并行咨询（`Promise.allSettled`），失败不阻塞整体；`TALKIO_MOCK_PROVIDER=1` 时必须在 `resolveProviderCredentials` 之前短路 |
+| 对话引擎      | `src/orchestrator/dialogue.ts` | 多轮辩论/接龙，Panel 预算控制，可选总结；mock 短路规则与 parallel 相同                                                        |
+| 工具          | `src/tools/list-experts.ts`    | `list_experts` MCP 工具 schema 与 handler                                                                                     |
+| 工具          | `src/tools/consult-experts.ts` | `consult_experts` MCP 工具 schema 与 handler                                                                                  |
+| 工具          | `src/tools/brainstorm.ts`      | `brainstorm` MCP 工具 schema 与 handler                                                                                       |
+| 重试          | `src/utils/retry.ts`           | 带超时与指数退避重试的 `fetch` 封装，密钥脱敏                                                                                 |
+| 格式化        | `src/utils/format.ts`          | 纯函数生成 Markdown 报告，无副作用                                                                                            |
 
 ---
 
