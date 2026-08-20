@@ -3,6 +3,6 @@ dist/
 .env
 experts.local.json
 *.log
-.snow/
 .codebuddy/
 
+/.snow
