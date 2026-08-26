@@ -120,7 +120,7 @@ DEEPSEEK_API_KEY=sk-...
 }
 ```
 
-接入后先调用 `list_experts` 查看可用专家 id，再把这些 id 传给 `consult_experts` / `brainstorm`。
+接入后先调用 `list_experts` 查看专家 id 与就绪状态，再把 id 传给 `consult_experts` / `brainstorm`。缺 key 的专家仍可显式指定，但该项会失败。
 
 ### Snow CLI
 

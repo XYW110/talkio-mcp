@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "list-experts 测试风格、mock 模式、typecheck/test 契约"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "发现层不得 throw missing env；只标注，不回显 key"}
+{"file": ".trellis/tasks/08-27-list-experts-ready/prd.md", "reason": "验收 AC1–AC6：复用 hasProviderKey、JSON ready/missingEnv、Markdown 标注、过滤不变、README、smoke"}
+{"file": ".trellis/tasks/08-27-list-experts-ready/design.md", "reason": "核对字段省略规则、readyCount 相对本次列表、mock 全员 ready"}

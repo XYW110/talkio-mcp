@@ -29,7 +29,10 @@ export interface SelectExpertsOptions {
 }
 
 /** True when mock mode is on, or the expert's provider env var is non-empty. */
-export function hasProviderKey(config: AppConfig, expert: ExpertConfig): boolean {
+export function hasProviderKey(
+  config: AppConfig,
+  expert: ExpertConfig
+): boolean {
   if (isMockProviderEnabled()) return true;
   const provider = config.providers[expert.provider];
   if (!provider) return false;
@@ -37,14 +40,14 @@ export function hasProviderKey(config: AppConfig, expert: ExpertConfig): boolean
   return Boolean(apiKey);
 }
 
-function missingKeyEnv(config: AppConfig, expert: ExpertConfig): string {
+export function missingKeyEnv(config: AppConfig, expert: ExpertConfig): string {
   const provider = config.providers[expert.provider];
   return provider?.apiKeyEnv ?? `未配置 provider "${expert.provider}"`;
 }
 
 function selectExplicit(
   enabled: ExpertConfig[],
-  ids: string[],
+  ids: string[]
 ): ExpertSelection {
   const byId = new Map(enabled.map((e) => [e.id, e]));
   const selected: ExpertConfig[] = [];
@@ -69,7 +72,7 @@ function selectExplicit(
 function selectDefault(
   config: AppConfig,
   enabled: ExpertConfig[],
-  defaultLimit: number,
+  defaultLimit: number
 ): ExpertSelection {
   const withKey: ExpertConfig[] = [];
   const skippedMissingKey: SkippedMissingKey[] = [];
@@ -99,7 +102,7 @@ function selectDefault(
 export function selectExpertsForTool(
   config: AppConfig,
   ids: string[] | undefined,
-  options: SelectExpertsOptions,
+  options: SelectExpertsOptions
 ): ExpertSelection {
   const enabled = config.experts.filter((e) => e.enabled !== false);
   if (ids && ids.length > 0) {
@@ -124,7 +127,7 @@ export function blankInputError(paramName: string): CallToolResult {
 /** Notes appended to the Markdown report. Empty string when nothing to say. */
 export function formatSelectionNotes(
   selection: ExpertSelection,
-  defaultLimit: number,
+  defaultLimit: number
 ): string {
   const parts: string[] = [];
   if (selection.skippedMissingKey.length > 0) {
@@ -139,7 +142,9 @@ export function formatSelectionNotes(
   }
   if (selection.ignored.length > 0) {
     parts.push(
-      `> 注: 以下请求的专家 id 未找到或未启用,已忽略: ${selection.ignored.join(", ")}`,
+      `> 注: 以下请求的专家 id 未找到或未启用,已忽略: ${selection.ignored.join(
+        ", "
+      )}`
     );
   }
   return parts.length > 0 ? `\n\n${parts.join("\n")}\n` : "";
@@ -149,7 +154,7 @@ export function formatSelectionNotes(
 export function noSelectedExpertsResult(
   config: AppConfig,
   selection: ExpertSelection,
-  requestedIds?: string[],
+  requestedIds?: string[]
 ): CallToolResult {
   const validIds = config.experts
     .filter((e) => e.enabled !== false)
@@ -177,7 +182,9 @@ export function noSelectedExpertsResult(
           .map((s) => `${s.expert.id}（缺 ${s.apiKeyEnv}）`)
           .join("、")
       : "";
-  const reason = skipped ? `已跳过 ${skipped}` : `当前可用的专家 id: ${validIds || "(无)"}`;
+  const reason = skipped
+    ? `已跳过 ${skipped}`
+    : `当前可用的专家 id: ${validIds || "(无)"}`;
   return {
     isError: true,
     content: [
