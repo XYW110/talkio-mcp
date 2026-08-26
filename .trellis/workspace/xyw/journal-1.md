@@ -91,3 +91,42 @@ Completed the 00-bootstrap-guidelines task by filling 12 backend and frontend sp
 - Streamable HTTP 替换/并存旧 SSE
 - Docker 默认回环或加简单 token
 - brainstorm 进度通知
+
+
+## Session 4: 默认专家筛选与首次调用成本
+
+**Date**: 2026-08-27
+**Task**: 默认专家筛选与首次调用成本
+**Branch**: `master`
+
+### Summary
+
+规划并实现 consult/brainstorm 默认只选有 key 的启用专家（最多 3 人），brainstorm 默认 1 轮不总结；空参拦截。随后提交 Trellis 0.6.15 升级与 AGENTS.md 提问规则。
+
+### Main Changes
+
+- 抽出 src/tools/select-experts.ts，默认路径 enabled ∩ 有 key 再截 3 人
+- consult/brainstorm 空参拦截；brainstorm 默认 rounds=1 summarize=false
+- README 对齐新默认并补 parallel
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4c9afb0` | (see git log) |
+| `653c705` | (see git log) |
+| `d60fb65` | (see git log) |
+
+### Testing
+
+- [OK] npm test 57 passed；npm run typecheck 通过；node scripts/smoke-stdio.mjs PASS
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- list_experts 标注缺 key
+- brainstorm 增加 context
+- LICENSE / CI / npm 元数据
