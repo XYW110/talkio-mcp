@@ -130,3 +130,40 @@ Completed the 00-bootstrap-guidelines task by filling 12 backend and frontend sp
 - list_experts 标注缺 key
 - brainstorm 增加 context
 - LICENSE / CI / npm 元数据
+
+
+## Session 5: list_experts 标注缺 key
+
+**Date**: 2026-08-27
+**Task**: list_experts 标注缺 key
+**Branch**: `master`
+
+### Summary
+
+实现 list_experts 的 ready/missingEnv/readyCount 契约，缺密钥专家仍列出。质量门补齐 README 特性条与用法区说明后归档。
+
+### Main Changes
+
+- ExpertSummary 增加 ready 与可选 missingEnv，复用 hasProviderKey
+- Markdown 标注缺 env，payload 增加 readyCount
+- README 特性条与用法区对齐就绪状态
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0d5147d` | (see git log) |
+| `f4f1cc7` | (see git log) |
+
+### Testing
+
+- [OK] npm test 60 passed；npm run typecheck 通过；node scripts/smoke-stdio.mjs PASS
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- brainstorm 增加 context
+- LICENSE / CI / npm 元数据
