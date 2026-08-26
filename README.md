@@ -4,7 +4,7 @@
 
 ## 特性
 
-- **`list_experts`** — 列出当前可用专家的 id、名称、provider 与模型。调用其他工具前先用它确认专家 id。
+- **`list_experts`** — 列出当前可用专家的 id、名称、provider、模型，以及是否已配置 API Key。调用其他工具前先用它确认专家 id 与就绪状态。
 - **`consult_experts`** — 向一组 AI 专家并行咨询同一个问题，返回结构化的多视角咨询报告。单个专家失败不会阻塞其他专家，失败项以 ⚠️ 标注。
 - **`brainstorm`** — 组织专家围绕主题进行多轮对话（**debate** 辩论 / **relay** 接龙），专家可见彼此观点并相互质疑、补充、深化，最终可选产出总结。
 - **多 Provider 支持** — OpenAI、Anthropic，以及任意 OpenAI 兼容 API（DeepSeek、Moonshot、Qwen 等，纯配置接入，无需新代码）。
@@ -144,7 +144,7 @@ DEEPSEEK_API_KEY=sk-...
 
 ### list_experts — 列出可用专家
 
-只读发现工具，不调用任何 AI Provider。默认只返回 `enabled: true` 的专家。
+只读发现工具，不调用任何 AI Provider。默认只返回 `enabled: true` 的专家。每位专家带 `ready`；缺 key 时仍列出，并标明缺哪个环境变量（`missingEnv`），不会从发现列表删除。
 
 | 参数              | 类型    | 必填 | 说明                           |
 | ----------------- | ------- | ---- | ------------------------------ |
