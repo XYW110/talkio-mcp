@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "工具层测试风格、vitest mock、typecheck/test 脚本契约"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "显式名单仍须部分失败不阻断；默认路径不得把缺 key 打成 ⚠️"}
+{"file": ".trellis/tasks/08-27-default-expert-filter/prd.md", "reason": "验收 AC1–AC8：空参、默认筛选、上限 3、brainstorm 默认、显式兼容、不改模板、README、mock/smoke"}
+{"file": ".trellis/tasks/08-27-default-expert-filter/design.md", "reason": "核对选择契约、注记文案、mock 视为有 key、experts.json 禁止修改"}

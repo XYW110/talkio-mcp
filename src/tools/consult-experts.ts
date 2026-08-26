@@ -6,14 +6,21 @@
  * consultation engine, and returns a Markdown report as text content.
  */
 import { z } from "zod";
-import type { AppConfig, ExpertConfig } from "../types.js";
+import type { AppConfig } from "../types.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { runConsultation } from "../orchestrator/parallel.js";
 import { formatConsultReport } from "../utils/format.js";
+import {
+  DEFAULT_EXPERT_LIMIT,
+  blankInputError,
+  formatSelectionNotes,
+  noSelectedExpertsResult,
+  selectExpertsForTool,
+} from "./select-experts.js";
 
 /** Zod raw shape for consult_experts arguments (passed as inputSchema). */
 export const consultExpertsSchema = {
-  question: z.string().describe("要咨询的问题"),
+  question: z.string().describe("要咨询的问题（去空白后不能为空）"),
   context: z
     .string()
     .optional()
@@ -21,7 +28,9 @@ export const consultExpertsSchema = {
   experts: z
     .array(z.string())
     .optional()
-    .describe("可选,专家 id 列表;缺省使用所有启用的专家"),
+    .describe(
+      "可选,专家 id 列表;缺省使用已启用且已配置 API Key 的专家（最多 3 位）",
+    ),
   parallel: z
     .boolean()
     .optional()
@@ -37,37 +46,6 @@ export type ConsultExpertsArgs = {
 };
 
 /**
- * Select the experts to consult based on the requested ids.
- *
- * - If `ids` is omitted/empty: return all enabled experts.
- * - If `ids` provided: keep only enabled experts whose id matches; ids that
- *   do not correspond to any enabled expert are collected in `ignored` so the
- *   tool can surface them in the report.
- */
-export function selectExperts(
-  config: AppConfig,
-  ids?: string[],
-): { selected: ExpertConfig[]; ignored: string[] } {
-  const enabled = config.experts.filter((e) => e.enabled !== false);
-  if (!ids || ids.length === 0) {
-    return { selected: enabled, ignored: [] };
-  }
-  const byId = new Map(enabled.map((e) => [e.id, e]));
-  const selected: ExpertConfig[] = [];
-  const ignored: string[] = [];
-  for (const id of ids) {
-    const found = byId.get(id);
-    if (found) {
-      selected.push(found);
-      byId.delete(id); // avoid duplicates if same id listed twice
-    } else {
-      ignored.push(id);
-    }
-  }
-  return { selected, ignored };
-}
-
-/**
  * The handler invoked by the MCP server when consult_experts is called.
  * Returns a CallToolResult with the Markdown report (and isError when every
  * expert failed).
@@ -76,39 +54,26 @@ export async function handleConsultExperts(
   args: ConsultExpertsArgs,
   config: AppConfig,
 ): Promise<CallToolResult> {
-  const { selected, ignored } = selectExperts(config, args.experts);
-
-  if (selected.length === 0) {
-    const validIds = config.experts
-      .filter((e) => e.enabled !== false)
-      .map((e) => e.id)
-      .join(", ");
-    return {
-      isError: true,
-      content: [
-        {
-          type: "text",
-          text:
-            `没有匹配到任何可用的专家。` +
-            (args.experts && args.experts.length > 0
-              ? `\n请求的专家 id: ${args.experts.join(", ")}`
-              : "") +
-            `\n当前可用的专家 id: ${validIds || "(无)"}`,
-        },
-      ],
-    };
+  if (args.question.trim() === "") {
+    return blankInputError("question");
   }
 
-  const items = await runConsultation(args.question, selected, config, {
+  const selection = selectExpertsForTool(config, args.experts, {
+    defaultLimit: DEFAULT_EXPERT_LIMIT,
+  });
+
+  if (selection.selected.length === 0) {
+    return noSelectedExpertsResult(config, selection, args.experts);
+  }
+
+  const items = await runConsultation(args.question, selection.selected, config, {
     context: args.context,
     parallel: args.parallel ?? true,
   });
 
-  // Build the report, optionally noting ignored expert ids.
-  let report = formatConsultReport(args.question, args.context, items);
-  if (ignored.length > 0) {
-    report += `\n\n> 注: 以下请求的专家 id 未找到或未启用,已忽略: ${ignored.join(", ")}\n`;
-  }
+  const report =
+    formatConsultReport(args.question, args.context, items) +
+    formatSelectionNotes(selection, DEFAULT_EXPERT_LIMIT);
 
   const allFailed = items.length > 0 && items.every((it) => !it.ok);
   return {

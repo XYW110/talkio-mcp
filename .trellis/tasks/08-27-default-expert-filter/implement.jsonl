@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "tools 层与 test 命名约定；筛选逻辑应落在 src/tools/ 而不是编排层"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "缺 key 是运行时隔离失败，不是启动期致命错误；默认路径必须在调用 resolveProviderCredentials 之前筛掉"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "consult 与 brainstorm 的 select* 已重复，必须抽共用函数避免默认规则再漂移"}
+{"file": ".trellis/tasks/08-27-default-expert-filter/design.md", "reason": "共享选择契约、空参门闩、报告注记与兼容性边界"}
