@@ -12,6 +12,10 @@ import {
   handleConsultExperts,
 } from "./tools/consult-experts.js";
 import { brainstormSchema, handleBrainstorm } from "./tools/brainstorm.js";
+import {
+  brainstormFollowupSchema,
+  handleBrainstormFollowup,
+} from "./tools/brainstorm-followup.js";
 import { listCardsSchema, handleListCards } from "./tools/list-cards.js";
 import { createMcpNotifier } from "./utils/notify.js";
 
@@ -63,7 +67,7 @@ export function createServer(config: AppConfig): McpServer {
     }
   );
 
-  // brainstorm: multi-round debate / relay dialogue.
+// brainstorm: multi-round debate / relay dialogue.
   server.registerTool(
     "brainstorm",
     {
@@ -74,6 +78,22 @@ export function createServer(config: AppConfig): McpServer {
     },
     async (args) => {
       const result = await handleBrainstorm(args, config, { notifier });
+      return result;
+    }
+  );
+
+  // brainstorm_followup: deepen a prior brainstorm with a follow-up question.
+  server.registerTool(
+    "brainstorm_followup",
+    {
+      title: "追问深化",
+      description:
+        "基于上一次 brainstorm 讨论实录(turns)与一个追问问题,让全体角色卡或指定单张卡继续深化作答,输出第 N 轮追问实录。\n\n调用方式：先调用 brainstorm 获得报告,从该返回值保留 turns 数组,连同 question 一起传入本工具。turns 为空或格式非法时降级为无上下文追问,并在报告中标注。\n\n隐私约定：调用前请把追问问题与实录中的个人敏感信息替换为占位符后再传入——姓名→[人名]，地名/住址/城市→[地名]，公司/机构名→[机构]；手机号/身份证/邮箱/银行卡/微信号等将由系统在发往模型前自动脱敏。",
+      inputSchema: brainstormFollowupSchema,
+    },
+    async (args) => {
+      // 本次不接入流式通知（PRD Notes）：followup 单轮、非多轮编排。
+      const result = await handleBrainstormFollowup(args, config);
       return result;
     }
   );

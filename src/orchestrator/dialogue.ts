@@ -133,7 +133,7 @@ export function formatTranscriptForPrompt(turns: DialogueTurn[]): string {
  * Call one card target with a synthesized user message. Returns the assistant
  * content string, or throws on failure (caller handles per-mode).
  */
-async function askExpert(
+export async function askExpert(
   target: ResolvedCard,
   userContent: string,
   config: AppConfig

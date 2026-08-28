@@ -78,7 +78,8 @@ await client.connect(transport);
   const names = tools.map((t) => t.name);
   check("listTools 返回 list_cards", names.includes("list_cards"), `实际: ${names.join(",")}`);
   check("listTools 返回 consult_experts", names.includes("consult_experts"), `实际: ${names.join(",")}`);
-  check("listTools 返回 brainstorm", names.includes("brainstorm"), `实际: ${names.join(",")}`);
+check("listTools 返回 brainstorm", names.includes("brainstorm"), `实际: ${names.join(",")}`);
+  check("listTools 返回 brainstorm_followup", names.includes("brainstorm_followup"), `实际: ${names.join(",")}`);
   check("listTools 不再返回 list_experts", !names.includes("list_experts"), `实际: ${names.join(",")}`);
 
   const listed = await client.callTool({ name: "list_cards", arguments: {} });
@@ -133,7 +134,25 @@ const brainstormText = textOf(brainstorm);
     name: "consult_experts",
     arguments: { question: "测试问题", cards: ["no-such-card"] },
   });
-  check("不存在的卡返回 isError 并列出可用卡", bad.isError === true && textOf(bad).includes("architect-openai-gpt-4o"), JSON.stringify(bad).slice(0, 300));
+check("不存在的卡返回 isError 并列出可用卡", bad.isError === true && textOf(bad).includes("architect-openai-gpt-4o"), JSON.stringify(bad).slice(0, 300));
+
+  // brainstorm_followup：带上一步 brainstorm 的 turns + 追问 → 全体（无 card）单轮追问
+  const followup = await client.callTool({
+    name: "brainstorm_followup",
+    arguments: {
+      question: "追问问题",
+      turns: [
+        { round: 1, expertId: "architect", expertName: "架构师", icon: "🤖", content: brainstormText },
+      ],
+    },
+  });
+  const followupText = textOf(followup);
+  check("brainstorm_followup 未返回 isError", followup.isError !== true, JSON.stringify(followup).slice(0, 300));
+  check(
+    "brainstorm_followup 报告含追问标记与延续轮次",
+    followupText.includes("专家追问实录") && followupText.includes("第 2 轮追问"),
+    followupText.slice(0, 300)
+  );
 } catch (err) {
   failures += 1;
   console.error(`[smoke] 异常: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
