@@ -440,3 +440,104 @@ describe("TALKIO_MOCK_PROVIDER 凭据短路", () => {
     }
   });
 });
+
+describe("可观测性汇总与错误压缩（observability）", () => {
+  /** 构造一个注入用的 logger spy：info/warn 等全部收集进 infos 数组。 */
+  function makeSpyLogger() {
+    const infos: string[] = [];
+    const logger = {
+      infos,
+      info: (...args: unknown[]) => {
+        infos.push(args.join(" "));
+      },
+      debug: (..._args: unknown[]) => {},
+      silly: (..._args: unknown[]) => {},
+      warn: (..._args: unknown[]) => {},
+      error: (..._args: unknown[]) => {},
+      isEnabled: () => true,
+    };
+    return logger;
+  }
+
+  it("全部目标卡失败 → 报告聚合为 1 条失败摘要（含总数与首错详情）", async () => {
+    const adapter = makeStubAdapter(async () => {
+      throw new Error("provider 拒绝请求: 认证失败");
+    });
+    const targets = [makeTarget("a"), makeTarget("b"), makeTarget("c")];
+
+    const results = await runConsultation("问题", targets, makeConfig(adapter));
+
+    expect(results).toHaveLength(1);
+    const item = results[0]!;
+    expect(item.ok).toBe(false);
+    expect(item.target.card.name).toBe("a"); // 保留 target 供渲染
+    expect(item.error).toContain("全部 3 张卡咨询失败");
+    expect(item.error).toContain("均为 provider 调用失败");
+    expect(item.error).toContain("认证失败"); // 首错详情
+  });
+
+  it("全部失败且首个错误含「超时」→ 摘要标注（含超时）", async () => {
+    const adapter = makeStubAdapter(async () => {
+      throw new Error("Request timed out after 5000ms");
+    });
+    const targets = [makeTarget("a"), makeTarget("b")];
+
+    const results = await runConsultation("问题", targets, makeConfig(adapter));
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.error).toContain("（含超时）");
+    expect(results[0]?.error).toContain("全部 2 张卡咨询失败");
+  });
+
+  it("部分失败保持不变：不聚合、逐卡保留", async () => {
+    const adapter = makeStubAdapter(async (params) => {
+      const sys = params.messages.find((m) => m.role === "system")?.content ?? "";
+      if (sys.includes("b")) throw new Error("b 挂了");
+      return { content: `OK ${sys}` };
+    });
+    const targets = [makeTarget("a"), makeTarget("b"), makeTarget("c")];
+
+    const results = await runConsultation("问题", targets, makeConfig(adapter));
+
+    expect(results).toHaveLength(3);
+    expect(results.filter((r) => !r.ok)).toHaveLength(1);
+    expect(results.find((r) => r.target.expert.id === "b")?.error).toContain(
+      "b 挂了"
+    );
+  });
+
+  it("咨询后 logger.info 收到 [summary] consult typeline，返回报告不含 summary", async () => {
+    const adapter = makeEchoAdapter();
+    const targets = [makeTarget("a"), makeTarget("b"), makeTarget("c")];
+    const logger = makeSpyLogger();
+
+    const results = await runConsultation("问题", targets, makeConfig(adapter), {
+      logger,
+    });
+
+    // 汇总只进 logger，绝不进入返回的 items 报告。
+    expect(logger.infos.some((l) => l.includes("[summary] consult cards=3"))).toBe(true);
+    expect(logger.infos.some((l) => l.includes("ok=3") && l.includes("failed=0"))).toBe(true);
+    expect(logger.infos.some((l) => /avg_ms=\d+ total_ms=\d+/.test(l))).toBe(true);
+    // 返回的 items 是 ConsultationItem[]，不含 [summary] 文本。
+    const reportText = JSON.stringify(results);
+    expect(reportText).not.toContain("[summary]");
+  });
+
+  it("brainstorm 后 logger.info 收到 [summary] brainstorm typeline（rounds/turns/summary/ok/failed）", async () => {
+    const adapter = makeEchoAdapter();
+    const targets = [makeTarget("a"), makeTarget("b")];
+    const logger = makeSpyLogger();
+
+    await runDialogue(
+      { topic: "如何设计一个高并发系统", targets, mode: "debate", rounds: 2, summarize: true, logger },
+      makeConfig(adapter)
+    );
+
+    expect(
+      logger.infos.some((l) =>
+        /\[summary\] brainstorm rounds=2 turns=4 summary=yes ok=4 failed=0 total_ms=\d+/.test(l)
+      )
+    ).toBe(true);
+  });
+});

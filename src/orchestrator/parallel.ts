@@ -15,6 +15,7 @@ import type {
 import { getAdapter, isMockProviderEnabled } from "../providers/registry.js";
 import { resolveProviderCredentials } from "../config.js";
 import { redactPII } from "../utils/redact.js";
+import { defaultLogger, type Logger } from "../utils/log.js";
 import type { ResolvedCard } from "../tools/select-cards.js";
 
 /** Per-card outcome of a single-round consultation. */
@@ -146,9 +147,11 @@ export async function runConsultation(
   question: string,
   targets: ResolvedCard[],
   config: AppConfig,
-  options: { context?: string; parallel?: boolean } = {}
+  options: { context?: string; parallel?: boolean; logger?: Logger } = {}
 ): Promise<ConsultationItem[]> {
   const { context, parallel = true } = options;
+  const logger = options.logger ?? defaultLogger;
+  const startedAt = Date.now();
 
   if (targets.length === 0) {
     return [];
@@ -161,7 +164,7 @@ export async function runConsultation(
     // allSettled on a function that already catches means every result is
     // "fulfilled"; map back to the item. A rejected result here would indicate
     // a programming error (e.g. thrown synchronously before try/catch).
-    return settled.map((s, i) => {
+    const items = settled.map((s, i) => {
       if (s.status === "fulfilled") return s.value;
       const err =
         s.reason instanceof Error ? s.reason.message : String(s.reason);
@@ -170,6 +173,7 @@ export async function runConsultation(
         throw new Error("unreachable: allSettled index always aligns");
       return { target, ok: false as const, error: err };
     });
+    return finalize(items);
   }
 
   // Serial path: call each target one after another in configured order.
@@ -177,5 +181,34 @@ export async function runConsultation(
   for (const target of targets) {
     items.push(await callExpert(target, question, config, context));
   }
-  return items;
+  return finalize(items);
+
+  /** Log the [summary] typeline, then compress an all-failed round to one item. */
+  function finalize(items: ConsultationItem[]): ConsultationItem[] {
+    const totalMs = Date.now() - startedAt;
+    const failed = items.filter((i) => !i.ok);
+    const ok = items.length - failed.length;
+    if (items.length > 0) {
+      const avgMs = Math.round(totalMs / items.length);
+      logger.info(
+        `[summary] consult cards=${items.length} ok=${ok} failed=${failed.length} avg_ms=${avgMs} total_ms=${totalMs}`
+      );
+    }
+    // All cards failed → compress to a single summary item instead of N ⚠️.
+    if (failed.length === targets.length && failed.length > 0) {
+      const first = failed[0];
+      const firstError = first?.error ?? "未知错误";
+      const timeoutHint = /超时|timed?\s*out|timeout/i.test(firstError)
+        ? "（含超时）"
+        : "";
+      return [
+        {
+          target: targets[0] as ResolvedCard,
+          ok: false as const,
+          error: `全部 ${failed.length} 张卡咨询失败（均为 provider 调用失败）${timeoutHint}: ${firstError}`,
+        },
+      ];
+    }
+    return items;
+  }
 }

@@ -66,7 +66,7 @@ export async function handleConsultExperts(
     return noSelectedCardsResult(config, selection, args.cards);
   }
 
-const items = await runConsultation(args.question, selection.selected, config, {
+  const items = await runConsultation(args.question, selection.selected, config, {
     context: args.context,
     parallel: args.parallel ?? true,
   });

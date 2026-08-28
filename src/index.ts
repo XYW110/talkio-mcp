@@ -10,18 +10,20 @@
  */
 import { createServer } from "./server.js";
 import { loadConfig } from "./config.js";
+import { createLogger, normalizeLevel } from "./utils/log.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { createServer as createHttpServer } from "node:http";
 import { createAdminApi, resolveStaticDir } from "./admin/api.js";
 import path from "node:path";
 
-/** Parse minimal CLI args: --transport, --port, --host, --config. */
+/** Parse minimal CLI args: --transport, --port, --host, --config, --log-level. */
 interface CliArgs {
   transport: "stdio" | "sse";
   port: number;
   host: string;
   config?: string;
+  logLevel?: string;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -60,6 +62,10 @@ function parseArgs(argv: string[]): CliArgs {
         args.config = argv[++i];
         break;
       }
+      case "--log-level": {
+        args.logLevel = argv[++i];
+        break;
+      }
       case "--help":
       case "-h": {
         process.stderr.write(
@@ -71,6 +77,7 @@ function parseArgs(argv: string[]): CliArgs {
             "  --port <number>         SSE 端口 (默认 3100)",
             "  --host <addr>           SSE 绑定地址 (默认 127.0.0.1)",
             "  --config <path>         专家配置文件路径",
+            "  --log-level <level>     silly|debug|info|warn|error (默认 info)",
             "",
           ].join("\n") + "\n"
         );
@@ -243,8 +250,17 @@ async function startSse(port: number, host: string, configPath: string): Promise
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
+  // Level-gated logger: all levels write to stderr (blocked stdout in stdio
+  // mode is the MCP protocol channel, so normal logs must never reach it).
+  const logLevel = normalizeLevel(args.logLevel);
+  const logger = createLogger(logLevel);
+  // Warn when the user passed an unknown level so the fallback is observable.
+  if (args.logLevel && args.logLevel.toLowerCase() !== logLevel) {
+    logger.warn(`[cli] 未知的 --log-level "${args.logLevel}"，已降级为 info`);
+  }
+
   // Load config (may throw with a clear message on invalid experts.json).
-  const config = await loadConfig(args.config);
+  const config = await loadConfig(args.config, { logger });
   server = createServer(config);
 
   if (args.transport === "stdio") {

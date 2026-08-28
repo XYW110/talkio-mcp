@@ -56,7 +56,7 @@ export function formatErrorSection(items: ConsultationItem[]): string {
   const lines: string[] = [];
   lines.push("### ⚠️ 咨询失败的专家");
   lines.push("");
-for (const item of items) {
+  for (const item of items) {
     lines.push(`- **${item.target.expert.icon} ${item.target.card.name}**: ${item.error ?? "未知错误"}`);
   }
   return lines.join("\n");

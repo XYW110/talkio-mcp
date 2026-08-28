@@ -21,6 +21,7 @@ import type {
 import { getAdapter, isMockProviderEnabled } from "../providers/registry.js";
 import { resolveProviderCredentials } from "../config.js";
 import { redactPII } from "../utils/redact.js";
+import { defaultLogger, type Logger } from "../utils/log.js";
 import type { ResolvedCard } from "../tools/select-cards.js";
 
 /** A single turn in the dialogue transcript. */
@@ -39,6 +40,8 @@ export interface DialogueOptions {
   mode: "debate" | "relay";
   rounds: number; // default 2, max 5
   summarize: boolean; // default true
+  /** Injectable logging sink; defaults to the module-level info logger. */
+  logger?: Logger;
 }
 
 /** Result of runDialogue: ordered turns + optional summary. */
@@ -169,6 +172,8 @@ export async function runDialogue(
   opts: DialogueOptions,
   config: AppConfig
 ): Promise<DialogueResult> {
+  const logger = opts.logger ?? defaultLogger;
+  const startedAt = Date.now();
   const rounds = Math.max(1, Math.min(5, Math.trunc(opts.rounds)));
   const targets = opts.targets;
   const turns: DialogueTurn[] = [];
@@ -315,6 +320,13 @@ export async function runDialogue(
       // Summary is best-effort; leave undefined on failure.
     }
   }
+
+  // Observability: emit a compact [summary] typeline (stderr, never in report).
+  const failed = turns.filter((t) => t.content.includes("⚠️")).length;
+  const ok = turns.length - failed;
+  logger.info(
+    `[summary] brainstorm rounds=${rounds} turns=${turns.length} summary=${summary ? "yes" : "no"} ok=${ok} failed=${failed} total_ms=${Date.now() - startedAt}`
+  );
 
   return { turns, summary };
 }

@@ -183,6 +183,45 @@ provider 抛错、编排错误回显等包含用户输入的错误文案，同�
 
 返回给 MCP 客户端的咨询报告 / 讨论实录保持原文——你的数据归你。如果要连同返回结果一起脱敏，可在调用方侧对响应做同样处理。
 
+## 日志与诊断
+
+所有日志一律写入 **stderr**（`stdio` 传输下 stdout 是 MCP 协议通道，任何诊断都不得走 stdout），且**不带时间戳前缀**，保证每行都是完整文本、便于解析。
+
+### 日志级别
+
+启动时用 `--log-level <level>` 控制输出阈值（默认 `info`）：
+
+| 级别 | 说明 |
+| --- | --- |
+| `silly` | 全量调试 |
+| `debug` | 调试细节 |
+| `info`  | 常规信息（默认） |
+| `warn`  | 警告 |
+| `error` | 仅错误 |
+
+级别大小写不敏感；无效或缺失的值回落为 `info` 并打一条 `[cli]` 警告。
+
+### 汇总行（typeline）
+
+每次咨询 / 头脑风暴结束后，logger 会输出一行 `[summary]` 汇总（仅进日志，**绝不写入返回报告**）：
+
+```text
+[summary] consult cards=3 ok=2 failed=1 avg_ms=1842 total_ms=4021
+[summary] brainstorm rounds=2 turns=4 summary=yes ok=4 failed=0 total_ms=9375
+```
+
+consult 行：`cards`=实际咨询卡数，`ok`/`failed`=成功 / 失败条数，`avg_ms`=平均时长，`total_ms`=总时长。brainstorm 行：`rounds`=轮数，`turns`=对话条数，`summary`=是否产出总结，`ok`/`failed`=成功 / 失败条数，`total_ms`=总时长。
+
+### 错误压缩
+
+当**全部**角色卡都咨询失败时，返回报告会压缩为**一条**失败项：文案形如
+
+```text
+全部 3 张卡咨询失败（均为 provider 调用失败）: [首个错误摘要]
+```
+
+首个错误匹配超时（`超时` / `timed out` / `timeout` / `TimedOut`）时追加 `（含超时）`。部分失败不压缩，各失败项原样保留。
+
 ## 工具用法
 
 ### list_cards — 列出可用角色卡

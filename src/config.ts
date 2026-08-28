@@ -28,6 +28,7 @@ import type {
   ProviderConfig,
   ProviderCredentials,
 } from "./types.js";
+import { defaultLogger, type Logger } from "./utils/log.js";
 
 // ---------------------------------------------------------------------------
 // zod schemas（描述 experts.json 的新三段结构）
@@ -235,7 +236,11 @@ function migrateLegacyConfig(rawJson: unknown): unknown {
 }
 
 /** 将迁移结果写回 experts.json（写前先备份 .bak）。失败不致命，仅记录。 */
-async function writeMigratedConfig(resolvedPath: string, migrated: unknown): Promise<void> {
+async function writeMigratedConfig(
+  resolvedPath: string,
+  migrated: unknown,
+  logger: Logger
+): Promise<void> {
   const backupPath = `${resolvedPath}.bak`;
   try {
     await copyFile(resolvedPath, backupPath);
@@ -244,11 +249,11 @@ async function writeMigratedConfig(resolvedPath: string, migrated: unknown): Pro
       JSON.stringify(migrated, null, 2) + "\n",
       "utf-8"
     );
-    console.error(`[config] 检测到旧格式配置，已自动迁移为三段结构（experts / models / cards）并写回`);
-    console.error(`[config] 迁移前备份: ${backupPath}`);
+    logger.info(`[config] 检测到旧格式配置，已自动迁移为三段结构（experts / models / cards）并写回`);
+    logger.info(`[config] 迁移前备份: ${backupPath}`);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    console.error(
+    logger.error(
       `[config] 迁移写回失败（按内存中的新结构继续启动，文件未变更）: ${reason}`
     );
   }
@@ -261,6 +266,8 @@ async function writeMigratedConfig(resolvedPath: string, migrated: unknown): Pro
 export interface LoadConfigOptions {
   /** 是否跳过 dotenv 加载（默认 false；测试时可置 true 避免读取本地 .env） */
   skipDotenv?: boolean;
+  /** 注入 logger；缺省用模块级 defaultLogger（info，与现状可见行为一致） */
+  logger?: Logger;
 }
 
 /** id 唯一性检查：同一类条目 id 重复为致命错误。 */
@@ -321,6 +328,8 @@ export async function loadConfig(
   configPath?: string,
   options: LoadConfigOptions = {}
 ): Promise<AppConfig> {
+  const logger = options.logger ?? defaultLogger;
+
   if (!options.skipDotenv) {
     // 安静加载：.env 不存在不算错误（生产环境可直接注入环境变量）
     dotenvConfig({ quiet: true });
@@ -336,7 +345,7 @@ export async function loadConfig(
     rawText = await readFile(resolvedPath, "utf-8");
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    console.error(`[config] 无法读取配置文件 ${resolvedPath}: ${reason}`);
+    logger.error(`[config] 无法读取配置文件 ${resolvedPath}: ${reason}`);
     process.exit(1);
   }
 
@@ -346,26 +355,26 @@ export async function loadConfig(
     rawJson = JSON.parse(rawText);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    console.error(`[config] 配置文件不是合法 JSON ${resolvedPath}: ${reason}`);
+    logger.error(`[config] 配置文件不是合法 JSON ${resolvedPath}: ${reason}`);
     process.exit(1);
   }
 
   // ---- 旧格式迁移（幂等；写前备份 .bak） ----
   if (isLegacyExpertsFile(rawJson)) {
     const migrated = migrateLegacyConfig(rawJson);
-    await writeMigratedConfig(resolvedPath, migrated);
+    await writeMigratedConfig(resolvedPath, migrated, logger);
     rawJson = migrated;
   }
 
   // ---- zod 校验（打印所有无效条目） ----
   const parsed = expertsFileSchema.safeParse(rawJson);
   if (!parsed.success) {
-    console.error(
+    logger.error(
       `[config] 配置文件校验失败 ${resolvedPath}，共 ${parsed.error.issues.length} 处问题：`
     );
     for (const issue of parsed.error.issues) {
       const where = issue.path.length > 0 ? issue.path.join(".") : "(root)";
-      console.error(`  - ${where}: ${issue.message}`);
+      logger.error(`  - ${where}: ${issue.message}`);
     }
     process.exit(1);
   }
@@ -393,17 +402,17 @@ export async function loadConfig(
   validateReferences(file, fatalErrors);
 
   if (fatalErrors.length > 0) {
-    console.error(
+    logger.error(
       `[config] 配置文件存在 ${fatalErrors.length} 处致命问题 ${resolvedPath}：`
     );
     for (const msg of fatalErrors) {
-      console.error(`  - ${msg}`);
+      logger.error(`  - ${msg}`);
     }
     process.exit(1);
   }
 
   // ---- API key 状态检查（仅警告，不退出；design.md §7 惰性检测策略） ----
-  warnMissingApiKeys(file.providers, file.models);
+  warnMissingApiKeys(file.providers, file.models, logger);
 
   return {
     providers: file.providers,
@@ -416,7 +425,8 @@ export async function loadConfig(
 /** 检查各 provider 的 API key 存在性；缺失仅警告（运行时惰性抛错）。 */
 function warnMissingApiKeys(
   providers: Record<string, ProviderConfig>,
-  models: ModelConfig[]
+  models: ModelConfig[],
+  logger: Logger
 ): void {
   const seen = new Set<string>();
   for (const model of models) {
@@ -424,7 +434,7 @@ function warnMissingApiKeys(
     seen.add(model.providerId);
     const provider = providers[model.providerId];
     if (provider && !process.env[provider.apiKeyEnv]) {
-      console.error(
+      logger.error(
         `[config] 警告: provider "${model.providerId}" 的环境变量 ${provider.apiKeyEnv} 未设置，` +
           `使用该 provider 的角色卡调用将失败（不影响其他卡）`
       );

@@ -6,3 +6,4 @@ experts.local.json
 .codebuddy/
 
 /.snow
+admin-web/tsconfig.tsbuildinfo

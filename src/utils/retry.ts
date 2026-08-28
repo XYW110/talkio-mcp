@@ -1,12 +1,16 @@
 /**
  * fetch 封装：AbortController 超时 + 指数退避重试（design.md §7）。
  *
- * 策略：
+* 策略：
  * - 429 与 5xx、网络层 TypeError → 指数退避重试（默认最多 3 次尝试，1s → 2s）
  * - 400/401/403 等其他 4xx → 不重试，直接抛 HttpError（带状态码）
  * - 超时（AbortError）→ 抛 TimeoutError，不重试
  * - 抛出的错误信息绝不包含 Authorization / x-api-key 等密钥材料（design.md §8）
+ *
+ * 日志：走统一分级 logger（src/utils/log.ts）。重试提示为 info 级（默认可见）；
+ * 调用方可注入 logger 以便按需收敛。注意避免此处 import 引向 log.ts 的循环依赖。
  */
+import { defaultLogger, type Logger } from "./log.js";
 
 /** HTTP 错误（带状态码，供上层判断是否重试/如何展示） */
 export class HttpError extends Error {
@@ -40,6 +44,8 @@ export interface FetchWithRetryOptions {
   maxAttempts?: number;
   /** 首次退避基数（毫秒），默认 1000；之后每次 ×2 */
   baseDelayMs?: number;
+  /** 注入 logger；缺省用模块级 defaultLogger（info，与现状 stderr 可见行为一致） */
+  logger?: Logger;
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -91,6 +97,7 @@ export async function fetchWithRetry(
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   const baseDelayMs = options.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
+  const logger = options.logger ?? defaultLogger;
 
   let lastError: Error | undefined;
 
@@ -120,7 +127,7 @@ export async function fetchWithRetry(
         if (isRetryableStatus(res.status) && attempt < maxAttempts) {
           lastError = httpError;
           const delay = baseDelayMs * 2 ** (attempt - 1);
-          console.error(
+          logger.info(
             `[retry] ${url} 返回 ${res.status}，${delay}ms 后进行第 ${attempt + 1}/${maxAttempts} 次尝试`
           );
           await sleep(delay);
@@ -145,7 +152,7 @@ export async function fetchWithRetry(
       if (err instanceof TypeError && attempt < maxAttempts) {
         lastError = err;
         const delay = baseDelayMs * 2 ** (attempt - 1);
-        console.error(
+        logger.info(
           `[retry] ${url} 网络错误（${redactSecrets(err.message)}），${delay}ms 后进行第 ${attempt + 1}/${maxAttempts} 次尝试`
         );
         await sleep(delay);
