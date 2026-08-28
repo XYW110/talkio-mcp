@@ -4,11 +4,11 @@
 
 ## 特性
 
-- **`list_experts`** — 列出当前可用专家的 id、名称、provider、模型，以及是否已配置 API Key。调用其他工具前先用它确认专家 id 与就绪状态。
-- **`consult_experts`** — 向一组 AI 专家并行咨询同一个问题，返回结构化的多视角咨询报告。单个专家失败不会阻塞其他专家，失败项以 ⚠️ 标注。
-- **`brainstorm`** — 组织专家围绕主题进行多轮对话（**debate** 辩论 / **relay** 接龙），专家可见彼此观点并相互质疑、补充、深化，最终可选产出总结。
+- **`list_cards`** — 列出当前可用角色卡（专家+模型的绑定）的 id、名称、专家名、模型名、Provider，以及是否已配置 API Key。调用其他工具前先用它确认角色卡 id 与就绪状态。**不再有 `list_experts`**，专家和模型已解绑为独立概念。
+- **`consult_experts`** — 向一组角色卡并行咨询同一个问题，返回结构化的多视角咨询报告。单张卡失败不会阻塞其他卡，失败项以 ⚠️ 标注。
+- **`brainstorm`** — 组织多张角色卡围绕主题进行多轮对话（**debate** 辩论 / **relay** 接龙），卡片可见彼此观点并相互质疑、补充、深化，最终可选产出总结。
 - **多 Provider 支持** — OpenAI、Anthropic，以及任意 OpenAI 兼容 API（DeepSeek、Moonshot、Qwen 等，纯配置接入，无需新代码）。
-- **可扩展专家系统** — 通过 `experts.json` 自定义专家角色（系统提示词、模型、温度等），随附 5 个预置专家模板。
+- **三概念体系** — **专家**（人设/参数）与**模型**（引擎）解绑为独立一等概念，通过**角色卡**绑定专家+模型。`experts.json` 分三段存储。
 - **双传输模式** — Stdio（本地，默认）与 HTTP/SSE（远程）。
 - **密钥安全** — API Key 仅通过环境变量注入，绝不写入配置文件。
 - **容器化部署** — 多阶段 Dockerfile + docker-compose 一键启动。
@@ -26,17 +26,10 @@ npm run build
 
 ### experts.json
 
-专家与 Provider 定义文件，默认读取仓库根目录的 `experts.json`（可用 `--config <path>` 或环境变量 `TALKIO_EXPERTS_CONFIG` 覆盖）。
+专家、模型、角色卡与 Provider 定义文件，默认读取仓库根目录的 `experts.json`（可用 `--config <path>` 或环境变量 `TALKIO_EXPERTS_CONFIG` 覆盖）。旧格式（专家带 provider/model）会在启动时自动迁移成三段式并备份 `.bak`。
 
 ```jsonc
 {
-  "defaults": {
-    "provider": "openai", // 专家未指定 provider 时使用的缺省值
-    "model": "gpt-4o-mini",
-    "temperature": 0.7,
-    "maxTokens": 2048,
-    "timeoutMs": 120000 // 单次 AI 调用超时（毫秒）
-  },
   "providers": {
     "openai": {
       "type": "openai", // openai | anthropic | openai-compatible
@@ -47,23 +40,35 @@ npm run build
       "type": "anthropic",
       "baseUrl": "https://api.anthropic.com",
       "apiKeyEnv": "ANTHROPIC_API_KEY"
-    },
-    "deepseek": {
-      "type": "openai-compatible",
-      "baseUrl": "https://api.deepseek.com/v1",
-      "apiKeyEnv": "DEEPSEEK_API_KEY"
     }
   },
   "experts": [
     {
-      "id": "architect", // 唯一 id，工具调用时按 id 选择专家
+      "id": "architect", // 唯一 id
       "name": "架构师",
       "icon": "🏛️",
       "systemPrompt": "你是一位资深软件架构师……",
-      "provider": "openai", // 引用 providers 中的 key，可省略走 defaults
-      "model": "gpt-4o", // 专家级字段覆盖 defaults
       "temperature": 0.7,
+      "enabled": true // 专家本身不含 provider/model
+    }
+  ],
+  "models": [
+    {
+      "id": "openai-gpt-4o", // 内部 id：${providerId}-${modelSlug}
+      "providerId": "openai", // 引用 providers 中的 key
+      "modelId": "gpt-4o", // 传给上游 API 的模型名
+      "displayName": "GPT-4o",
       "enabled": true
+    }
+  ],
+  "cards": [
+    {
+      "id": "architect-openai-gpt-4o", // 角色卡 id，MCP 调用时用这个
+      "name": "架构师 · GPT-4o",
+      "expertId": "architect", // 引用 experts 中的 id
+      "modelId": "openai-gpt-4o", // 引用 models 中的 id
+      "enabled": true,
+      "isDefault": true // 可选，默认卡
     }
   ]
 }
@@ -120,7 +125,7 @@ DEEPSEEK_API_KEY=sk-...
 }
 ```
 
-接入后先调用 `list_experts` 查看专家 id 与就绪状态，再把 id 传给 `consult_experts` / `brainstorm`。缺 key 的专家仍可显式指定，但该项会失败。
+接入后先调用 `list_cards` 查看角色卡 id 与就绪状态，再把 id 传给 `consult_experts` / `brainstorm` 的 `cards` 参数。缺 key 的角色卡仍可显式指定，但该项会失败。
 
 ### Snow CLI
 
@@ -140,15 +145,53 @@ DEEPSEEK_API_KEY=sk-...
 }
 ```
 
+## 隐私脱敏
+
+本 MCP 是给 Agent 调用的，隐私采用**三层策略**：协议层引导 + 规则层自动掩码 + 错误层脱敏。返回给客户端的报告**不脱敏**（用户自己的数据原样保留）。
+
+### 协议层：调用方 Agent 预替换无规律 PII
+
+姓名、地名、精确地址、机构名等**无固定格式**的 PII，无法用正则识别，由调用方 Agent 在调用前替换为占位符。`consult_experts` / `brainstorm` 的工具描述中已写明该约定：
+
+| 原信息 | 替换为 | 示例 |
+|---|---|---|
+| 人名 / 称呼 | `[人名]` | "张三建议…" → "[人名] 建议…" |
+| 地名 / 地址 | `[地名]` | "住在北京市海淀区" → "住在 [地名]" |
+| 机构 / 公司名 | `[机构]` | 可选，按需替换 |
+
+占位符会被原样透传给 LLM，用于保持语境；它们不是 PII，不会被二次替换。
+
+### 规则层：发往 LLM 前的自动掩码
+
+即使调用方忘记替换，`consult_experts` 的 `question`/`context`、`brainstorm` 的 `topic`/转写/总结在发往 LLM 前会自动掩码以下**有明确格式**的 PII：
+
+| 类型 | 掩码为 |
+|---|---|
+| 大陆手机号（11 位，1 开头第二位 3-9） | `[手机号]` |
+| 18 位身份证号（末位 X/x） | `[身份证号]` |
+| 邮箱地址 | `[邮箱]` |
+| 银行卡号（16-19 位连续数字） | `[银行卡号]` |
+| 微信号（微信/weixin/vx 前缀 + 账号） | `微信号 [微信号]`（保留前缀文字） |
+
+采用**克制**策略：只替换明显是 PII 的 token，防止误伤 15 位订单号、400 客服号等普通文本。
+
+### 错误层：错误信息脱敏
+
+provider 抛错、编排错误回显等包含用户输入的错误文案，同样经过上述规则掩码，避免二次泄漏。
+
+### 不脱敏输出
+
+返回给 MCP 客户端的咨询报告 / 讨论实录保持原文——你的数据归你。如果要连同返回结果一起脱敏，可在调用方侧对响应做同样处理。
+
 ## 工具用法
 
-### list_experts — 列出可用专家
+### list_cards — 列出可用角色卡
 
-只读发现工具，不调用任何 AI Provider。默认只返回 `enabled: true` 的专家。每位专家带 `ready`；缺 key 时仍列出，并标明缺哪个环境变量（`missingEnv`），不会从发现列表删除。
+只读发现工具，不调用任何 AI Provider。默认只返回 `enabled: true` 的角色卡。每张卡带 `ready` 与解析出的专家名/模型名；缺 key 时仍列出，并标明缺哪个环境变量（`missingEnv`），不会从发现列表删除。
 
-| 参数              | 类型    | 必填 | 说明                           |
-| ----------------- | ------- | ---- | ------------------------------ |
-| `includeDisabled` | boolean | 否   | 是否包含未启用专家，默认 false |
+| 参数              | 类型    | 必填 | 说明                             |
+| ----------------- | ------- | ---- | -------------------------------- |
+| `includeDisabled` | boolean | 否   | 是否包含未启用角色卡，默认 false |
 
 示例：
 
@@ -158,18 +201,18 @@ DEEPSEEK_API_KEY=sk-...
 }
 ```
 
-### consult_experts — 专家团咨询
+### consult_experts — 角色卡咨询
 
-并行咨询多个专家，返回 Markdown 咨询报告。
+并行咨询多张角色卡（每张卡解析为对应的专家人设 + 模型引擎），返回 Markdown 咨询报告。
 
-未指定 `experts` 时，只选已启用且对应 API Key 已配置的专家，按 `experts.json` 顺序最多 3 位；缺 key 的专家会在报告末尾说明原因，不会发请求。显式传入 `experts` 时按名单调用（缺 key 的该项失败，不影响其他人）。
+未指定 `cards` 时，只选已启用且对应 API Key 已配置的角色卡，按 `experts.json` 顺序最多 3 张；缺 key 的卡会在报告末尾说明原因，不会发请求。显式传入 `cards` 时按名单调用（缺 key 的该项失败，不影响其他卡）。传入不存在的卡 id 时返回错误并列出全部可用卡。
 
 | 参数       | 类型     | 必填 | 说明                                                  |
 | ---------- | -------- | ---- | ----------------------------------------------------- |
 | `question` | string   | 是   | 要咨询的问题（去空白后不能为空）                      |
 | `context`  | string   | 否   | 背景信息（代码片段、约束等）                          |
-| `experts`  | string[] | 否   | 专家 id 列表；缺省使用有 key 的启用专家（最多 3 位）  |
-| `parallel` | boolean  | 否   | 是否并行调用专家（默认 true）；false 时按顺序逐个调用 |
+| `cards`    | string[] | 否   | 角色卡 id 列表；缺省使用有 key 的启用角色卡（最多 3 张） |
+| `parallel` | boolean  | 否   | 是否并行调用（默认 true）；false 时按顺序逐个调用     |
 
 示例：
 
@@ -177,23 +220,23 @@ DEEPSEEK_API_KEY=sk-...
 {
   "question": "这个订单系统如何做水平扩展？",
   "context": "当前单体架构，峰值 QPS 2000，MySQL 主从",
-  "experts": ["architect", "performance"]
+  "cards": ["architect-openai-gpt-4o", "performance-deepseek-deepseek-chat"]
 }
 ```
 
 ### brainstorm — 多轮头脑风暴
 
-专家围绕主题多轮对话，输出讨论实录与可选总结。
+多张角色卡围绕主题多轮对话，输出讨论实录与可选总结。
 
-未指定时默认最多 3 位有 key 的启用专家、1 轮、不总结。显式传入 `experts` / `rounds` / `summarize` 时按调用方指定（`experts` 上限仍为 6）。
+未指定时默认最多 3 张有 key 的启用角色卡、1 轮、不总结。显式传入 `cards` / `rounds` / `summarize` 时按调用方指定（`cards` 上限仍为 6）。
 
-| 参数        | 类型            | 必填 | 说明                                                            |
-| ----------- | --------------- | ---- | --------------------------------------------------------------- |
-| `topic`     | string          | 是   | 讨论主题（去空白后不能为空）                                    |
-| `mode`      | debate 或 relay | 否   | 辩论（默认）或接龙                                              |
-| `rounds`    | integer         | 否   | 轮数，1-5，默认 1                                               |
-| `experts`   | string[]        | 否   | 专家 id 列表（上限 6 位）；缺省为有 key 的启用专家（最多 3 位） |
-| `summarize` | boolean         | 否   | 是否产出总结，默认 false                                        |
+| 参数        | 类型            | 必填 | 说明                                                              |
+| ----------- | --------------- | ---- | ----------------------------------------------------------------- |
+| `topic`     | string          | 是   | 讨论主题（去空白后不能为空）                                      |
+| `mode`      | debate 或 relay | 否   | 辩论（默认）或接龙                                                |
+| `rounds`    | integer         | 否   | 轮数，1-5，默认 1                                                 |
+| `cards`     | string[]        | 否   | 角色卡 id 列表（上限 6 张）；缺省为有 key 的启用角色卡（最多 3 张） |
+| `summarize` | boolean         | 否   | 是否产出总结，默认 false                                          |
 
 示例：
 

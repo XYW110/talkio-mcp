@@ -1,11 +1,12 @@
 /**
  * Single-round parallel consultation engine.
  *
- * Each enabled expert is called concurrently via Promise.allSettled so that
- * one expert's failure never blocks the others. A single-expert call helper
- * is exported for reuse by the serial (parallel=false) path.
+ * Each selected card's target (expert + provider + model) is called
+ * concurrently via Promise.allSettled so that one card's failure never blocks
+ * the others. A single-call helper is exported for reuse by the serial
+ * (parallel=false) path.
  */
-import type { AppConfig, ExpertConfig } from "../types.js";
+import type { AppConfig } from "../types.js";
 import type {
   ChatMessage,
   ChatParams,
@@ -13,10 +14,12 @@ import type {
 } from "../providers/adapter.js";
 import { getAdapter, isMockProviderEnabled } from "../providers/registry.js";
 import { resolveProviderCredentials } from "../config.js";
+import { redactPII } from "../utils/redact.js";
+import type { ResolvedCard } from "../tools/select-cards.js";
 
-/** Per-expert outcome of a single-round consultation. */
+/** Per-card outcome of a single-round consultation. */
 export interface ConsultationItem {
-  expert: ExpertConfig;
+  target: ResolvedCard;
   ok: boolean;
   /** Present when ok === true */
   content?: string;
@@ -27,36 +30,41 @@ export interface ConsultationItem {
 }
 
 /**
- * Build the chat message list for one expert given a question and optional
+ * Build the chat message list for one target given a question and optional
  * context. The expert's systemPrompt becomes the system message; the user
  * message combines context (if any) with the question.
+ *
+ * Privacy: user-provided PII (phone / ID / email / card / wechat) is masked
+ * via redactPII before being sent to the LLM. Caller agents are instructed
+ * (via the tool descriptions) to replace names / locations with placeholders
+ * like [人名] / [地名] beforehand.
  */
-export function buildExpertMessages(
-  expert: ExpertConfig,
+export function buildTargetMessages(
+  target: ResolvedCard,
   question: string,
   context?: string
 ): ChatMessage[] {
   const messages: ChatMessage[] = [];
-  if (expert.systemPrompt) {
-    messages.push({ role: "system", content: expert.systemPrompt });
+  if (target.expert.systemPrompt) {
+    messages.push({ role: "system", content: target.expert.systemPrompt });
   }
   const userContent =
     context && context.trim().length > 0
       ? `背景信息:\n${context.trim()}\n\n问题:\n${question}`
       : question;
-  messages.push({ role: "user", content: userContent });
+  messages.push({ role: "user", content: redactPII(userContent) });
   return messages;
 }
 
 /**
- * Resolve a provider adapter + credentials for an expert from AppConfig.
+ * Resolve a provider adapter + credentials for a card target from AppConfig.
  * Credentials are resolved lazily from environment variables via
  * resolveProviderCredentials (design §7). Returns null when the referenced
  * provider is not configured, in which case the caller surfaces a clear
  * error rather than crashing.
  */
-function resolveProvider(expert: ExpertConfig, config: AppConfig) {
-  const providerConfig = config.providers[expert.provider];
+function resolveProvider(providerName: string, config: AppConfig) {
+  const providerConfig = config.providers[providerName];
   if (!providerConfig) {
     return null;
   }
@@ -69,84 +77,86 @@ function resolveProvider(expert: ExpertConfig, config: AppConfig) {
   }
   return {
     adapter: getAdapter(providerConfig.type),
-    creds: resolveProviderCredentials(config, expert.provider),
+    creds: resolveProviderCredentials(config, providerName),
   };
 }
 
 /**
- * Call a single expert. Exported so the serial path (parallel=false) can reuse
- * the exact same call logic without reimplementing message construction.
+ * Call a single card target. Exported so the serial path (parallel=false) can
+ * reuse the exact same call logic without reimplementing message construction.
  *
  * Errors are caught and returned as an item with ok=false (never thrown), so
  * callers can decide how to aggregate.
  */
 export async function callExpert(
-  expert: ExpertConfig,
+  target: ResolvedCard,
   question: string,
   config: AppConfig,
   context?: string
 ): Promise<ConsultationItem> {
   try {
-    const resolved = resolveProvider(expert, config);
+    const resolved = resolveProvider(target.providerName, config);
     if (!resolved) {
       return {
-        expert,
+        target,
         ok: false,
-        error: `未找到 provider 配置: "${expert.provider}"`,
+        error: `未找到 provider 配置: "${target.providerName}"`,
       };
     }
     const { adapter, creds } = resolved;
     const params: ChatParams = {
-      model: expert.model,
-      messages: buildExpertMessages(expert, question, context),
-      temperature: expert.temperature,
-      maxTokens: expert.maxTokens,
-      timeoutMs: expert.timeoutMs,
+      model: target.modelId,
+      messages: buildTargetMessages(target, question, context),
+      temperature: target.expert.temperature,
+      maxTokens: target.expert.maxTokens,
+      timeoutMs: target.expert.timeoutMs,
     };
     const result: ChatResult = await adapter.chat(params, creds);
     if (!result || typeof result.content !== "string") {
       return {
-        expert,
+        target,
         ok: false,
         error: "provider 返回了无效的响应内容",
       };
     }
     return {
-      expert,
+      target,
       ok: true,
       content: result.content,
       usage: result.usage,
     };
-  } catch (err) {
+} catch (err) {
+    // Privacy: sanitize the error text (it may echo provider/user input) —
+    // rule-based PII is masked before it reaches the client-facing report.
     const message = err instanceof Error ? err.message : String(err);
-    return { expert, ok: false, error: message };
+    return { target, ok: false, error: redactPII(message) };
   }
 }
 
 /**
- * Run a single-round parallel consultation across the given experts.
+ * Run a single-round parallel consultation across the given card targets.
  *
- * - parallel=true (default): Promise.allSettled over all experts concurrently.
- * - parallel=false: experts are called sequentially in order, reusing callExpert.
+ * - parallel=true (default): Promise.allSettled over all targets concurrently.
+ * - parallel=false: targets are called sequentially in order, reusing callExpert.
  *
- * A single expert failing never affects the others; failures are reported
+ * A single card failing never affects the others; failures are reported
  * per-item with ok=false and an error message.
  */
 export async function runConsultation(
   question: string,
-  experts: ExpertConfig[],
+  targets: ResolvedCard[],
   config: AppConfig,
   options: { context?: string; parallel?: boolean } = {}
 ): Promise<ConsultationItem[]> {
   const { context, parallel = true } = options;
 
-  if (experts.length === 0) {
+  if (targets.length === 0) {
     return [];
   }
 
   if (parallel) {
     const settled = await Promise.allSettled(
-      experts.map((expert) => callExpert(expert, question, config, context))
+      targets.map((target) => callExpert(target, question, config, context))
     );
     // allSettled on a function that already catches means every result is
     // "fulfilled"; map back to the item. A rejected result here would indicate
@@ -155,17 +165,17 @@ export async function runConsultation(
       if (s.status === "fulfilled") return s.value;
       const err =
         s.reason instanceof Error ? s.reason.message : String(s.reason);
-      const expert = experts[i];
-      if (!expert)
+      const target = targets[i];
+      if (!target)
         throw new Error("unreachable: allSettled index always aligns");
-      return { expert, ok: false as const, error: err };
+      return { target, ok: false as const, error: err };
     });
   }
 
-  // Serial path: call each expert one after another in configured order.
+  // Serial path: call each target one after another in configured order.
   const items: ConsultationItem[] = [];
-  for (const expert of experts) {
-    items.push(await callExpert(expert, question, config, context));
+  for (const target of targets) {
+    items.push(await callExpert(target, question, config, context));
   }
   return items;
 }

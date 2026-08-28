@@ -4,17 +4,15 @@ import type {
   ChatResult,
   ProviderAdapter,
 } from "../src/providers/adapter.js";
-import type { ExpertConfig } from "../src/types.js";
-import type { AppConfig } from "../src/config.js";
+import type { AppConfig } from "../src/types.js";
+import type { ResolvedCard } from "../src/tools/select-cards.js";
 
 // vi.hoisted 创建一个模块级可变 holder，vi.mock 工厂中可安全引用
-// （vi.mock 是 hoisted 的，普通 let 在工厂函数中不可见）
 const { stubHolder } = vi.hoisted(() => ({
   stubHolder: { current: undefined as ProviderAdapter | undefined },
 }));
 
-// 统一 mock 掉 registry.getAdapter：让编排器拿到测试注入的 stub adapter，
-// 而非真实的 OpenAI/Anthropic adapter。parallel.ts 与 dialogue.ts 都引用此模块。
+// 统一 mock 掉 registry.getAdapter：让编排器拿到测试注入的 stub adapter
 vi.mock("../src/providers/registry.js", () => ({
   getAdapter: () => {
     if (!stubHolder.current)
@@ -29,20 +27,14 @@ import { runDialogue } from "../src/orchestrator/dialogue.js";
 
 /**
  * 契约（见 design.md §3/§6 与任务书）：
- *   runConsultation(question, experts, config, options?)
- *     → Promise.allSettled 并行；单个 expert 失败不影响整体；
- *       返回 ConsultationItem[]（{ expert, ok, result?, error? }）
- *   runDialogue(opts, config)
+ *   runConsultation(question, targets: ResolvedCard[], config, options?)
+ *     → Promise.allSettled 并行；单个 target 失败不影响整体；
+ *       返回 ConsultationItem[]（{ target, ok, content?, error? }）
+ *   runDialogue(opts: { targets, ... }, config)
  *     → { turns: DialogueTurn[], summary? }
- *     DialogueTurn { round, expertId, expertName, icon, content }
- *     - debate：每轮所有 expert 并行发言，可见此前轮次全部发言
- *     - relay：expert 依序串行发言，可见运行中的 transcript
- *     - rounds 生效：turn 数 = rounds × experts（全部成功时）
- *     - summarize=true 时产生 summary
- *     - 失败 turn 记录为占位（⚠️ name 本轮缺席），对话继续
  */
 
-/** 构造一个可控的 stub adapter：可按 expert/调用次数返回成功或失败 */
+/** 构造一个可控的 stub adapter */
 function makeStubAdapter(
   behavior: (params: ChatParams, callIndex: number) => Promise<ChatResult>
 ): ProviderAdapter & { calls: ChatParams[] } {
@@ -67,10 +59,8 @@ function makeEchoAdapter(
 }
 
 /**
- * Build a minimal AppConfig. The real adapter injection happens via
- * vi.mock("../src/providers/registry.js") — makeConfig sets stubHolder.current
- * so that getAdapter() returns the test's stub adapter for all provider types.
- * Also sets TEST_KEY env so resolveProviderCredentials doesn't throw.
+ * Build a minimal AppConfig. Adapter injection via vi.mock.
+ * targets carry providerName + modelId; resolveProvider only needs config.providers.
  */
 function makeConfig(adapter: ProviderAdapter): AppConfig {
   stubHolder.current = adapter;
@@ -80,36 +70,50 @@ function makeConfig(adapter: ProviderAdapter): AppConfig {
       openai: { type: "openai" as const, baseUrl: "", apiKeyEnv: "TEST_KEY" },
     },
     experts: [],
-  } as unknown as AppConfig;
+    models: [],
+    cards: [],
+  };
 }
 
-function makeExpert(
+function makeTarget(
   id: string,
-  overrides: Partial<ExpertConfig> = {}
-): ExpertConfig {
+  overrides: Partial<ResolvedCard> = {}
+): ResolvedCard {
+  const expertId = overrides.expert?.id ?? id;
   return {
-    id,
-    name: `专家-${id}`,
-    icon: "🤖",
-    systemPrompt: `你是 ${id}`,
-    provider: "openai",
-    model: "test-model",
-    temperature: 0.7,
-    maxTokens: 1024,
-    timeoutMs: 5000,
-    enabled: true,
+    card: {
+      id: `card-${id}`,
+      name: id,
+      expertId: expertId,
+      modelId: "m-test",
+      enabled: true,
+      ...overrides.card,
+    },
+    expert: {
+      id: expertId,
+      name: `专家-${expertId}`,
+      icon: "🤖",
+      systemPrompt: `你是 ${expertId}`,
+      temperature: 0.7,
+      maxTokens: 1024,
+      timeoutMs: 5000,
+      enabled: true,
+      ...overrides.expert,
+    },
+    providerName: "openai",
+    modelId: "test-model",
     ...overrides,
-  } as ExpertConfig;
+  };
 }
 
 describe("runConsultation 并行编排", () => {
-  it("全部成功：每个 expert 都有 result，无 error", async () => {
+  it("全部成功：每个 target 都有 content，无 error", async () => {
     const adapter = makeEchoAdapter();
-    const experts = [makeExpert("a"), makeExpert("b"), makeExpert("c")];
+    const targets = [makeTarget("a"), makeTarget("b"), makeTarget("c")];
 
     const results = await runConsultation(
       "问题?",
-      experts,
+      targets,
       makeConfig(adapter)
     );
 
@@ -119,11 +123,10 @@ describe("runConsultation 并行编排", () => {
       expect(typeof r.content).toBe("string");
       expect((r.content as string).length).toBeGreaterThan(0);
     }
-    // 并行调用：每个 expert 各 1 次
     expect(adapter.calls).toHaveLength(3);
   });
 
-  it("部分失败：失败 expert 有 error，其余正常返回（不阻塞整体）", async () => {
+  it("部分失败：失败 target 有 error，其余正常返回（不阻塞整体）", async () => {
     const adapter = makeStubAdapter(async (params) => {
       const sys =
         params.messages.find((m) => m.role === "system")?.content ?? "";
@@ -132,16 +135,16 @@ describe("runConsultation 并行编排", () => {
       }
       return { content: `OK ${sys}` };
     });
-    const experts = [makeExpert("a"), makeExpert("b"), makeExpert("c")];
+    const targets = [makeTarget("a"), makeTarget("b"), makeTarget("c")];
 
     const results = await runConsultation(
       "问题?",
-      experts,
+      targets,
       makeConfig(adapter)
     );
 
     expect(results).toHaveLength(3);
-    const byId = new Map(results.map((r) => [r.expert.id, r]));
+    const byId = new Map(results.map((r) => [r.target.expert.id, r]));
 
     expect(byId.get("a")!.error).toBeUndefined();
     expect(byId.get("c")!.error).toBeUndefined();
@@ -149,13 +152,17 @@ describe("runConsultation 并行编排", () => {
     expect(String(byId.get("b")!.error)).toContain("provider boom");
   });
 
-  it("system prompt 使用 expert 配置，user 消息包含问题", async () => {
+  it("用 target 的真实 modelId 调 adapter；system prompt 用专家配置", async () => {
     const adapter = makeEchoAdapter();
-    const experts = [makeExpert("x", { systemPrompt: "定制提示词XYZ" })];
+    const target = makeTarget("x", {
+      modelId: "gpt-special",
+      expert: { id: "x", name: "x", icon: "🤖", systemPrompt: "定制提示词XYZ", temperature: 0.7, maxTokens: 1024, timeoutMs: 5000, enabled: true },
+    });
 
-    await runConsultation("我的问题ABC", experts, makeConfig(adapter));
+    await runConsultation("我的问题ABC", [target], makeConfig(adapter));
 
-    const params = adapter.calls[0];
+    const params = adapter.calls[0]!;
+    expect(params.model).toBe("gpt-special");
     expect(params.messages[0]).toEqual({
       role: "system",
       content: "定制提示词XYZ",
@@ -166,13 +173,13 @@ describe("runConsultation 并行编排", () => {
 
   it("context 存在时并入 user 消息", async () => {
     const adapter = makeEchoAdapter();
-    const experts = [makeExpert("x")];
+    const targets = [makeTarget("x")];
 
-    await runConsultation("问题", experts, makeConfig(adapter), {
+    await runConsultation("问题", targets, makeConfig(adapter), {
       context: "背景信息CTX",
     });
 
-    const userMsg = adapter.calls[0].messages.find((m) => m.role === "user");
+    const userMsg = adapter.calls[0]!.messages.find((m) => m.role === "user");
     expect(userMsg?.content).toContain("问题");
     expect(userMsg?.content).toContain("背景信息CTX");
   });
@@ -181,20 +188,19 @@ describe("runConsultation 并行编排", () => {
 describe("runDialogue 多轮对话", () => {
   const topic = "如何设计一个高并发系统";
   let adapter: ReturnType<typeof makeEchoAdapter>;
-  const experts = [makeExpert("a"), makeExpert("b")];
+  const targets = [makeTarget("a"), makeTarget("b")];
 
   beforeEach(() => {
     adapter = makeEchoAdapter();
   });
 
-  it("debate 模式：轮次结构正确（turns 数 = rounds × experts，round 递增）", async () => {
+  it("debate 模式：轮次结构正确（turns 数 = rounds × targets，round 递增）", async () => {
     const { turns } = await runDialogue(
-      { topic, experts, mode: "debate", rounds: 3, summarize: false },
+      { topic, targets, mode: "debate", rounds: 3, summarize: false },
       makeConfig(adapter)
     );
 
     expect(turns).toHaveLength(3 * 2);
-    // 每轮两位 expert 都发言，且 round 字段正确
     expect(turns.filter((t) => t.round === 1)).toHaveLength(2);
     expect(turns.filter((t) => t.round === 2)).toHaveLength(2);
     expect(turns.filter((t) => t.round === 3)).toHaveLength(2);
@@ -203,7 +209,6 @@ describe("runDialogue 多轮对话", () => {
       .map((t) => t.expertId)
       .sort();
     expect(ids).toEqual(["a", "b"]);
-    // DialogueTurn 契约字段
     for (const t of turns) {
       expect(t.expertName).toBeTruthy();
       expect(t.icon).toBeTruthy();
@@ -211,20 +216,18 @@ describe("runDialogue 多轮对话", () => {
     }
   });
 
-  it("relay 模式：串行顺序正确（严格按 experts 顺序逐轮接龙）", async () => {
+  it("relay 模式：串行顺序正确（严格按 targets 顺序逐轮接龙）", async () => {
     const { turns } = await runDialogue(
-      { topic, experts, mode: "relay", rounds: 2, summarize: false },
+      { topic, targets, mode: "relay", rounds: 2, summarize: false },
       makeConfig(adapter)
     );
 
     expect(turns).toHaveLength(2 * 2);
-    // relay：每轮内顺序 = experts 配置顺序
     expect(turns.map((t) => t.expertId)).toEqual(["a", "b", "a", "b"]);
     expect(turns.map((t) => t.round)).toEqual([1, 1, 2, 2]);
   });
 
   it("relay 模式串行执行：后一位发言开始时前一位已完成", async () => {
-    // 用完成时间戳验证串行性：若并行，两个 resolve 的间隔会重叠
     const order: string[] = [];
     const relayAdapter = makeStubAdapter(async (params) => {
       const sys =
@@ -235,17 +238,16 @@ describe("runDialogue 多轮对话", () => {
     });
 
     await runDialogue(
-      { topic, experts, mode: "relay", rounds: 1, summarize: false },
+      { topic, targets, mode: "relay", rounds: 1, summarize: false },
       makeConfig(relayAdapter)
     );
 
-    // 串行下 order 严格等于 experts 顺序
     expect(order).toEqual(["你是 a", "你是 b"]);
   });
 
   it("rounds 生效：rounds=1 只产生种子轮", async () => {
     const { turns } = await runDialogue(
-      { topic, experts, mode: "debate", rounds: 1, summarize: false },
+      { topic, targets, mode: "debate", rounds: 1, summarize: false },
       makeConfig(adapter)
     );
 
@@ -255,39 +257,37 @@ describe("runDialogue 多轮对话", () => {
 
   it("summarize=true 时产生非空 summary；false 时没有", async () => {
     const withSummary = await runDialogue(
-      { topic, experts, mode: "debate", rounds: 2, summarize: true },
+      { topic, targets, mode: "debate", rounds: 2, summarize: true },
       makeConfig(adapter)
     );
     expect(typeof withSummary.summary).toBe("string");
     expect((withSummary.summary as string).length).toBeGreaterThan(0);
 
     const withoutSummary = await runDialogue(
-      { topic, experts, mode: "debate", rounds: 2, summarize: false },
+      { topic, targets, mode: "debate", rounds: 2, summarize: false },
       makeConfig(adapter)
     );
     expect(withoutSummary.summary).toBeUndefined();
   });
 
-  it("某位 expert 失败：turn 以占位内容记录，对话继续", async () => {
+  it("某位专家失败：turn 以占位内容记录，对话继续", async () => {
     const flakyAdapter = makeStubAdapter(async (params, callIndex) => {
-      // 第 2 次调用（round1 的 expert b）失败
+      // 第 2 次调用（round1 的 target b）失败
       if (callIndex === 1) {
-        throw new Error("expert b exploded");
+        throw new Error("target b exploded");
       }
       return { content: `OK #${callIndex}` };
     });
 
     const { turns } = await runDialogue(
-      { topic, experts, mode: "debate", rounds: 2, summarize: false },
+      { topic, targets, mode: "debate", rounds: 2, summarize: false },
       makeConfig(flakyAdapter)
     );
 
-    // 总 turn 数不变，失败位有占位标记
     expect(turns).toHaveLength(2 * 2);
     const failedTurn = turns.find((t) => t.expertId === "b" && t.round === 1);
     expect(failedTurn).toBeDefined();
     expect(failedTurn!.content).toMatch(/⚠️|缺席|失败/);
-    // 后续轮次继续
     expect(turns.some((t) => t.round === 2)).toBe(true);
   });
 
@@ -301,11 +301,10 @@ describe("runDialogue 多轮对话", () => {
     });
 
     await runDialogue(
-      { topic, experts, mode: "debate", rounds: 2, summarize: false },
+      { topic, targets, mode: "debate", rounds: 2, summarize: false },
       makeConfig(transcriptAdapter)
     );
 
-    // 第 2 轮的 prompt（第 3、4 次调用）应包含第 1 轮内容
     expect(seenPrompts).toHaveLength(4);
     const round2Prompts = seenPrompts.slice(2);
     expect(
@@ -313,6 +312,104 @@ describe("runDialogue 多轮对话", () => {
         (p) => p.includes("独特观点-1") || p.includes("独特观点-2")
       )
     ).toBe(true);
+  });
+});
+
+describe("PII 隐私脱敏（发往 LLM 前掩码）", () => {
+  it("consult 的 user 消息在调 adapter 前已掩码手机号/邮箱", async () => {
+    const adapter = makeEchoAdapter();
+    const target = makeTarget("x");
+
+    await runConsultation(
+      "帮我联系 13812345678 或 test@example.com",
+      [target],
+      makeConfig(adapter)
+    );
+
+    const userMsg = adapter.calls[0]!.messages.find((m) => m.role === "user");
+    expect(userMsg?.content).toBe("帮我联系 [手机号] 或 [邮箱]");
+  });
+
+  it("consult 的 context 与 question 都掩码", async () => {
+    const adapter = makeEchoAdapter();
+    const target = makeTarget("x");
+
+    await runConsultation("请问怎么处理", [target], makeConfig(adapter), {
+      context: "当事人证件号 110101199003074518，手机 13900000000",
+    });
+
+    const userMsg = adapter.calls[0]!.messages.find((m) => m.role === "user");
+    expect(userMsg?.content).toContain("[身份证号]");
+    expect(userMsg?.content).toContain("[手机号]");
+    expect(userMsg?.content).not.toContain("110101199003074518");
+    expect(userMsg?.content).not.toContain("13900000000");
+  });
+
+  it("consult 的 provider 抛错信息不泄露手机号", async () => {
+    const adapter = makeStubAdapter(async () => {
+      throw new Error("调用失败: 手机 13812345678");
+    });
+    const target = makeTarget("x");
+
+    const results = await runConsultation("问题", [target], makeConfig(adapter));
+
+    expect(results[0]?.ok).toBe(false);
+    expect(results[0]?.error).toContain("调用失败: 手机 [手机号]");
+    expect(results[0]?.error).not.toContain("13812345678");
+  });
+
+  it("dialogue 每轮 user 消息都掩码 topic 中的 PII", async () => {
+    const adapter = makeEchoAdapter();
+    const targets = [makeTarget("a")];
+
+    await runDialogue(
+      { topic: "如何联系 13812345678", targets, mode: "debate", rounds: 1, summarize: false },
+      makeConfig(adapter)
+    );
+
+    const userMsg = adapter.calls[0]!.messages.find((m) => m.role === "user");
+    expect(userMsg?.content).toBe("如何联系 [手机号]\n\n请就以下主题给出你的专业见解,清晰阐述你的核心观点与理由。");
+  });
+
+  it("dialogue 专家回复含 PII 时，后续轮次注入前掩码", async () => {
+    // 第一轮回复里实验室专家"泄露"了手机号；第二轮 prompt 应含 [手机号]
+    const seen: string[] = [];
+    const adapter = makeStubAdapter(async (params) => {
+      const user = params.messages[params.messages.length - 1]?.content ?? "";
+      seen.push(user);
+      return { content: "我建议联系 13911112222" };
+    });
+    const targets = [makeTarget("a")];
+
+    await runDialogue(
+      { topic: "讨论安全", targets, mode: "debate", rounds: 2, summarize: false },
+      makeConfig(adapter)
+    );
+
+    expect(seen).toHaveLength(2);
+    // 第二轮 prompt 注入的第一轮回复应被掩码
+    const round2 = seen[1]!;
+    expect(round2).toContain("[手机号]");
+    expect(round2).not.toContain("13911112222");
+    // 但第一轮的技术回复原样保留在 turn.content 中（客户端可见）
+    // 保持只脱敏发往模型的内容，不脱敏返回给用户的内容
+  });
+
+  it("summarize 的总结 prompt 也掩码 PII", async () => {
+    const adapter = makeEchoAdapter();
+    const targets = [makeTarget("a")];
+
+    await runDialogue(
+      { topic: "讨论 13812345678 相关", targets, mode: "debate", rounds: 1, summarize: true },
+      makeConfig(adapter)
+    );
+
+    // 2 次调用：1 轮种子 + 1 次总结
+    expect(adapter.calls).toHaveLength(2);
+    const summaryCall = adapter.calls[1]!;
+    const userMsg = summaryCall.messages.find((m) => m.role === "user");
+    expect(userMsg?.content).toContain("[手机号]");
+    expect(userMsg?.content).not.toContain("13812345678");
   });
 });
 
@@ -325,10 +422,10 @@ describe("TALKIO_MOCK_PROVIDER 凭据短路", () => {
     delete process.env.OPENAI_API_KEY;
     try {
       const adapter = makeEchoAdapter("mock-ok");
-      const experts = [makeExpert("a")];
+      const targets = [makeTarget("a")];
       const results = await runConsultation(
         "测试问题",
-        experts,
+        targets,
         makeConfig(adapter)
       );
       expect(results).toHaveLength(1);
