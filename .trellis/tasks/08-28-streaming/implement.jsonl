@@ -1,1 +1,3 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "映射通知通道协议纪律（stdio 下 stdout 为协议通道，通知走 MCP 协议不污染 stdout）"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "容错模式：Promise.allSettled + try/catch 隔离，流式通知不得破坏业务流"}
+{"file": ".trellis/tasks/08-28-streaming/design.md", "reason": "流式通知技术设计说明书（通知载体、挂载点、载荷格式、测试策略）"}
