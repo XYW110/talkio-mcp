@@ -9,6 +9,7 @@ import { z } from "zod";
 import type { AppConfig } from "../types.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { runConsultation } from "../orchestrator/parallel.js";
+import type { StreamNotifier } from "../utils/notify.js";
 import { formatConsultReport } from "../utils/format.js";
 import {
   DEFAULT_CARD_LIMIT,
@@ -53,6 +54,7 @@ export type ConsultExpertsArgs = {
 export async function handleConsultExperts(
   args: ConsultExpertsArgs,
   config: AppConfig,
+  deps?: { notifier?: StreamNotifier },
 ): Promise<CallToolResult> {
   if (args.question.trim() === "") {
     return blankInputError("question");
@@ -69,6 +71,7 @@ export async function handleConsultExperts(
   const items = await runConsultation(args.question, selection.selected, config, {
     context: args.context,
     parallel: args.parallel ?? true,
+    notifier: deps?.notifier,
   });
 
   const report =

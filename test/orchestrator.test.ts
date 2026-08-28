@@ -24,6 +24,7 @@ vi.mock("../src/providers/registry.js", () => ({
 
 import { runConsultation } from "../src/orchestrator/parallel.js";
 import { runDialogue } from "../src/orchestrator/dialogue.js";
+import type { StreamEvent } from "../src/utils/notify.js";
 
 /**
  * 契约（见 design.md §3/§6 与任务书）：
@@ -539,5 +540,74 @@ describe("可观测性汇总与错误压缩（observability）", () => {
         /\[summary\] brainstorm rounds=2 turns=4 summary=yes ok=4 failed=0 total_ms=\d+/.test(l)
       )
     ).toBe(true);
+  });
+});
+
+describe("流式增量通知（streaming）", () => {
+  /** fake notifier：收集所有增量事件，供断言。 */
+  function makeFakeNotifier() {
+    const events: StreamEvent[] = [];
+    return { events, notifier: (e: StreamEvent) => void events.push(e) };
+  }
+
+  it("consult 并行：3 卡结算后发 3 条 consult.card（card id 匹配 card-<id>、全 ok）", async () => {
+    const adapter = makeEchoAdapter();
+    const targets = [makeTarget("a"), makeTarget("b"), makeTarget("c")];
+    const { events, notifier } = makeFakeNotifier();
+
+    const results = await runConsultation("问题", targets, makeConfig(adapter), {
+      notifier,
+    });
+
+    expect(events).toHaveLength(3);
+    expect(
+      events.map((e) => (e.type === "consult.card" ? e.card : "")).sort()
+    ).toEqual(["card-a", "card-b", "card-c"]);
+    expect(
+      events.every((e) => e.type === "consult.card" && e.status === "ok")
+    ).toBe(true);
+    // 通知在 finalize 之前发，返回值不受影响
+    expect(results).toHaveLength(3);
+  });
+
+  it("consult 全失败：逐卡通知 3 条 failed，但返回聚合 1 条（互补语义）", async () => {
+    const adapter = makeStubAdapter(async () => {
+      throw new Error("provider 拒绝请求: 认证失败");
+    });
+    const targets = [makeTarget("a"), makeTarget("b"), makeTarget("c")];
+    const { events, notifier } = makeFakeNotifier();
+
+    const results = await runConsultation("问题", targets, makeConfig(adapter), {
+      notifier,
+    });
+
+    expect(events).toHaveLength(3);
+    expect(
+      events.every((e) => e.type === "consult.card" && e.status === "failed")
+    ).toBe(true);
+    // 返回值仍是聚合后的 1 条错误摘要（全卡失败压缩）
+    expect(results).toHaveLength(1);
+    expect(results[0]?.ok).toBe(false);
+    expect(results[0]?.error).toContain("全部 3 张卡咨询失败");
+  });
+
+  it("brainstorm 2 轮：每轮结束 1 条 brainstorm.round（round/total 正确，总结不发通知）", async () => {
+    const adapter = makeEchoAdapter();
+    const targets = [makeTarget("a"), makeTarget("b")];
+    const { events, notifier } = makeFakeNotifier();
+
+    await runDialogue(
+      { topic: "主题", targets, mode: "debate", rounds: 2, summarize: true, notifier },
+      makeConfig(adapter)
+    );
+
+    const roundEvents = events.filter((e) => e.type === "brainstorm.round");
+    expect(roundEvents).toHaveLength(2);
+    expect(roundEvents.map((e) => (e.type === "brainstorm.round" ? e.round : 0))).toEqual([1, 2]);
+    expect(
+      roundEvents.every((e) => e.type === "brainstorm.round" && e.total === 2)
+    ).toBe(true);
+    // Q2 粒度=轮：总结调用不算一轮，不产生事件
+    expect(events).toHaveLength(2);
   });
 });

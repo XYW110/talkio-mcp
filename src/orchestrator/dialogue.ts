@@ -22,6 +22,7 @@ import { getAdapter, isMockProviderEnabled } from "../providers/registry.js";
 import { resolveProviderCredentials } from "../config.js";
 import { redactPII } from "../utils/redact.js";
 import { defaultLogger, type Logger } from "../utils/log.js";
+import type { StreamNotifier } from "../utils/notify.js";
 import type { ResolvedCard } from "../tools/select-cards.js";
 
 /** A single turn in the dialogue transcript. */
@@ -40,8 +41,10 @@ export interface DialogueOptions {
   mode: "debate" | "relay";
   rounds: number; // default 2, max 5
   summarize: boolean; // default true
-  /** Injectable logging sink; defaults to the module-level info logger. */
+/** Injectable logging sink; defaults to the module-level info logger. */
   logger?: Logger;
+  /** 每轮结束的流式增量通知（R2：brainstorm 按轮粒度）。 */
+  notifier?: StreamNotifier;
 }
 
 /** Result of runDialogue: ordered turns + optional summary. */
@@ -173,6 +176,7 @@ export async function runDialogue(
   config: AppConfig
 ): Promise<DialogueResult> {
   const logger = opts.logger ?? defaultLogger;
+  const notifier = opts.notifier;
   const startedAt = Date.now();
   const rounds = Math.max(1, Math.min(5, Math.trunc(opts.rounds)));
   const targets = opts.targets;
@@ -190,7 +194,7 @@ export async function runDialogue(
           askExpert(target, `${opts.topic}\n\n${SEED_INSTRUCTION}`, config)
         )
       );
-      results.forEach((res, i) => {
+results.forEach((res, i) => {
         const target = targets[i];
         if (!target) return; // defensive: index always aligns with allSettled order
         if (res.status === "fulfilled") {
@@ -216,6 +220,8 @@ export async function runDialogue(
           });
         }
       });
+      // 流式增量（R2）：本轮种子发言全部 settle 后通知一轮边界（Q2 粒度=轮）。
+      notifier?.({ type: "brainstorm.round", round, total: rounds });
       continue;
     }
 
@@ -283,6 +289,8 @@ export async function runDialogue(
         }
       }
     }
+    // 流式增量（R2）：每轮结束后通知（debate / relay 均在此收敛，seed 分支已在 continue 前发）。
+    notifier?.({ type: "brainstorm.round", round, total: rounds });
   }
 
   // Optional summary by the first expert using a dedicated summarizer prompt.

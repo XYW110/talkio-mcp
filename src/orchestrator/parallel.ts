@@ -16,6 +16,7 @@ import { getAdapter, isMockProviderEnabled } from "../providers/registry.js";
 import { resolveProviderCredentials } from "../config.js";
 import { redactPII } from "../utils/redact.js";
 import { defaultLogger, type Logger } from "../utils/log.js";
+import type { StreamNotifier } from "../utils/notify.js";
 import type { ResolvedCard } from "../tools/select-cards.js";
 
 /** Per-card outcome of a single-round consultation. */
@@ -147,9 +148,9 @@ export async function runConsultation(
   question: string,
   targets: ResolvedCard[],
   config: AppConfig,
-  options: { context?: string; parallel?: boolean; logger?: Logger } = {}
+  options: { context?: string; parallel?: boolean; logger?: Logger; notifier?: StreamNotifier } = {}
 ): Promise<ConsultationItem[]> {
-  const { context, parallel = true } = options;
+  const { context, parallel = true, notifier } = options;
   const logger = options.logger ?? defaultLogger;
   const startedAt = Date.now();
 
@@ -173,13 +174,31 @@ export async function runConsultation(
         throw new Error("unreachable: allSettled index always aligns");
       return { target, ok: false as const, error: err };
     });
+    // 流式增量（R1）：每张卡 settle 后各发一条（在 finalize 压缩之前，
+    // 因此全失败时也逐卡通知，与聚合返回值语义互补）。顺序 = settle 顺序。
+    if (notifier) {
+      for (const item of items) {
+        notifier({
+          type: "consult.card",
+          card: item.target.card.id,
+          status: item.ok ? "ok" : "failed",
+        });
+      }
+    }
     return finalize(items);
   }
 
   // Serial path: call each target one after another in configured order.
   const items: ConsultationItem[] = [];
   for (const target of targets) {
-    items.push(await callExpert(target, question, config, context));
+    const item = await callExpert(target, question, config, context);
+    items.push(item);
+    // 串行路径天然逐卡，发一条再调下一张（即时性更好）。
+    notifier?.({
+      type: "consult.card",
+      card: item.target.card.id,
+      status: item.ok ? "ok" : "failed",
+    });
   }
   return finalize(items);
 

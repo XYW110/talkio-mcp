@@ -21,6 +21,7 @@ import {
   noSelectedCardsResult,
   selectCardsForTool,
 } from "./select-cards.js";
+import type { StreamNotifier } from "../utils/notify.js";
 
 /** Zod raw shape for brainstorm arguments (passed as inputSchema). */
 export const brainstormSchema = {
@@ -64,6 +65,7 @@ export type BrainstormArgs = {
 export async function handleBrainstorm(
   args: BrainstormArgs,
   config: AppConfig,
+  deps?: { notifier?: StreamNotifier },
 ): Promise<CallToolResult> {
   if (args.topic.trim() === "") {
     return blankInputError("topic");
@@ -87,6 +89,7 @@ export async function handleBrainstorm(
     mode,
     rounds,
     summarize,
+    notifier: deps?.notifier,
   };
 
   const { turns, summary } = await runDialogue(opts, config);

@@ -13,6 +13,7 @@ import {
 } from "./tools/consult-experts.js";
 import { brainstormSchema, handleBrainstorm } from "./tools/brainstorm.js";
 import { listCardsSchema, handleListCards } from "./tools/list-cards.js";
+import { createMcpNotifier } from "./utils/notify.js";
 
 /** Server identity advertised to MCP clients. */
 export const SERVER_NAME = "talkio-mcp-expert-council";
@@ -27,6 +28,9 @@ export function createServer(config: AppConfig): McpServer {
     { name: SERVER_NAME, version: SERVER_VERSION },
     { capabilities: { logging: {} } }
   );
+
+  // 流式增量通知（design §1）：logging notifications 统一由闭包内注入。
+  const notifier = createMcpNotifier(server);
 
 // list_cards: discover configured role-card ids before consulting.
   server.registerTool(
@@ -54,7 +58,7 @@ export function createServer(config: AppConfig): McpServer {
     },
     async (args) => {
       // args is already parsed/validated against consultExpertsSchema by the SDK.
-      const result = await handleConsultExperts(args, config);
+      const result = await handleConsultExperts(args, config, { notifier });
       return result;
     }
   );
@@ -69,7 +73,7 @@ export function createServer(config: AppConfig): McpServer {
       inputSchema: brainstormSchema,
     },
     async (args) => {
-      const result = await handleBrainstorm(args, config);
+      const result = await handleBrainstorm(args, config, { notifier });
       return result;
     }
   );

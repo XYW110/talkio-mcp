@@ -8,16 +8,19 @@
  *   2. 通过 @modelcontextprotocol/sdk Client + StdioClientTransport 建立连接
  *   3. 断言 listTools() 包含 list_cards / consult_experts / brainstorm
  *   4. 调用 list_cards，断言返回启用角色卡 id 与专家/模型展示名
- *   5. 调用 consult_experts + cards 参数，断言 mock 报告且非 isError
+*   5. 调用 consult_experts + cards 参数，断言 mock 报告且非 isError
  *   6. 调用 brainstorm（1 轮、不总结），断言非 isError
  *   7. 调用 list_cards 对不存在的卡断言报错（isError）
- *   8. 打印 PASS / FAIL，以 0 / 1 退出
+ *   8. 订阅 logging notifications（logger=talkio.stream），断言 consult 逐卡、
+ *      每轮 brainstorm 的流式增量通知
+ *   9. 打印 PASS / FAIL，以 0 / 1 退出
  */
-
+ 
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { LoggingMessageNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const serverEntry = resolve(__dirname, "..", "dist", "index.js");
@@ -52,14 +55,24 @@ const transport = new StdioClientTransport({
 
 const client = new Client(
   { name: "talkio-smoke-client", version: "0.1.0" },
-  { capabilities: {} },
+  { capabilities: { logging: {} } },
 );
+
+// 订阅流式增量通知（R4：logger=talkio.stream 的 logging notifications）。
+// 必须在 connect 之前注册 handler（SDK 在 connect 时挂载到 transport）。
+const streamEvents = [];
+client.setNotificationHandler(LoggingMessageNotificationSchema, (notif) => {
+  const params = notif.params;
+  if (params && params.logger === "talkio.stream") streamEvents.push(params.data);
+});
 
 let exitCode = 0;
 try {
   console.error(`[smoke] spawning server: node ${serverEntry}`);
-  await client.connect(transport);
+await client.connect(transport);
   console.error("[smoke] connected via stdio");
+  await client.setLoggingLevel("info");
+  console.error("[smoke] logging level set to info");
 
   const { tools } = await client.listTools();
   const names = tools.map((t) => t.name);
@@ -79,10 +92,21 @@ try {
     name: "consult_experts",
     arguments: { question: "测试问题", cards: ["architect-openai-gpt-4o"] },
   });
-  const consultText = textOf(consult);
+const consultText = textOf(consult);
   check("consult_experts 未返回 isError", consult.isError !== true, JSON.stringify(consult).slice(0, 200));
   check("consult_experts 返回至少一个 text 内容块", consultText.trim().length > 0);
   check("consult_experts mock 标记", consultText.includes("[TALKIO-MOCK]"));
+
+  const consultCards = streamEvents.filter((d) => d && d.type === "consult.card");
+  check("consult 后收到 → consult.card 通知", consultCards.length >= 1, `实际: ${streamEvents.length} 条`);
+  if (consultCards.length >= 1) {
+    check(
+      "consult.card 载荷含 card id 与状态",
+      typeof consultCards[0].card === "string" &&
+        (consultCards[0].status === "ok" || consultCards[0].status === "failed"),
+      JSON.stringify(consultCards[0])
+    );
+  }
 
   const brainstorm = await client.callTool({
     name: "brainstorm",
@@ -93,9 +117,17 @@ try {
       summarize: false,
     },
   });
-  const brainstormText = textOf(brainstorm);
+const brainstormText = textOf(brainstorm);
   check("brainstorm 未返回 isError", brainstorm.isError !== true, JSON.stringify(brainstorm).slice(0, 200));
   check("brainstorm mock 报告非空", brainstormText.trim().length > 0);
+
+  const brainstormRounds = streamEvents.filter((d) => d && d.type === "brainstorm.round");
+  check(
+    "每轮结束 → brainstorm.round 通知（total=1）",
+    brainstormRounds.length >= 1 &&
+      brainstormRounds.every((d) => d.type === "brainstorm.round" && d.total === 1),
+    `实际: ${JSON.stringify(brainstormRounds)}`
+  );
 
   const bad = await client.callTool({
     name: "consult_experts",
