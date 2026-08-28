@@ -1,8 +1,8 @@
 /**
- * consult_experts MCP tool — single-round parallel expert consultation.
+ * consult_experts MCP tool — single-round parallel consultation via role cards.
  *
  * Registered via McpServer.registerTool with a zod raw-shape inputSchema.
- * The handler validates args, resolves the expert subset, runs the
+ * The handler validates args, resolves the card subset, runs the
  * consultation engine, and returns a Markdown report as text content.
  */
 import { z } from "zod";
@@ -11,12 +11,12 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { runConsultation } from "../orchestrator/parallel.js";
 import { formatConsultReport } from "../utils/format.js";
 import {
-  DEFAULT_EXPERT_LIMIT,
+  DEFAULT_CARD_LIMIT,
   blankInputError,
   formatSelectionNotes,
-  noSelectedExpertsResult,
-  selectExpertsForTool,
-} from "./select-experts.js";
+  noSelectedCardsResult,
+  selectCardsForTool,
+} from "./select-cards.js";
 
 /** Zod raw shape for consult_experts arguments (passed as inputSchema). */
 export const consultExpertsSchema = {
@@ -25,11 +25,11 @@ export const consultExpertsSchema = {
     .string()
     .optional()
     .describe("可选背景信息(代码片段、约束等)"),
-  experts: z
+  cards: z
     .array(z.string())
     .optional()
     .describe(
-      "可选,专家 id 列表;缺省使用已启用且已配置 API Key 的专家（最多 3 位）",
+      "可选,角色卡 id 列表;缺省使用已启用且已配置 API Key 的角色卡（最多 3 张）",
     ),
   parallel: z
     .boolean()
@@ -41,14 +41,14 @@ export const consultExpertsSchema = {
 export type ConsultExpertsArgs = {
   question: string;
   context?: string;
-  experts?: string[];
+  cards?: string[];
   parallel?: boolean;
 };
 
 /**
  * The handler invoked by the MCP server when consult_experts is called.
  * Returns a CallToolResult with the Markdown report (and isError when every
- * expert failed).
+ * card failed).
  */
 export async function handleConsultExperts(
   args: ConsultExpertsArgs,
@@ -58,22 +58,22 @@ export async function handleConsultExperts(
     return blankInputError("question");
   }
 
-  const selection = selectExpertsForTool(config, args.experts, {
-    defaultLimit: DEFAULT_EXPERT_LIMIT,
+  const selection = selectCardsForTool(config, args.cards, {
+    defaultLimit: DEFAULT_CARD_LIMIT,
   });
 
   if (selection.selected.length === 0) {
-    return noSelectedExpertsResult(config, selection, args.experts);
+    return noSelectedCardsResult(config, selection, args.cards);
   }
 
-  const items = await runConsultation(args.question, selection.selected, config, {
+const items = await runConsultation(args.question, selection.selected, config, {
     context: args.context,
     parallel: args.parallel ?? true,
   });
 
   const report =
     formatConsultReport(args.question, args.context, items) +
-    formatSelectionNotes(selection, DEFAULT_EXPERT_LIMIT);
+    formatSelectionNotes(selection, DEFAULT_CARD_LIMIT);
 
   const allFailed = items.length > 0 && items.every((it) => !it.ok);
   return {

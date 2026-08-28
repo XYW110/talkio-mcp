@@ -28,10 +28,10 @@ export function formatConsultReport(
   const okItems = items.filter((it) => it.ok);
   const errItems = items.filter((it) => !it.ok);
 
-  // Successful experts first, grouped under their icon + name headers.
+// Successful cards first, grouped under their card name headers.
   for (const item of okItems) {
-    const { expert } = item;
-    lines.push(`### ${expert.icon} ${expert.name} (${expert.model})`);
+    const { target } = item;
+    lines.push(`### ${target.expert.icon} ${target.card.name} (${target.modelId})`);
     lines.push("");
     lines.push(item.content ?? "");
     lines.push("");
@@ -56,8 +56,8 @@ export function formatErrorSection(items: ConsultationItem[]): string {
   const lines: string[] = [];
   lines.push("### ⚠️ 咨询失败的专家");
   lines.push("");
-  for (const item of items) {
-    lines.push(`- **${item.expert.icon} ${item.expert.name}**: ${item.error ?? "未知错误"}`);
+for (const item of items) {
+    lines.push(`- **${item.target.expert.icon} ${item.target.card.name}**: ${item.error ?? "未知错误"}`);
   }
   return lines.join("\n");
 }

@@ -1,8 +1,8 @@
 /**
- * brainstorm MCP tool — multi-round expert dialogue (debate / relay).
+ * brainstorm MCP tool — multi-round expert dialogue (debate / relay) via role cards.
  *
  * Registered via McpServer.registerTool with a zod raw-shape inputSchema.
- * The handler validates caps (rounds ≤ 5, experts ≤ 6), resolves the expert
+ * The handler validates caps (rounds ≤ 5, cards ≤ 6), resolves the card
  * subset, runs the dialogue engine, and returns a formatted transcript +
  * summary as text content.
  */
@@ -15,12 +15,12 @@ import {
 } from "../orchestrator/dialogue.js";
 import { formatBrainstormReport } from "../utils/format.js";
 import {
-  DEFAULT_EXPERT_LIMIT,
+  DEFAULT_CARD_LIMIT,
   blankInputError,
   formatSelectionNotes,
-  noSelectedExpertsResult,
-  selectExpertsForTool,
-} from "./select-experts.js";
+  noSelectedCardsResult,
+  selectCardsForTool,
+} from "./select-cards.js";
 
 /** Zod raw shape for brainstorm arguments (passed as inputSchema). */
 export const brainstormSchema = {
@@ -36,12 +36,12 @@ export const brainstormSchema = {
     .max(5)
     .optional()
     .describe("对话轮数(1-5,默认 1)"),
-  experts: z
+  cards: z
     .array(z.string())
     .max(6)
     .optional()
     .describe(
-      "参与的专家 id 列表(最多 6 个);缺省使用已启用且已配置 API Key 的专家（最多 3 位）",
+      "参与的角色卡 id 列表(最多 6 张);缺省使用已启用且已配置 API Key 的角色卡（最多 3 张）",
     ),
   summarize: z
     .boolean()
@@ -54,7 +54,7 @@ export type BrainstormArgs = {
   topic: string;
   mode?: "debate" | "relay";
   rounds?: number;
-  experts?: string[];
+  cards?: string[];
   summarize?: boolean;
 };
 
@@ -73,17 +73,17 @@ export async function handleBrainstorm(
   const rounds = args.rounds ?? 1;
   const summarize = args.summarize ?? false;
 
-  const selection = selectExpertsForTool(config, args.experts, {
-    defaultLimit: DEFAULT_EXPERT_LIMIT,
+  const selection = selectCardsForTool(config, args.cards, {
+    defaultLimit: DEFAULT_CARD_LIMIT,
   });
 
   if (selection.selected.length === 0) {
-    return noSelectedExpertsResult(config, selection, args.experts);
+    return noSelectedCardsResult(config, selection, args.cards);
   }
 
   const opts: DialogueOptions = {
     topic: args.topic,
-    experts: selection.selected,
+    targets: selection.selected,
     mode,
     rounds,
     summarize,
@@ -93,7 +93,7 @@ export async function handleBrainstorm(
 
   const report =
     formatBrainstormReport(args.topic, mode, rounds, turns, summary) +
-    formatSelectionNotes(selection, DEFAULT_EXPERT_LIMIT);
+    formatSelectionNotes(selection, DEFAULT_CARD_LIMIT);
 
   const isError = turns.length === 0;
   return {

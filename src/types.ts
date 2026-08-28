@@ -1,5 +1,5 @@
 /**
- * 共享类型定义 —— 对应 design.md §4（experts.json schema）与 §5（Provider Abstraction）。
+ * 共享类型定义 —— 对应 design.md（experts.json schema：providers / experts / models / cards）。
  *
  * 说明：
  * - 这里的类型是「已合并 defaults、可用于运行时」的形态（必填字段齐全）。
@@ -24,9 +24,9 @@ export interface ProviderConfig {
   apiKeyEnv: string;
 }
 
-/** 单个专家配置（defaults 已合并完成） */
+/** 单个专家配置（defaults 已合并完成）—— 只定义「谁、怎么说话」，不含 model/provider */
 export interface ExpertConfig {
-  /** 唯一标识，供 consult_experts/brainstorm 的 experts 参数引用 */
+  /** 唯一标识，被角色卡（CardConfig.expertId）引用 */
   id: string;
   /** 展示名称 */
   name: string;
@@ -34,34 +34,62 @@ export interface ExpertConfig {
   icon: string;
   /** 专家人设 system prompt */
   systemPrompt: string;
-  /** 引用的 providers 表键名 */
-  provider: string;
-  /** 模型名 */
-  model: string;
   /** 采样温度 */
   temperature: number;
   /** 单次响应最大 token 数 */
   maxTokens: number;
   /** 单次 AI 调用超时（毫秒） */
   timeoutMs: number;
-  /** 是否启用（disabled 的专家不参与默认咨询） */
+  /** 是否启用 */
   enabled: boolean;
+}
+
+/** 单个模型配置 —— 只定义「用什么引擎」，挂在 Provider 下、与专家无关 */
+export interface ModelConfig {
+  /** 内部唯一标识，被角色卡（CardConfig.modelId）引用 */
+  id: string;
+  /** 引用的 providers 表键名 */
+  providerId: string;
+  /** 真实模型名（传给 provider adapter 的 model 参数） */
+  modelId: string;
+  /** 展示名称 */
+  displayName: string;
+  /** 是否启用 */
+  enabled: boolean;
+}
+
+/** 角色卡 —— 专家 × 模型的绑定实体（第三个独立概念） */
+export interface CardConfig {
+  /** 唯一标识，供 consult_experts/brainstorm 的 cards 参数引用 */
+  id: string;
+  /** 卡片展示名称（如「架构师 · GPT-4o 高速档」） */
+  name: string;
+  /** 引用的 experts 表键名 */
+  expertId: string;
+  /** 引用的 models 表键名 */
+  modelId: string;
+  /** 是否启用 */
+  enabled: boolean;
+  /** 是否默认卡（决定不指定 cards 时优先选哪张） */
+  isDefault?: boolean;
 }
 
 /**
  * 应用级配置：loadConfig 的最终产物。
- * providers 表按名索引，experts 保持文件中的顺序。
+ * providers 表按名索引，experts / models / cards 保持文件中的顺序。
  */
 export interface AppConfig {
   providers: Record<string, ProviderConfig>;
   experts: ExpertConfig[];
+  models: ModelConfig[];
+  cards: CardConfig[];
 }
 
 /** experts.json 文件的整体形态（校验前为 unknown，校验后见 config.ts 的 zod 推断） */
 export interface ExpertsFile {
-  defaults?: Partial<Pick<ExpertConfig, "provider" | "model" | "temperature" | "maxTokens" | "timeoutMs">>;
-  providers: Record<string, ProviderConfig>;
   experts: ExpertConfig[];
+  models: ModelConfig[];
+  cards: CardConfig[];
 }
 
 /** 调用 adapter 时传递给它的凭据（与 design §5 的 creds 参数一致） */

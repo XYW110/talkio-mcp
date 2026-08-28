@@ -18,6 +18,8 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
+    "build:web": "npm --prefix admin-web run build",
+    "dev:web": "npm --prefix admin-web run dev",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

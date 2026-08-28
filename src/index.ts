@@ -13,6 +13,8 @@ import { loadConfig } from "./config.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { createServer as createHttpServer } from "node:http";
+import { createAdminApi, resolveStaticDir } from "./admin/api.js";
+import path from "node:path";
 
 /** Parse minimal CLI args: --transport, --port, --host, --config. */
 interface CliArgs {
@@ -102,7 +104,7 @@ async function startStdio(): Promise<void> {
 let server: ReturnType<typeof createServer>;
 
 /** Start the server in SSE transport mode using node:http. */
-async function startSse(port: number, host: string): Promise<void> {
+async function startSse(port: number, host: string, configPath: string): Promise<void> {
   // Security: warn when binding to a non-loopback address (no auth configured).
   const isLoopback =
     host === "127.0.0.1" || host === "localhost" || host === "::1";
@@ -113,8 +115,28 @@ async function startSse(port: number, host: string): Promise<void> {
     );
   }
 
-  // Map of sessionId -> SSEServerTransport so POST /messages can route back.
+// Map of sessionId -> SSEServerTransport so POST /messages can route back.
   const transports = new Map<string, SSEServerTransport>();
+
+  // Admin API: exposes /api/* for the management UI + serves the built frontend.
+  // Only wired in SSE mode; stdio has no HTTP surface.
+  const adminPath = path.resolve(configPath);
+  const staticDir = await resolveStaticDir(
+    path.resolve(path.dirname(adminPath), "admin-web", "dist"),
+  );
+  const handleAdmin = createAdminApi({
+    configPath: adminPath,
+    staticDir,
+    restartHint: true,
+  });
+  if (staticDir) {
+    log(`管理界面已启用: 访问 http://${host}:${port}/ 打开专家管理页面`);
+  } else {
+    log(
+      `管理界面未启用: 未找到前端构建产物 admin-web/dist（请先 cd admin-web && npm run build）` +
+        `，/api/* 接口仍可用`
+    );
+  }
 
   const httpServer = createHttpServer(async (req, res) => {
     const url = new URL(req.url ?? "", `http://${host}:${port}`);
@@ -183,6 +205,10 @@ async function startSse(port: number, host: string): Promise<void> {
       return;
     }
 
+    // Admin API + static frontend (management UI). Serves /api/* and SPA assets.
+    const handled = await handleAdmin(req, res);
+    if (handled) return;
+
     // Anything else: 404.
     res.statusCode = 404;
     res.end("Not found");
@@ -224,7 +250,8 @@ async function main(): Promise<void> {
   if (args.transport === "stdio") {
     await startStdio();
   } else {
-    await startSse(args.port, args.host);
+    const cfgPath = args.config ?? process.env.TALKIO_EXPERTS_CONFIG ?? "experts.json";
+    await startSse(args.port, args.host, cfgPath);
   }
 }
 

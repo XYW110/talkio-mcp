@@ -4,7 +4,7 @@ import type {
   ChatResult,
   ProviderAdapter,
 } from "../src/providers/adapter.js";
-import type { AppConfig, ExpertConfig } from "../src/types.js";
+import type { AppConfig, CardConfig, ExpertConfig, ModelConfig } from "../src/types.js";
 
 const { stubHolder } = vi.hoisted(() => ({
   stubHolder: { current: undefined as ProviderAdapter | undefined },
@@ -78,7 +78,6 @@ function makeEchoAdapter(): ProviderAdapter & { calls: ChatParams[] } {
 
 function makeExpert(
   id: string,
-  provider: string,
   overrides: Partial<ExpertConfig> = {}
 ): ExpertConfig {
   return {
@@ -86,14 +85,28 @@ function makeExpert(
     name: id,
     icon: "🤖",
     systemPrompt: `你是 ${id}`,
-    provider,
-    model: "test-model",
     temperature: 0.7,
     maxTokens: 1024,
     timeoutMs: 5000,
     enabled: true,
     ...overrides,
   };
+}
+
+function makeModel(
+  id: string,
+  providerId: string,
+  modelId = "test-model"
+): ModelConfig {
+  return { id, providerId, modelId, displayName: id, enabled: true };
+}
+
+function makeCard(
+  id: string,
+  expertId: string,
+  modelId: string
+): CardConfig {
+  return { id, name: id, expertId, modelId, enabled: true };
 }
 
 function councilConfig(adapter: ProviderAdapter): AppConfig {
@@ -117,11 +130,25 @@ function councilConfig(adapter: ProviderAdapter): AppConfig {
       },
     },
     experts: [
-      makeExpert("architect", "openai"),
-      makeExpert("security", "anthropic"),
-      makeExpert("performance", "deepseek"),
-      makeExpert("reviewer", "openai"),
-      makeExpert("product", "deepseek"),
+      makeExpert("architect"),
+      makeExpert("security"),
+      makeExpert("performance"),
+      makeExpert("reviewer"),
+      makeExpert("product"),
+    ],
+    models: [
+      makeModel("m-openai", "openai"),
+      makeModel("m-anthropic", "anthropic"),
+      makeModel("m-deepseek", "deepseek"),
+      makeModel("m-openai-2", "openai"),
+      makeModel("m-deepseek-2", "deepseek"),
+    ],
+    cards: [
+      makeCard("c-architect", "architect", "m-openai"),
+      makeCard("c-security", "security", "m-anthropic"),
+      makeCard("c-performance", "performance", "m-deepseek"),
+      makeCard("c-reviewer", "reviewer", "m-openai-2"),
+      makeCard("c-product", "product", "m-deepseek-2"),
     ],
   };
 }
@@ -148,7 +175,7 @@ describe("handleConsultExperts", () => {
     expect(adapter.calls).toHaveLength(0);
   });
 
-  it("只有 OPENAI_API_KEY 时默认不打缺 key 专家，报告含跳过说明", async () => {
+  it("只有 OPENAI_API_KEY 时默认不打缺 key 卡，报告含跳过说明", async () => {
     clearKeys();
     process.env.OPENAI_API_KEY = "sk-test";
     const adapter = makeEchoAdapter();
@@ -158,15 +185,15 @@ describe("handleConsultExperts", () => {
     );
     expect(result.isError).not.toBe(true);
     const text = textOf(result);
-    expect(text).toContain("architect");
-    expect(text).toContain("reviewer");
+    expect(text).toContain("c-architect");
+    expect(text).toContain("c-reviewer");
     expect(text).not.toMatch(/missing env var/);
-    expect(text).toContain("已跳过 security（缺 ANTHROPIC_API_KEY）");
-    expect(text).toContain("performance（缺 DEEPSEEK_API_KEY）");
+    expect(text).toContain("已跳过 c-security（缺 ANTHROPIC_API_KEY）");
+    expect(text).toContain("c-performance（缺 DEEPSEEK_API_KEY）");
     expect(adapter.calls).toHaveLength(2);
   });
 
-  it("五人全有 key 时默认只打前 3 人", async () => {
+  it("五卡全有 key 时默认只打前 3 卡", async () => {
     clearKeys();
     process.env.OPENAI_API_KEY = "sk-o";
     process.env.ANTHROPIC_API_KEY = "sk-a";
@@ -179,11 +206,11 @@ describe("handleConsultExperts", () => {
     expect(result.isError).not.toBe(true);
     expect(adapter.calls).toHaveLength(3);
     expect(textOf(result)).toContain(
-      "默认最多 3 位专家，未包含: reviewer, product"
+      "默认最多 3 张角色卡，未包含: c-reviewer, c-product"
     );
   });
 
-  it("显式 4 个 id 仍打 4 人；点到缺 key 的专家该项失败且全部失败才 isError", async () => {
+  it("显式 4 个 id 仍打 4 卡；点到缺 key 的卡该项失败且全部失败才 isError", async () => {
     clearKeys();
     process.env.OPENAI_API_KEY = "sk-test";
     const adapter = makeEchoAdapter();
@@ -192,7 +219,7 @@ describe("handleConsultExperts", () => {
     const partial = await handleConsultExperts(
       {
         question: "x",
-        experts: ["architect", "security", "performance", "reviewer"],
+        cards: ["c-architect", "c-security", "c-performance", "c-reviewer"],
       },
       config
     );
@@ -200,17 +227,17 @@ describe("handleConsultExperts", () => {
     expect(adapter.calls).toHaveLength(2);
     expect(partial.isError).not.toBe(true);
     const partialText = textOf(partial);
-    expect(partialText).toContain("architect");
-    expect(partialText).toContain("security");
-    expect(partialText).toContain("performance");
-    expect(partialText).toContain("reviewer");
-    expect(partialText).not.toContain("默认最多 3 位专家");
+    expect(partialText).toContain("c-architect");
+    expect(partialText).toContain("c-security");
+    expect(partialText).toContain("c-performance");
+    expect(partialText).toContain("c-reviewer");
+    expect(partialText).not.toContain("默认最多 3 张角色卡");
     expect(partialText).toMatch(/missing env var ANTHROPIC_API_KEY/);
     expect(partialText).toMatch(/missing env var DEEPSEEK_API_KEY/);
 
     adapter.calls.length = 0;
     const onlyMissing = await handleConsultExperts(
-      { question: "x", experts: ["security"] },
+      { question: "x", cards: ["c-security"] },
       config
     );
     expect(onlyMissing.isError).toBe(true);
@@ -225,7 +252,7 @@ describe("handleConsultExperts", () => {
       councilConfig(adapter)
     );
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain("没有可调用的专家");
+    expect(textOf(result)).toContain("没有可调用的角色卡");
     expect(textOf(result)).toContain("缺 OPENAI_API_KEY");
     expect(adapter.calls).toHaveLength(0);
   });
@@ -266,14 +293,14 @@ describe("handleBrainstorm", () => {
     const result = await handleBrainstorm(
       {
         topic: "落地路径",
-        experts: ["architect", "reviewer"],
+        cards: ["c-architect", "c-reviewer"],
         rounds: 2,
         summarize: true,
       },
       councilConfig(adapter)
     );
     expect(result.isError).not.toBe(true);
-    // 2 experts × 2 rounds + 1 summary
+    // 2 cards × 2 rounds + 1 summary
     expect(adapter.calls).toHaveLength(5);
     expect(textOf(result)).toContain("**轮数:** 2");
     expect(textOf(result)).toContain("### 讨论总结");

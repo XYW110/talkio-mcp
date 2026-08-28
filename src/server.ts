@@ -2,7 +2,7 @@
  * MCP server assembly.
  *
  * createServer() builds a high-level McpServer, registers the three tools
- * (list_experts, consult_experts, brainstorm) with zod raw-shape input schemas,
+ * (list_cards, consult_experts, brainstorm) with zod raw-shape input schemas,
  * and returns the server instance ready to be connected to a transport.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -12,7 +12,7 @@ import {
   handleConsultExperts,
 } from "./tools/consult-experts.js";
 import { brainstormSchema, handleBrainstorm } from "./tools/brainstorm.js";
-import { listExpertsSchema, handleListExperts } from "./tools/list-experts.js";
+import { listCardsSchema, handleListCards } from "./tools/list-cards.js";
 
 /** Server identity advertised to MCP clients. */
 export const SERVER_NAME = "talkio-mcp-expert-council";
@@ -28,17 +28,17 @@ export function createServer(config: AppConfig): McpServer {
     { capabilities: { logging: {} } }
   );
 
-  // list_experts: discover configured expert ids before consulting.
+// list_cards: discover configured role-card ids before consulting.
   server.registerTool(
-    "list_experts",
+    "list_cards",
     {
-      title: "列出专家",
+      title: "列出角色卡",
       description:
-        "列出当前可用的专家 id、名称、provider 与模型。调用 consult_experts / brainstorm 前先用本工具确认专家 id",
-      inputSchema: listExpertsSchema,
+        "列出当前可用的角色卡 id、名称、专家与模型。调用 consult_experts / brainstorm 前先用本工具确认角色卡 id",
+      inputSchema: listCardsSchema,
     },
     async (args) => {
-      const result = await handleListExperts(args, config);
+      const result = await handleListCards(args, config);
       return result;
     }
   );
@@ -49,7 +49,7 @@ export function createServer(config: AppConfig): McpServer {
     {
       title: "专家团咨询",
       description:
-        "向一组 AI 专家并行咨询同一个问题,返回结构化的多视角咨询报告",
+        "向一组角色卡（专家 × 模型）并行咨询同一个问题,返回结构化的多视角咨询报告。\n\n隐私约定：调用前请把问题与背景中的个人敏感信息替换为占位符后再传入——姓名→[人名]，地名/住址/城市→[地名]，公司/机构名→[机构]；手机号/身份证/邮箱/银行卡/微信号等将由系统在发往模型前自动脱敏。请勿把真实用户隐私原文直接传给本工具。",
       inputSchema: consultExpertsSchema,
     },
     async (args) => {
@@ -63,9 +63,9 @@ export function createServer(config: AppConfig): McpServer {
   server.registerTool(
     "brainstorm",
     {
-      title: "专家头脑风暴",
+      title: "角色卡头脑风暴",
       description:
-        "组织 AI 专家围绕主题进行多轮头脑风暴(辩论或接龙),输出讨论实录与总结",
+        "组织一组角色卡围绕主题进行多轮头脑风暴(辩论或接龙),输出讨论实录与总结。\n\n隐私约定：调用前请把主题中的个人敏感信息替换为占位符后再传入——姓名→[人名]，地名/住址/城市→[地名]，公司/机构名→[机构]；手机号/身份证/邮箱/银行卡/微信号等将由系统在发往模型前自动脱敏。",
       inputSchema: brainstormSchema,
     },
     async (args) => {
