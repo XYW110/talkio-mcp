@@ -50,7 +50,7 @@ export function ExpertEditPage({ initial, onSave, onClose }: Props) {
   };
 
   return (
-    <div className="flex h-full flex-col bg-neutral-50">
+<div className="flex h-full w-full flex-col bg-neutral-50 shadow-2xl md:max-h-[92vh] md:max-w-2xl md:rounded-2xl">
       <NavBar
         title={isNew ? "新建专家" : "编辑专家"}
         onBack={onClose}
@@ -66,7 +66,7 @@ export function ExpertEditPage({ initial, onSave, onClose }: Props) {
       />
 
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-lg px-4 pt-4 pb-10">
+<div className="mx-auto w-full max-w-lg px-4 pt-4 pb-10 md:max-w-2xl md:px-6">
           {/* ── 基本信息 ── */}
           <SectionLabel>基本信息</SectionLabel>
           <Card>

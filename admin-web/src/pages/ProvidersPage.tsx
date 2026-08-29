@@ -57,8 +57,8 @@ export function ProvidersPage({ providers, onUpsert, onDelete }: Props) {
         </p>
       </div>
 
-      {/* List */}
-      <div className="flex-1 overflow-y-auto pb-6">
+{/* 手机端：iOS 分组列表 */}
+      <div className="flex-1 overflow-y-auto pb-6 md:hidden">
         {providers.length === 0 ? (
           <EmptyState icon="🔌" title="还没有 provider" subtitle="点右上角 ＋ 新建" />
         ) : (
@@ -74,6 +74,34 @@ export function ProvidersPage({ providers, onUpsert, onDelete }: Props) {
               />
             ))}
           </Card>
+        )}
+      </div>
+
+      {/* 桌面端（md+）：卡片网格 */}
+      <div className="hidden flex-1 overflow-y-auto px-4 pb-6 md:block">
+        {providers.length === 0 ? (
+          <EmptyState icon="🔌" title="还没有 provider" subtitle="点右上角 ＋ 新建" />
+        ) : (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {providers.map(([name, p]) => (
+              <button
+                key={name}
+                onClick={() => setEditing({ name, value: { ...p }, isNew: false })}
+                className="flex flex-col gap-2 rounded-[10px] border border-neutral-200 bg-white p-4 text-left shadow-sm transition-shadow hover:shadow-md"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <p className="truncate font-mono text-[15px] font-semibold text-neutral-900">{name}</p>
+                  <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[11px] text-neutral-500">
+                    {p.type}
+                  </span>
+                </div>
+                <p className="truncate font-mono text-[12px] text-neutral-500">{p.baseUrl}</p>
+                <p className="mt-auto truncate font-mono text-[11px] text-neutral-400">
+                  环境变量 {p.apiKeyEnv}
+                </p>
+              </button>
+            ))}
+          </div>
         )}
       </div>
 
@@ -140,7 +168,7 @@ function ProviderEditOverlay({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 sm:items-center sm:p-4">
-      <div className="flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl">
+<div className="flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl md:max-w-lg">
         <NavBar
           title={initial.isNew ? "新建 Provider" : `编辑 ${initial.name}`}
           onBack={onClose}

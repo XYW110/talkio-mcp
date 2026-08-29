@@ -63,8 +63,8 @@ export function CardsPage({ cards, experts, models, providers, onUpsert, onDelet
         </p>
       </div>
 
-      {/* List */}
-      <div className="flex-1 overflow-y-auto pb-6">
+{/* 手机端：iOS 分组列表 */}
+      <div className="flex-1 overflow-y-auto pb-6 md:hidden">
         {cards.length === 0 ? (
           <EmptyState icon="🎴" title="还没有角色卡" subtitle="点右上角 ＋ 新建第一张角色卡" />
         ) : (
@@ -87,6 +87,66 @@ export function CardsPage({ cards, experts, models, providers, onUpsert, onDelet
               );
             })}
           </Card>
+        )}
+      </div>
+
+      {/* 桌面端（md+）：卡片网格 */}
+      <div className="hidden flex-1 overflow-y-auto px-4 pb-6 md:block">
+        {cards.length === 0 ? (
+          <EmptyState icon="🎴" title="还没有角色卡" subtitle="点右上角 ＋ 新建第一张角色卡" />
+        ) : (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {cards.map((c) => {
+              const d = describe(c);
+              return (
+                <div
+                  key={c.id}
+                  className="flex flex-col justify-between gap-3 rounded-[10px] border border-neutral-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md"
+                >
+                  <button onClick={() => setEditing({ initial: c, isNew: false })} className="flex items-center gap-3 text-left">
+                    <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-50 to-indigo-100 text-lg">
+                      🎴
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="truncate text-[16px] font-medium text-neutral-900">{c.name}</p>
+                        {c.isDefault && (
+                          <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-600">
+                            默认
+                          </span>
+                        )}
+                        {!c.enabled && (
+                          <span className="rounded bg-neutral-200 px-1.5 py-0.5 text-[10px] text-neutral-500">
+                            已禁用
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                  <p className="text-[13px] leading-relaxed text-neutral-500">
+                    {d.expertName} → {d.modelText}
+                  </p>
+                  <div className="flex items-center justify-between border-t border-neutral-100 pt-2.5">
+                    <span className="truncate font-mono text-[11px] text-neutral-300">{c.id}</span>
+                    <div className="flex items-center gap-2">
+                      <span title={c.enabled ? "禁用" : "启用"}>
+                        <Toggle checked={c.enabled !== false} onChange={() => onToggle(c.id)} />
+                      </span>
+                      <button
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          if (window.confirm(`确定删除角色卡「${c.name}」？`)) onDelete(c.id);
+                        }}
+                        className="text-[13px] font-medium text-red-500 hover:bg-red-50 active:opacity-60"
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
 
@@ -226,7 +286,7 @@ function CardEditOverlay({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 sm:items-center sm:p-4">
-      <div className="flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl">
+<div className="flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl md:max-w-lg">
         <NavBar
           title={isNew ? "新建角色卡" : "编辑角色卡"}
           onBack={onClose}

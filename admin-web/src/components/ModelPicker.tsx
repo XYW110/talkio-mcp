@@ -63,7 +63,7 @@ export function ModelPicker({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 sm:items-center sm:p-4">
-      <div className="flex max-h-[90vh] w-full max-w-sm flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl">
+<div className="flex max-h-[90vh] w-full max-w-sm flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl md:max-w-lg">
         {/* Header */}
         <div className="flex flex-shrink-0 items-center border-b border-neutral-200 px-2 py-2.5">
           <button onClick={close} className="min-w-[64px] px-2 text-left text-[15px] text-blue-600">

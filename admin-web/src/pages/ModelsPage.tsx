@@ -64,31 +64,33 @@ export function ModelsPage({ models, providers, onUpsert, onDelete }: Props) {
         </p>
       </div>
 
-      {/* Grouped list */}
+{/* Grouped list */}
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         {models.length === 0 ? (
           <EmptyState icon="🧠" title="还没有模型" subtitle="点右上角 ＋ 新建你的第一个模型" />
         ) : (
-          grouped.map(([providerId, list]) => (
-            <div key={providerId} className="mb-4">
-              <SectionLabel>{providerName(providerId)}</SectionLabel>
-              <Card>
-                {list.map((m, i) => (
-                  <ModelRow
-                    key={m.id}
-                    model={m}
-                    isLast={i === list.length - 1}
-                    onEdit={() => setEditing({ initial: m, isNew: false })}
-                    onDelete={() => {
-                      if (window.confirm(`确定删除模型「${m.displayName || m.modelId}」？引用它的角色卡会被一并删除。`))
-                        onDelete(m.id);
-                    }}
-                    onToggle={() => onUpsert({ ...m, enabled: !m.enabled })}
-                  />
-                ))}
-              </Card>
-            </div>
-          ))
+<div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {grouped.map(([providerId, list]) => (
+              <div key={providerId}>
+                <SectionLabel>{providerName(providerId)}</SectionLabel>
+                <Card>
+                  {list.map((m, i) => (
+                    <ModelRow
+                      key={m.id}
+                      model={m}
+                      isLast={i === list.length - 1}
+                      onEdit={() => setEditing({ initial: m, isNew: false })}
+                      onDelete={() => {
+                        if (window.confirm(`确定删除模型「${m.displayName || m.modelId}」？引用它的角色卡会被一并删除。`))
+                          onDelete(m.id);
+                      }}
+                      onToggle={() => onUpsert({ ...m, enabled: !m.enabled })}
+                    />
+                  ))}
+                </Card>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 
@@ -221,7 +223,7 @@ const [id] = useState(initial?.id ?? "");
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 sm:items-center sm:p-4">
-      <div className="flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl">
+<div className="flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl md:max-w-lg">
         <NavBar
           title={isNew ? "新建模型" : "编辑模型"}
           onBack={onClose}

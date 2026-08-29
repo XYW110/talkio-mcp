@@ -177,7 +177,50 @@ export default function App() {
     }
   }, [config]);
 
-  const providers = Object.entries(config.providers) as [string, ProviderConfig][];
+const providers = Object.entries(config.providers) as [string, ProviderConfig][];
+
+  // ── 首页菜单项（手机端分组列表 / 桌面端卡片网格共用）──
+  const MENU_ITEMS: {
+    page: Page;
+    icon: string;
+    title: string;
+    count: number;
+    unit: string;
+    subtitle: string;
+  }[] = [
+    {
+      page: { name: "experts" },
+      icon: "🤖",
+      title: "专家",
+      count: config.experts.length,
+      unit: "位",
+      subtitle: "管理 AI 专家：人设、参数",
+    },
+    {
+      page: { name: "provider" },
+      icon: "🔌",
+      title: "Provider",
+      count: providers.length,
+      unit: "个",
+      subtitle: "配置 API 端点与 key 环境变量",
+    },
+    {
+      page: { name: "models" },
+      icon: "🧠",
+      title: "模型",
+      count: config.models.length,
+      unit: "个",
+      subtitle: "管理各 Provider 下的模型引擎",
+    },
+    {
+      page: { name: "cards" },
+      icon: "🎴",
+      title: "角色卡",
+      count: config.cards.length,
+      unit: "张",
+      subtitle: "专家 + 模型 绑定成一张角色卡",
+    },
+  ];
 
   if (loading) {
     return (
@@ -188,8 +231,8 @@ export default function App() {
   }
 
   // ── 编辑浮层（全屏页）──
-  const editOverlay = editing && (
-    <div className="fixed inset-0 z-40 bg-white">
+const editOverlay = editing && (
+    <div className="fixed inset-0 z-40 bg-neutral-50 md:flex md:items-center md:justify-center md:bg-black/30 md:p-6">
       <ExpertEditPage
         initial={editing === "new" ? undefined : editing}
         onSave={upsertExpert}
@@ -243,7 +286,7 @@ export default function App() {
     );
   } else {
     content = (
-      <div className="mx-auto max-w-xl px-4">
+<div className="mx-auto w-full max-w-4xl px-4 md:max-w-none md:px-6">
         <div className="pt-3 pb-2">
           <h1 className="text-[20px] font-bold tracking-tight text-neutral-900">Talkio 管理</h1>
           <p className="mt-0.5 text-[13px] text-neutral-500">
@@ -251,57 +294,48 @@ export default function App() {
           </p>
         </div>
 
-        <SectionLabel>配置</SectionLabel>
-        <Card>
-          <ChevronRow
-            onClick={() => setPage({ name: "experts" })}
-            icon={<span className="text-xl">🤖</span>}
-            title="专家"
-            detail={
-              <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[11px] text-neutral-500">
-                {config.experts.length} 位
-              </span>
-            }
-            subtitle="管理 AI 专家：人设、参数"
-            isLast={false}
-          />
-          <ChevronRow
-            onClick={() => setPage({ name: "provider" })}
-            icon={<span className="text-xl">🔌</span>}
-            title="Provider"
-            detail={
-              <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[11px] text-neutral-500">
-                {providers.length} 个
-              </span>
-            }
-            subtitle="配置 API 端点与 key 环境变量"
-            isLast={false}
-          />
-          <ChevronRow
-            onClick={() => setPage({ name: "models" })}
-            icon={<span className="text-xl">🧠</span>}
-            title="模型"
-            detail={
-              <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[11px] text-neutral-500">
-                {config.models.length} 个
-              </span>
-            }
-            subtitle="管理各 Provider 下的模型引擎"
-            isLast={false}
-          />
-          <ChevronRow
-            onClick={() => setPage({ name: "cards" })}
-            icon={<span className="text-xl">🎴</span>}
-            title="角色卡"
-            detail={
-              <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[11px] text-neutral-500">
-                {config.cards.length} 张
-              </span>
-            }
-            subtitle="专家 + 模型 绑定成一张角色卡"
-            isLast={true}
-          />
-        </Card>
+<SectionLabel>配置</SectionLabel>
+        {/* 手机端：iOS 分组列表 */}
+        <div className="md:hidden">
+          <Card>
+            {MENU_ITEMS.map((m, i) => (
+              <ChevronRow
+                key={m.title}
+                onClick={() => setPage(m.page)}
+                icon={<span className="text-xl">{m.icon}</span>}
+                title={m.title}
+                detail={
+                  <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[11px] text-neutral-500">
+                    {m.count} {m.unit}
+                  </span>
+                }
+                subtitle={m.subtitle}
+                isLast={i === MENU_ITEMS.length - 1}
+              />
+            ))}
+          </Card>
+        </div>
+        {/* 桌面端（md+）：卡片网格 */}
+<div className="hidden md:grid md:grid-cols-2 md:gap-3 lg:grid-cols-4">
+          {MENU_ITEMS.map((m) => (
+            <button
+              key={m.title}
+              onClick={() => setPage(m.page)}
+              className="flex flex-col gap-2 rounded-[10px] border border-neutral-200 bg-white p-4 text-left shadow-sm transition-colors hover:bg-neutral-50 active:bg-neutral-100"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-2xl">{m.icon}</span>
+                <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[11px] text-neutral-500">
+                  {m.count} {m.unit}
+                </span>
+              </div>
+              <div>
+                <p className="text-[16px] font-semibold text-neutral-900">{m.title}</p>
+                <p className="mt-0.5 text-[13px] leading-relaxed text-neutral-500">{m.subtitle}</p>
+              </div>
+            </button>
+          ))}
+        </div>
 
         {/* Save bar */}
         <div className="mt-8 flex items-center gap-2">
@@ -326,7 +360,7 @@ export default function App() {
   }
 
   return (
-    <div className="relative mx-auto flex h-screen max-w-2xl flex-col bg-neutral-50">
+<div className="relative mx-auto flex h-screen w-full max-w-2xl flex-col bg-neutral-50 md:max-w-5xl lg:max-w-6xl xl:max-w-7xl">
       {error && <ErrorBanner msg={error} onClose={() => setError(null)} />}
 
       {/* 子页面顶栏（返回） */}

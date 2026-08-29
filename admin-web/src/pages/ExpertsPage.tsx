@@ -76,8 +76,8 @@ export function ExpertsPage({ experts, onAdd, onEdit, onDelete }: Props) {
         </div>
       )}
 
-      {/* List */}
-      <div className="flex-1 overflow-y-auto px-0 pb-6">
+{/* 手机端：iOS 分组列表 */}
+      <div className="flex-1 overflow-y-auto pb-6 md:hidden">
         {filtered.length === 0 ? (
           query ? (
             <EmptyState icon="🔍" title="没有匹配的专家" />
@@ -96,6 +96,56 @@ export function ExpertsPage({ experts, onAdd, onEdit, onDelete }: Props) {
                   if (window.confirm(`确定删除专家「${e.name}」？`)) onDelete(e.id);
                 }}
               />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 桌面端（md+）：卡片网格 */}
+      <div className="hidden flex-1 overflow-y-auto px-4 pb-6 md:block">
+        {filtered.length === 0 ? (
+          query ? (
+            <EmptyState icon="🔍" title="没有匹配的专家" />
+          ) : (
+            <EmptyState icon="🤖" title="还没有专家" subtitle="点右上角 ＋ 新建你的第一位专家" />
+          )
+        ) : (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {filtered.map((e) => (
+              <div
+                key={e.id}
+                className="flex flex-col justify-between gap-3 rounded-[10px] border border-neutral-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md"
+              >
+                <button onClick={() => onEdit(e.id)} className="flex w-full items-center gap-3 text-left">
+                  <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-neutral-100 text-lg">
+                    {e.icon}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="truncate text-[16px] font-medium text-neutral-900">{e.name}</p>
+                      {!e.enabled && (
+                        <span className="rounded bg-neutral-200 px-1.5 py-0.5 text-[10px] text-neutral-500">
+                          已禁用
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 truncate font-mono text-[12px] text-neutral-400">{e.id}</p>
+                  </div>
+                </button>
+                <div className="flex items-center justify-between border-t border-neutral-100 pt-2.5">
+                  <span className="text-[12px] text-neutral-500">
+                    {e.enabled === false ? "已禁用" : "启用中"} · temperature={e.temperature}
+                  </span>
+                  <button
+                    onClick={() => {
+                      if (window.confirm(`确定删除专家「${e.name}」？`)) onDelete(e.id);
+                    }}
+                    className="text-[13px] font-medium text-red-500 hover:bg-red-50 active:opacity-60"
+                  >
+                    删除
+                  </button>
+                </div>
+              </div>
             ))}
           </div>
         )}
