@@ -24,6 +24,13 @@ import { redactPII } from "../utils/redact.js";
 import { defaultLogger, type Logger } from "../utils/log.js";
 import type { StreamNotifier } from "../utils/notify.js";
 import type { ResolvedCard } from "../tools/select-cards.js";
+import {
+  buildInjection,
+  compressTurns,
+  emptySummaryState,
+  exceedsBudget,
+  type SummaryState,
+} from "./context-compressor.js";
 
 /** A single turn in the dialogue transcript. */
 export interface DialogueTurn {
@@ -181,10 +188,70 @@ export async function runDialogue(
   const rounds = Math.max(1, Math.min(5, Math.trunc(opts.rounds)));
   const targets = opts.targets;
   const turns: DialogueTurn[] = [];
+  // Semantic compression state (task 08-28-semantic-truncation, design §4/§6).
+  // summary: incremental summary; empty summaryText = not yet enabled.
+  // summarizerFailed: set after a failed compressor call → hard truncation for
+  // the rest of this session (no retry, no oscillation).
+  let ctxSummary: SummaryState = emptySummaryState();
+  let summarizerFailed = false; // session-level: never retry after first fail
 
   if (targets.length === 0 || rounds === 0) {
     return { turns };
   }
+
+  // Semantic compression (design §6): pick the transcript block to inject for
+  // the current round. Three branches:
+  //  - under budget         → current behavior (formatTranscriptForPrompt)
+  //  - first over budget    → compress once, then inject summary + latest round
+  //  - already enabled      → increment the summary + latest round (no re-check)
+  // `injected` = the turns to compress; `latestRoundTurns` = the most recent
+  // round's turns rendered in full (the "最近发言完整实录" layer).
+  const resolveTranscript = async (
+    injected: DialogueTurn[],
+    latestRoundTurns: DialogueTurn[]
+  ): Promise<string> => {
+    if (!exceedsBudget(injected) && ctxSummary.summaryText === "") {
+      return formatTranscriptForPrompt(injected);
+    }
+    if (ctxSummary.summaryText === "" && !summarizerFailed) {
+      try {
+        ctxSummary = await compressTurns(
+          opts.topic,
+          injected,
+          targets[0]!,
+          config
+        );
+        return buildInjection(ctxSummary, latestRoundTurns);
+      } catch {
+        summarizerFailed = true; // session-level: never retry compression.
+        return formatTranscriptForPrompt(injected);
+      }
+    }
+    return buildInjection(ctxSummary, latestRoundTurns);
+  };
+
+  // Merge the latest round's new turns into the summary incrementally
+  // (design §4.2 / §9: +1 LLM call per enabled round, best-effort).
+  const absorbRound = async (roundNo: number): Promise<void> => {
+    if (ctxSummary.summaryText === "") return;
+    const roundTurns = turns.filter((t) => t.round === roundNo);
+    if (roundTurns.length === 0) return;
+    try {
+      ctxSummary = await compressTurns(
+        opts.topic,
+        roundTurns,
+        targets[0]!,
+        config,
+        ctxSummary.summaryText,
+        logger
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(
+        `[context-compressor] 第${roundNo}轮增量并入概要失败，概要保持旧值: ${msg}`
+      );
+    }
+  };
 
   for (let round = 1; round <= rounds; round++) {
     if (round === 1) {
@@ -194,7 +261,7 @@ export async function runDialogue(
           askExpert(target, `${opts.topic}\n\n${SEED_INSTRUCTION}`, config)
         )
       );
-results.forEach((res, i) => {
+      results.forEach((res, i) => {
         const target = targets[i];
         if (!target) return; // defensive: index always aligns with allSettled order
         if (res.status === "fulfilled") {
@@ -228,7 +295,7 @@ results.forEach((res, i) => {
     if (opts.mode === "debate") {
       // Each expert sees the PREVIOUS round's turns only, in parallel.
       const prevRoundTurns = turns.filter((t) => t.round === round - 1);
-      const transcript = formatTranscriptForPrompt(prevRoundTurns);
+      const transcript = await resolveTranscript(prevRoundTurns, prevRoundTurns);
       const userContent = `${opts.topic}\n\n${DEBATE_INSTRUCTION}\n\n上一轮发言:\n${transcript}`;
       const results = await Promise.allSettled(
         targets.map((target) => askExpert(target, userContent, config))
@@ -262,7 +329,7 @@ results.forEach((res, i) => {
     } else {
       // Relay: experts speak sequentially; each sees the full running transcript.
       for (const target of targets) {
-        const transcript = formatTranscriptForPrompt(turns);
+        const transcript = await resolveTranscript(turns, turns);
         const userContent =
           transcript.length > 0
             ? `${opts.topic}\n\n${RELAY_INSTRUCTION}\n\n此前发言:\n${transcript}`
@@ -289,6 +356,8 @@ results.forEach((res, i) => {
         }
       }
     }
+    // 轮末增量并入：启用概要后把本轮新内容并入增量概要（best-effort，吞错）。
+    await absorbRound(round);
     // 流式增量（R2）：每轮结束后通知（debate / relay 均在此收敛，seed 分支已在 continue 前发）。
     notifier?.({ type: "brainstorm.round", round, total: rounds });
   }
@@ -332,8 +401,13 @@ results.forEach((res, i) => {
   // Observability: emit a compact [summary] typeline (stderr, never in report).
   const failed = turns.filter((t) => t.content.includes("⚠️")).length;
   const ok = turns.length - failed;
+  const compressed = ctxSummary.summaryText !== ""
+    ? "on"
+    : summarizerFailed
+      ? "failed"
+      : "off";
   logger.info(
-    `[summary] brainstorm rounds=${rounds} turns=${turns.length} summary=${summary ? "yes" : "no"} ok=${ok} failed=${failed} total_ms=${Date.now() - startedAt}`
+    `[summary] brainstorm rounds=${rounds} turns=${turns.length} summary=${summary ? "yes" : "no"} compressed=${compressed} ok=${ok} failed=${failed} total_ms=${Date.now() - startedAt}`
   );
 
   return { turns, summary };

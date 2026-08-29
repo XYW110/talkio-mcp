@@ -18,8 +18,15 @@ import type { AppConfig } from "../types.js";
 import {
   askExpert,
   formatTranscriptForPrompt,
-  type DialogueTurn,
+type DialogueTurn,
 } from "../orchestrator/dialogue.js";
+import {
+  buildInjection,
+  compressTurns,
+  emptySummaryState,
+  exceedsBudget,
+  type SummaryState,
+} from "../orchestrator/context-compressor.js";
 import { formatTranscript } from "../utils/format.js";
 import { redactPII } from "../utils/redact.js";
 import type { StreamNotifier } from "../utils/notify.js";
@@ -150,6 +157,35 @@ export async function handleBrainstormFollowup(
   const nextRound = prevTurns.reduce((max, t) => Math.max(max, t.round), 0) + 1;
   const mode = args.mode ?? "relay";
 
+  // Semantic compression (task 08-28-semantic-truncation, design §7 / Q2):
+  // handler-level summary cache so a relay loop never re-compresses per expert.
+  let followupSummary: SummaryState = emptySummaryState();
+  let followupCompressorFailed = false;
+  const buildFollowupTranscript = async (
+    question: string,
+    history: DialogueTurn[],
+    compressorTarget: ResolvedCard
+  ): Promise<string> => {
+    if (!exceedsBudget(history) && followupSummary.summaryText === "") {
+      return formatTranscriptForPrompt(history);
+    }
+    if (followupSummary.summaryText === "" && !followupCompressorFailed) {
+      try {
+        followupSummary = await compressTurns(
+          question,
+          history,
+          compressorTarget,
+          config
+        );
+        return buildInjection(followupSummary, history);
+      } catch {
+        followupCompressorFailed = true;
+        return formatTranscriptForPrompt(history);
+      }
+    }
+    return buildInjection(followupSummary, history);
+  };
+
   // Specific (single card) path takes precedence; `cards` is ignored.
   if (args.card) {
     const selection = selectCardsForTool(config, [args.card], {
@@ -159,7 +195,11 @@ export async function handleBrainstormFollowup(
       return noSelectedCardsResult(config, selection, [args.card]);
     }
     const target = selection.selected[0]!;
-    const transcript = formatTranscriptForPrompt(prevTurns);
+    const transcript = await buildFollowupTranscript(
+      args.question,
+      prevTurns,
+      target
+    );
     const userContent = transcript
       ? `${args.question}\n\n${FOLLOWUP_INSTRUCTION}\n\n${SPECIFIC_EMPHASIS}\n\n此前讨论实录:\n${transcript}`
       : `${args.question}\n\n${FOLLOWUP_INSTRUCTION}\n\n${SPECIFIC_EMPHASIS}`;
@@ -232,13 +272,21 @@ export async function handleBrainstormFollowup(
 
   if (mode === "debate") {
     // Parallel: every card sees the same prior-round transcript only.
-    const transcript = formatTranscriptForPrompt(prevTurns);
+    const transcript = await buildFollowupTranscript(
+      args.question,
+      prevTurns,
+      targets[0]!
+    );
     await Promise.all(targets.map((target) => runTarget(target, transcript)));
   } else {
     // Relay: each card sees the running transcript (prior + this round so far).
     for (const target of targets) {
       const running = [...prevTurns, ...newTurns];
-      const transcript = formatTranscriptForPrompt(running);
+      const transcript = await buildFollowupTranscript(
+        args.question,
+        running,
+        targets[0]!
+      );
       await runTarget(target, transcript);
     }
   }

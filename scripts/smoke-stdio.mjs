@@ -148,10 +148,40 @@ check("不存在的卡返回 isError 并列出可用卡", bad.isError === true &
   });
   const followupText = textOf(followup);
   check("brainstorm_followup 未返回 isError", followup.isError !== true, JSON.stringify(followup).slice(0, 300));
-  check(
+check(
     "brainstorm_followup 报告含追问标记与延续轮次",
     followupText.includes("专家追问实录") && followupText.includes("第 2 轮追问"),
     followupText.slice(0, 300)
+  );
+
+  // 语义截断（08-28-semantic-truncation）：超预算 turns → 压缩器启用。
+  // mock 回显 userContent → 报告应包含注入的【对话概要】概要前缀。
+  const bigFollowup = await client.callTool({
+    name: "brainstorm_followup",
+    arguments: {
+      question: "超长追问",
+      turns: [
+        { round: 1, expertId: "architect", expertName: "架构师", icon: "🤖", content: "长".repeat(13000) },
+        { round: 2, expertId: "security", expertName: "安全师", icon: "🛡️", content: "超长补充意见".repeat(90) },
+      ],
+      cards: ["architect-openai-gpt-4o"],
+    },
+  });
+  const bigFollowupText = textOf(bigFollowup);
+  check(
+    "超预算 followup 未返回 isError",
+    bigFollowup.isError !== true,
+    JSON.stringify(bigFollowup).slice(0, 300)
+  );
+  check(
+    "超预算 followup 注入【对话概要·第1-2轮】概要前缀（压缩器启用）",
+    bigFollowupText.includes("【对话概要·第1-2轮】"),
+    bigFollowupText.slice(0, 300)
+  );
+  check(
+    "超预算 followup 报告含第 3 轮追问标记",
+    bigFollowupText.includes("第 3 轮追问"),
+    bigFollowupText.slice(0, 300)
   );
 } catch (err) {
   failures += 1;

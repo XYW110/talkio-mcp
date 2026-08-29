@@ -107,6 +107,26 @@ function makeTarget(
   };
 }
 
+/**
+ * 构造一个注入用的 logger spy：info/warn 等全部收集进 infos 数组。
+ * 模块级定义，供 observability 与语义截断 describe 共用。
+ */
+function makeSpyLogger() {
+  const infos: string[] = [];
+  const logger = {
+    infos,
+    info: (...args: unknown[]) => {
+      infos.push(args.join(" "));
+    },
+    debug: (..._args: unknown[]) => {},
+    silly: (..._args: unknown[]) => {},
+    warn: (..._args: unknown[]) => {},
+    error: (..._args: unknown[]) => {},
+    isEnabled: () => true,
+  };
+  return logger;
+}
+
 describe("runConsultation 并行编排", () => {
   it("全部成功：每个 target 都有 content，无 error", async () => {
     const adapter = makeEchoAdapter();
@@ -443,22 +463,6 @@ describe("TALKIO_MOCK_PROVIDER 凭据短路", () => {
 });
 
 describe("可观测性汇总与错误压缩（observability）", () => {
-  /** 构造一个注入用的 logger spy：info/warn 等全部收集进 infos 数组。 */
-  function makeSpyLogger() {
-    const infos: string[] = [];
-    const logger = {
-      infos,
-      info: (...args: unknown[]) => {
-        infos.push(args.join(" "));
-      },
-      debug: (..._args: unknown[]) => {},
-      silly: (..._args: unknown[]) => {},
-      warn: (..._args: unknown[]) => {},
-      error: (..._args: unknown[]) => {},
-      isEnabled: () => true,
-    };
-    return logger;
-  }
 
   it("全部目标卡失败 → 报告聚合为 1 条失败摘要（含总数与首错详情）", async () => {
     const adapter = makeStubAdapter(async () => {
@@ -535,9 +539,9 @@ describe("可观测性汇总与错误压缩（observability）", () => {
       makeConfig(adapter)
     );
 
-    expect(
+expect(
       logger.infos.some((l) =>
-        /\[summary\] brainstorm rounds=2 turns=4 summary=yes ok=4 failed=0 total_ms=\d+/.test(l)
+        /\[summary\] brainstorm rounds=2 turns=4 summary=yes compressed=(on|off|failed) ok=4 failed=0 total_ms=\d+/.test(l)
       )
     ).toBe(true);
   });
@@ -609,5 +613,154 @@ describe("流式增量通知（streaming）", () => {
     ).toBe(true);
     // Q2 粒度=轮：总结调用不算一轮，不产生事件
     expect(events).toHaveLength(2);
+  });
+});
+
+describe("语义截断（task 08-28-semantic-truncation，方案 B 增量概要）", () => {
+  // 2 张角色卡（均走 openai provider，makeConfig 提供 TEST_KEY）
+  const targets = [makeTarget("a"), makeTarget("b")];
+
+  it("debate 第 2 轮：注入概要前缀 + 压缩结果（替代硬截断）", async () => {
+    // 序列 adapter：n=1/2 种子轮，n=3 压缩器，n=4/5 第 2 轮作答，
+    // n=6 轮末增量并入（debate 第 2 轮结束后 absorbRound 触发）。
+    let n = 0;
+    const systems: string[] = [];
+    const seen: string[] = [];
+    const seqAdapter = makeStubAdapter(async (params) => {
+      n += 1;
+      systems.push(String(params.messages[0]?.content ?? ""));
+      seen.push(String(params.messages.at(-1)?.content ?? ""));
+      if (n === 1) return { content: "长".repeat(13000) };
+      if (n === 2) return { content: "第一轮正常发言" };
+      if (n === 3) return { content: "第1轮概要内容XYZ" };
+      return { content: "第二轮发言" };
+    });
+
+    const { turns } = await runDialogue(
+      { topic: "主题", targets, mode: "debate", rounds: 2, summarize: false },
+      makeConfig(seqAdapter)
+    );
+
+    expect(turns).toHaveLength(4);
+    // 调用 1/2 = 种子；调用 3 = 压缩器（system 覆盖）；调用 4/5 = 第 2 轮
+    expect(systems[2]).toContain("对话记录压缩器");
+    // 第 2 轮 prompt 注入概要前缀 + 压缩结果 + 最新轮完整实录
+    // （n=6 轮末并入只影响增量概要回调，不是第 2 轮作答 prompt，故只取 4/5）
+    const round2Prompts = seen.slice(3, 5);
+    expect(round2Prompts.length).toBe(2);
+    for (const p of round2Prompts) {
+      expect(p).toContain("【对话概要·第1轮】");
+      expect(p).toContain("第1轮概要内容XYZ");
+      expect(p).toContain("最近发言完整实录:");
+      // 最新一轮（第 1 轮）完整实录可见（正常那条），不因超长条目被整体截断
+      expect(p).toContain("第一轮正常发言");
+      // 概要注入路径不出现硬截断标记
+      expect(p).not.toContain("（较早的发言已省略）");
+    }
+  });
+
+  it("debate 未超预算：不触发压缩（调用序列无压缩器 system）", async () => {
+    let n = 0;
+    const systems: string[] = [];
+    const seqAdapter = makeStubAdapter(async (params) => {
+      n += 1;
+      systems.push(String(params.messages[0]?.content ?? ""));
+      if (n <= 2) return { content: `第一轮-${n}` };
+      return { content: "第二轮发言" };
+    });
+
+    await runDialogue(
+      { topic: "主题", targets, mode: "debate", rounds: 2, summarize: false },
+      makeConfig(seqAdapter)
+    );
+
+    // 4 次调用全部是专家作答，无压缩器
+    expect(n).toBe(4);
+    expect(systems.some((s) => s.includes("对话记录压缩器"))).toBe(false);
+  });
+
+  it("relay 第 2 轮：运行集超预算 → 概要注入", async () => {
+    let n = 0;
+    const seen: string[] = [];
+    const systems: string[] = [];
+    const seqAdapter = makeStubAdapter(async (params) => {
+      n += 1;
+      systems.push(String(params.messages[0]?.content ?? ""));
+      seen.push(String(params.messages.at(-1)?.content ?? ""));
+      if (n === 1) return { content: "长".repeat(13000) }; // 第 1 位专家超长
+      if (n === 2) return { content: "第一轮第二位发言" };
+      if (n === 3) return { content: "relay概要内容ABC" }; // 压缩器
+      return { content: "第二轮发言" };
+    });
+
+    const { turns } = await runDialogue(
+      { topic: "主题", targets, mode: "relay", rounds: 2, summarize: false },
+      makeConfig(seqAdapter)
+    );
+
+    expect(turns).toHaveLength(4);
+    // 调用 3 = 压缩器（relay 第 2 位专家注入前，运行集已超预算）
+    expect(systems[2]).toContain("对话记录压缩器");
+    // relay 第 2 轮作答（calls 4/5，n=6 是轮末增量并入的压缩器 user，不含概要 header）
+    for (const p of seen.slice(3, 5)) {
+      expect(p).toContain("【对话概要·第1轮】");
+      expect(p).toContain("relay概要内容ABC");
+      expect(p).toContain("最近发言完整实录:");
+    }
+  });
+ 
+  it("压缩失败：硬截断兜底，[summary] typeline 标记 compressed=failed", async () => {
+    let n = 0;
+    const seen: string[] = [];
+    const seqAdapter = makeStubAdapter(async (params) => {
+      n += 1;
+      seen.push(String(params.messages.at(-1)?.content ?? ""));
+      if (n === 1) return { content: "长".repeat(13000) };
+      if (n === 2) return { content: "第一轮正常发言" };
+      if (n === 3) throw new Error("compressor down"); // 压缩失败
+      return { content: "第二轮发言" };
+    });
+    const logger = makeSpyLogger();
+
+    const { turns } = await runDialogue(
+      { topic: "主题", targets, mode: "debate", rounds: 2, summarize: false, logger },
+      makeConfig(seqAdapter)
+    );
+
+    expect(turns).toHaveLength(4);
+    // 第 2 轮 prompt 走硬截断兜底：含截断标记、无概要前缀
+    for (const p of seen.slice(3)) {
+      expect(p).toContain("（较早的发言已省略）");
+      expect(p).not.toContain("【对话概要");
+    }
+    // typeline 记录 compressed=failed（stderr 纪律：进 logger，不进报告）
+    expect(
+      logger.infos.some((l) => l.includes("compressed=failed"))
+    ).toBe(true);
+  });
+
+  it("超预算启用后：轮末增量并入概要（+1 压缩调用）", async () => {
+    let n = 0;
+    const systems: string[] = [];
+    const seqAdapter = makeStubAdapter(async (params) => {
+      n += 1;
+      systems.push(String(params.messages[0]?.content ?? ""));
+      if (n === 1) return { content: "长".repeat(13000) };
+      if (n === 2) return { content: "第一轮正常发言" };
+      if (n === 3) return { content: "第1轮概要" };   // 启用压缩
+      if (n === 4) return { content: "第二轮发言" };
+      if (n === 5) return { content: "第二轮发言" };
+      return { content: "轮末并入后的概要" };            // 增量并入
+    });
+
+    await runDialogue(
+      { topic: "主题", targets, mode: "debate", rounds: 2, summarize: false },
+      makeConfig(seqAdapter)
+    );
+
+    // 种子 2 + 启用 1 + 第2轮 2 + 轮末并入 1 = 6 次调用
+    expect(n).toBe(6);
+    // 最后一次调用是增量并入（压缩器 system）
+    expect(systems[5]).toContain("对话记录压缩器");
   });
 });
