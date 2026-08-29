@@ -17,10 +17,105 @@
 
 要求 Node.js >= 18（推荐 20 LTS）。
 
+### 1. 安装依赖
+
 ```bash
+# 后端
 npm install
+
+# 管理后台 admin-web
+cd admin-web && npm install && cd ..
+```
+
+### 2. 编译后端
+
+```bash
 npm run build
 ```
+
+### 3. 类型检查与单元测试
+
+```bash
+npm run typecheck
+npm test
+```
+
+### 4. 首次运行（Mock 模式，无需 API Key）
+
+设置环境变量 `TALKIO_MOCK_PROVIDER=1`，即可使用 Mock Provider 运行，无需真实 API Key：
+
+```powershell
+# PowerShell
+$env:TALKIO_MOCK_PROVIDER="1"
+node dist/index.js --transport stdio
+```
+
+另起一个终端执行冒烟测试：
+
+```bash
+node scripts/smoke-stdio.mjs
+```
+
+看到 `PASS: smoke-stdio 全部断言通过` 即表示后端 stdio 链路正常。
+
+> 提示：`--transport` 支持 `stdio`（默认）和 `sse`。SSE 模式默认监听 `127.0.0.1:3100`，详情见下方 [SSE 模式](#sse-模式)。
+
+### 5. 配置真实 API Key（可选）
+
+本地开发可在项目根目录创建 `.env`（已被 `.gitignore` 忽略，不会提交）：
+
+```bash
+cp .env.example .env
+# 编辑 .env，填入你实际拥有的 provider 密钥
+```
+
+`experts.json` 中每个 provider 的 `apiKeyEnv` 字段对应 `.env` 里的变量名。修改后重启服务器生效。
+
+## 常见命令速查
+
+| 命令 | 作用 | 备注 |
+| --- | --- | --- |
+| `npm install` | 安装后端依赖 | 在根目录执行 |
+| `cd admin-web && npm install` | 安装 admin-web 依赖 | 需要先安装根目录依赖 |
+| `npm run build` | 编译 TypeScript 后端 | 输出到 `dist/` |
+| `npm run typecheck` | 仅做类型检查 | 不输出产物 |
+| `npm test` | 运行单元测试 | 基于 vitest |
+| `npm run dev` | 以 tsx 热重载方式启动后端 | 适合本地开发 |
+| `node dist/index.js --transport stdio` | 运行编译后的后端 | 默认 stdio 模式 |
+| `node scripts/smoke-stdio.mjs` | Mock 模式冒烟测试 | 无需 API Key |
+| `npm run dev:web` | 启动 admin-web 开发服务器 | 默认 http://localhost:5173 |
+| `npm run build:web` | 构建 admin-web 生产包 | 输出到 `admin-web/dist/` |
+
+## 管理后台 admin-web
+
+`admin-web/` 是基于 React + Vite 的可视化管理界面，用于维护 **专家（Expert）/ 模型（Model）/ 角色卡（Card）** 三段式配置。
+
+### 开发模式
+
+```bash
+# 从项目根目录启动 admin-web 开发服务器
+npm run dev:web
+# 等价于
+cd admin-web && npm run dev
+```
+
+默认地址：http://localhost:5173
+
+### 生产构建
+
+```bash
+npm run build:web
+# 等价于
+cd admin-web && npm run build
+```
+
+构建产物输出到 `admin-web/dist/`，该目录已加入 `.gitignore`。
+
+### 与后端集成
+
+- SSE 模式下，后端可直接托管 `admin-web/dist/` 的静态资源。
+- 开发时前端 Vite dev server 与后端 SSE 服务分别运行，通过配置的 API 地址通信。
+- 桌面端为网格布局，移动端为类 iOS 单列布局，建议在不同视口下都检查一遍。
 
 ## 配置说明
 
