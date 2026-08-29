@@ -1,1 +1,4 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/tasks/08-28-semantic-truncation/prd.md", "reason": "语义截断 PRD（R1-R7/AC1-AC6/Out of Scope/Q1-Q4 收敛决策）"}
+{"file": ".trellis/tasks/08-28-semantic-truncation/design.md", "reason": "方案 B 技术设计：预算判定、概要状态机、注入模板、压缩器、双侧 PII、brainstorm+followup 接线"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "切换场景不破坏协议通道；[summary] 观测行微调保持协议纪律"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "压缩失败兜底硬截断、增量并入吞错等容错模式对齐"}
