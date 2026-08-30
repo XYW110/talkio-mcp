@@ -59,6 +59,7 @@ const expertSchema = z.object({
   maxTokens: z.number().int().positive(),
   timeoutMs: z.number().int().positive(),
   enabled: z.boolean().default(true),
+  builtin: z.boolean().default(false),
 });
 
 const modelSchema = z.object({
@@ -212,6 +213,8 @@ function migrateLegacyConfig(rawJson: unknown): unknown {
       maxTokens: e.maxTokens ?? defaults.maxTokens ?? 2048,
       timeoutMs: e.timeoutMs ?? defaults.timeoutMs ?? 120000,
       enabled: e.enabled ?? true,
+      // 旧格式迁移出来的都是用户自建专家，非内置
+      builtin: false,
     });
   }
 

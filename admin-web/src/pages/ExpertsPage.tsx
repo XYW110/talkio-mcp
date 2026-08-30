@@ -123,6 +123,11 @@ export function ExpertsPage({ experts, onAdd, onEdit, onDelete }: Props) {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <p className="truncate text-[16px] font-medium text-neutral-900">{e.name}</p>
+                      {e.builtin && (
+                        <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-600">
+                          内置
+                        </span>
+                      )}
                       {!e.enabled && (
                         <span className="rounded bg-neutral-200 px-1.5 py-0.5 text-[10px] text-neutral-500">
                           已禁用
@@ -136,14 +141,16 @@ export function ExpertsPage({ experts, onAdd, onEdit, onDelete }: Props) {
                   <span className="text-[12px] text-neutral-500">
                     {e.enabled === false ? "已禁用" : "启用中"} · temperature={e.temperature}
                   </span>
-                  <button
-                    onClick={() => {
-                      if (window.confirm(`确定删除专家「${e.name}」？`)) onDelete(e.id);
-                    }}
-                    className="text-[13px] font-medium text-red-500 hover:bg-red-50 active:opacity-60"
-                  >
-                    删除
-                  </button>
+                  {!e.builtin && (
+                    <button
+                      onClick={() => {
+                        if (window.confirm(`确定删除专家「${e.name}」？`)) onDelete(e.id);
+                      }}
+                      className="text-[13px] font-medium text-red-500 hover:bg-red-50 active:opacity-60"
+                    >
+                      删除
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -178,6 +185,11 @@ function ExpertRow({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <p className="truncate text-[16px] font-medium text-neutral-900">{expert.name}</p>
+            {expert.builtin && (
+              <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-600">
+                内置
+              </span>
+            )}
             {!expert.enabled && (
               <span className="rounded bg-neutral-200 px-1.5 py-0.5 text-[10px] text-neutral-500">
                 已禁用
@@ -190,16 +202,18 @@ function ExpertRow({
         </div>
         <span className="shrink-0 text-[18px] leading-none text-neutral-300">›</span>
       </button>
-      <button
-        onClick={(ev) => {
-          ev.stopPropagation();
-          onDelete();
-        }}
-        className="flex shrink-0 items-center px-3 text-[13px] text-red-500 opacity-0 hover:bg-red-50 group-hover:opacity-100"
-        title="删除"
-      >
-        删除
-      </button>
+      {!expert.builtin && (
+        <button
+          onClick={(ev) => {
+            ev.stopPropagation();
+            onDelete();
+          }}
+          className="flex shrink-0 items-center px-3 text-[13px] text-red-500 opacity-0 hover:bg-red-50 group-hover:opacity-100"
+          title="删除"
+        >
+          删除
+        </button>
+      )}
     </div>
   );
 }

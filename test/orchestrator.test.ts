@@ -99,6 +99,7 @@ function makeTarget(
       maxTokens: 1024,
       timeoutMs: 5000,
       enabled: true,
+      builtin: false,
       ...overrides.expert,
     },
     providerName: "openai",
@@ -177,7 +178,7 @@ describe("runConsultation 并行编排", () => {
     const adapter = makeEchoAdapter();
     const target = makeTarget("x", {
       modelId: "gpt-special",
-      expert: { id: "x", name: "x", icon: "🤖", systemPrompt: "定制提示词XYZ", temperature: 0.7, maxTokens: 1024, timeoutMs: 5000, enabled: true },
+      expert: { id: "x", name: "x", icon: "🤖", systemPrompt: "定制提示词XYZ", temperature: 0.7, maxTokens: 1024, timeoutMs: 5000, enabled: true, builtin: false },
     });
 
     await runConsultation("我的问题ABC", [target], makeConfig(adapter));

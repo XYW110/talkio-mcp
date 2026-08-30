@@ -147,7 +147,40 @@ export function createAdminApi(options: AdminApiOptions) {
         try {
           const bodyText = await readBody(req);
           // 先做一次 JSON 解析校验，拒绝非法配置
-          JSON.parse(bodyText);
+          const incoming = JSON.parse(bodyText) as {
+            experts?: Array<{ id?: unknown; builtin?: unknown }>;
+          };
+          // ── 内置专家保护：以磁盘上当前配置为准，收集 builtin 专家 id ──
+          // 前端只是 UI 层面的兜底；这里在后端强制「内置专家不可删除/降级」，
+          // 即使客户端提交被挖空（gutted）的 payload 也无法绕过。
+          const currentRaw = await readFile(configPath, "utf-8");
+          const current = JSON.parse(currentRaw) as {
+            experts?: Array<{ id?: unknown; builtin?: unknown }>;
+          };
+          const builtinIds = new Set<string>();
+          for (const e of current.experts ?? []) {
+            if (e && e.builtin === true && typeof e.id === "string") {
+              builtinIds.add(e.id);
+            }
+          }
+          if (builtinIds.size > 0) {
+            const incomingIds = new Map<string, boolean>();
+            for (const e of incoming.experts ?? []) {
+              if (e && typeof e.id === "string") {
+                incomingIds.set(e.id, e.builtin === true);
+              }
+            }
+            for (const id of builtinIds) {
+              if (!incomingIds.has(id)) {
+                sendError(res, 400, `内置专家 "${id}" 不可删除`);
+                return true;
+              }
+              if (incomingIds.get(id) === false) {
+                sendError(res, 400, `内置专家 "${id}" 不可修改为普通专家`);
+                return true;
+              }
+            }
+          }
           await writeFile(configPath, bodyText, "utf-8");
           sendJson(res, 200, { ok: true, restartRequired: options.restartHint ?? false });
         } catch (err) {

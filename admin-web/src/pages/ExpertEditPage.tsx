@@ -8,7 +8,7 @@ interface Props {
   onClose: () => void;
 }
 
-const ICONS = ["🏛️", "🔒", "⚡", "🔍", "💡", "💗", "🤝", "🧠", "❤️", "✍️", "📊", "🎨", "🩺", "🤖"];
+const ICONS = ["🏛️", "🔒", "⚡", "🔍", "💡", "💗", "🤝", "🧠", "❤️", "✍️", "📊", "🎨", "🔬", "💻", "🌐", "💰", "🌟", "🩺", "🤖"];
 
 function slugify(name: string): string {
   return (
@@ -45,6 +45,7 @@ export function ExpertEditPage({ initial, onSave, onClose }: Props) {
       maxTokens,
       timeoutMs,
       enabled,
+      builtin: initial?.builtin ?? false,
     });
     onClose();
   };

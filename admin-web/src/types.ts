@@ -17,6 +17,7 @@ export interface Expert {
   maxTokens?: number;
   timeoutMs?: number;
   enabled: boolean;
+  builtin?: boolean;
 }
 
 export interface ModelConfig {

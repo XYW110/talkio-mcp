@@ -40,6 +40,7 @@ function makeExpert(id: string, overrides: Partial<ExpertConfig> = {}): ExpertCo
     maxTokens: 1024,
     timeoutMs: 5000,
     enabled: true,
+    builtin: false,
     ...overrides,
   };
 }

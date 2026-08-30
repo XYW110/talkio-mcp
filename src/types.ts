@@ -42,6 +42,8 @@ export interface ExpertConfig {
   timeoutMs: number;
   /** 是否启用 */
   enabled: boolean;
+  /** 是否为内置专家（随系统分发，不可删除，仅可启停/编辑） */
+  builtin: boolean;
 }
 
 /** 单个模型配置 —— 只定义「用什么引擎」，挂在 Provider 下、与专家无关 */

@@ -86,6 +86,7 @@ function makeTarget(overrides: Partial<ResolvedCard> = {}): ResolvedCard {
       maxTokens: 1024,
       timeoutMs: 5000,
       enabled: true,
+      builtin: false,
     },
     providerName: "openai",
     modelId: "test-model",

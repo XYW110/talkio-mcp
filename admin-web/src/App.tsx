@@ -67,8 +67,12 @@ export default function App() {
       const idx = prev.experts.findIndex((e) => e.id === expert.id);
       const experts =
         idx >= 0
-          ? prev.experts.map((e, i) => (i === idx ? expert : e))
-          : [...prev.experts, expert];
+          ? prev.experts.map((e, i) =>
+              i === idx
+                ? { ...expert, builtin: e.builtin ?? expert.builtin ?? false }
+                : e,
+            )
+          : [...prev.experts, { ...expert, builtin: expert.builtin ?? false }];
       return { ...prev, experts };
     });
     setDirty(true);
@@ -76,6 +80,11 @@ export default function App() {
 
   const deleteExpert = useCallback(
     (id: string) => {
+      const target = config.experts.find((e) => e.id === id);
+      if (target?.builtin) {
+        window.alert("内置专家不可删除");
+        return;
+      }
       setConfig((prev) => {
         // 专家删除后，级联删掉引用它的角色卡
         const cards = prev.cards.filter((c) => c.expertId !== id);
@@ -83,7 +92,7 @@ export default function App() {
       });
       setDirty(true);
     },
-    [],
+    [config.experts],
   );
 
   const upsertProvider = useCallback((name: string, provider: ProviderConfig) => {
