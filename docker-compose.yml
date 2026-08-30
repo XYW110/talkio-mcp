@@ -3,7 +3,15 @@ services:
     build: .
     ports:
       - "3100:3100"
-    env_file: .env
+    # .env 存在则注入 API 密钥（OPENAI_API_KEY 等），缺失也不阻止启动。
+    # 没有密钥时仍可用 TALKIO_MOCK_PROVIDER=1 跑 mock 模式。
+    env_file:
+      - path: .env
+        required: false
+    # 配置挂载为可写：管理界面保存配置会回写该文件（重启容器后生效）。
+    # 注意：容器以非 root 的 talkio 用户运行，若管理界面保存失败，
+    # 请确保宿主机上该文件对容器用户可写（如 chmod 666 experts.json）。
+    # 若只需只读部署（改文件 + 重启），可改回 ":ro"。
     volumes:
-      - ./experts.json:/app/experts.json:ro
+      - ./experts.json:/app/experts.json
     restart: unless-stopped

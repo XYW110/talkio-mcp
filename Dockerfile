@@ -3,14 +3,20 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# 仅拷贝依赖清单，最大化利用镜像层缓存
+# 后端依赖（仅依赖清单 → 最大化镜像层缓存）
 COPY package*.json ./
 RUN npm ci
 
-# 拷贝源码并编译
+# 前端依赖（admin-web 使用独立 package-lock.json）
+COPY admin-web/package*.json ./admin-web/
+RUN cd admin-web && npm ci
+
+# 拷贝源码并编译（后端 tsc + 前端 vite）
 COPY tsconfig.json ./
 COPY src/ ./src/
+COPY admin-web/ ./admin-web/
 RUN npm run build
+RUN npm run build:web
 
 # ---------- Stage 2: runtime ----------
 FROM node:20-alpine
@@ -22,8 +28,10 @@ WORKDIR /app
 COPY package*.json experts.json ./
 RUN npm ci --omit=dev
 
-# 编译产物
+# 后端编译产物 + 前端静态产物
+# （SSE 模式的 /api 静态服务通过 <config目录>/admin-web/dist 托管管理界面）
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/admin-web/dist ./admin-web/dist
 
 # 非 root 运行
 RUN addgroup -S talkio && adduser -S talkio -G talkio \

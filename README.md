@@ -401,6 +401,12 @@ node dist/index.js --transport sse --port 3100 --host 0.0.0.0
 
 ## Docker 部署
 
+Dockerfile 采用多阶段构建，镜像内同时包含**后端（`dist`）**与**管理界面前端（`admin-web/dist`）**。容器以 SSE 模式启动后，一个端口同时提供：
+
+- 管理界面：`http://<服务器IP>:3100/`
+- MCP SSE 端点：`http://<服务器IP>:3100/sse`
+- 管理 API：`http://<服务器IP>:3100/api/*`
+
 ### 构建镜像
 
 ```bash
@@ -409,25 +415,34 @@ docker build -t talkio-mcp .
 
 ### 运行容器
 
-单环境变量注入：
+注入 API 密钥（单环境变量）：
 
 ```bash
 docker run -e OPENAI_API_KEY=sk-... -p 3100:3100 talkio-mcp
 ```
 
-使用 env 文件：
+使用 env 文件（推荐，从 `.env.example` 复制后填真实密钥）：
 
 ```bash
+cp .env.example .env   # 填入真实密钥
 docker run --env-file .env -p 3100:3100 talkio-mcp
 ```
 
-挂载自定义专家配置（只读）：
+不配置密钥时，可用 mock 模式快速验证部署：
+
+```bash
+docker run -e TALKIO_MOCK_PROVIDER=1 -p 3100:3100 talkio-mcp
+```
+
+挂载自定义专家配置（可写；管理界面保存配置会回写该文件）：
 
 ```bash
 docker run --env-file .env -p 3100:3100 \
-  -v $(pwd)/experts.json:/app/experts.json:ro \
+  -v $(pwd)/experts.json:/app/experts.json \
   talkio-mcp
 ```
+
+> ⚠️ **配置写入权限**：容器以非 root 的 `talkio` 用户运行。管理界面保存配置需写宿主机挂载的 `experts.json`；若保存报错，请先 `chmod 666 experts.json`（或让容器以 root 运行）。若只需只读部署（改文件 + 重启容器），可在 `-v` 末尾加 `:ro`。
 
 容器默认以 SSE 模式启动（`--transport sse --port 3100 --host 0.0.0.0`）。需要 stdio 模式可覆盖 CMD：
 
@@ -438,10 +453,17 @@ docker run -i --env-file .env talkio-mcp --transport stdio
 ### docker compose
 
 ```bash
-docker compose up
+cp .env.example .env   # 可选；不配密钥也可用 mock 模式
+docker compose up -d
 ```
 
-`docker-compose.yml` 默认：构建当前目录镜像、映射 `3100:3100`、加载 `.env`、只读挂载 `./experts.json`、`restart: unless-stopped`。
+`docker-compose.yml` 默认：构建当前目录镜像、映射 `3100:3100`、加载 `.env`（缺失不报错）、可写挂载 `./experts.json`、`restart: unless-stopped`。修改配置后需重启容器生效：
+
+```bash
+docker compose restart
+```
+
+> 管理界面已打进镜像，部署时无需再构建或单独托管前端。
 
 ## 开发说明
 
