@@ -2,6 +2,7 @@ node_modules/
 dist/
 .env
 experts.local.json
+experts.json
 *.log
 .codebuddy/
 /records/
