@@ -27,6 +27,25 @@ export interface ResolvedCard {
   modelId: string;
 }
 
+/** ResolvedCard → 会话记录 meta 里的卡片快照（records 模块形状的最小子集）。 */
+export function toCardRefs(targets: ResolvedCard[]): Array<{
+  cardId: string;
+  cardName: string;
+  expertId: string;
+  expertName: string;
+  modelId: string;
+  provider: string;
+}> {
+  return targets.map((t) => ({
+    cardId: t.card.id,
+    cardName: t.card.name,
+    expertId: t.expert.id,
+    expertName: t.expert.name,
+    modelId: t.modelId,
+    provider: t.providerName,
+  }));
+}
+
 export interface SkippedMissingKey {
   card: CardConfig;
   apiKeyEnv: string;

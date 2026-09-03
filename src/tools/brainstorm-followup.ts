@@ -18,7 +18,7 @@ import type { AppConfig } from "../types.js";
 import {
   askExpert,
   formatTranscriptForPrompt,
-type DialogueTurn,
+  type DialogueTurn,
 } from "../orchestrator/dialogue.js";
 import {
   buildInjection,
@@ -30,12 +30,15 @@ import {
 import { formatTranscript } from "../utils/format.js";
 import { redactPII } from "../utils/redact.js";
 import type { StreamNotifier } from "../utils/notify.js";
+import type { RecordSession } from "../records/store.js";
+import { sumUsage } from "../records/store.js";
 import {
   DEFAULT_CARD_LIMIT,
   blankInputError,
   formatSelectionNotes,
   noSelectedCardsResult,
   selectCardsForTool,
+  toCardRefs,
   type ResolvedCard,
 } from "./select-cards.js";
 
@@ -145,7 +148,7 @@ function formatFollowupReport(
 export async function handleBrainstormFollowup(
   args: BrainstormFollowupArgs,
   config: AppConfig,
-  deps?: { notifier?: StreamNotifier },
+  deps?: { notifier?: StreamNotifier; record?: RecordSession },
 ): Promise<CallToolResult> {
   if (args.question.trim() === "") {
     return blankInputError("question");
@@ -156,6 +159,20 @@ export async function handleBrainstormFollowup(
   const prevTurns: DialogueTurn[] = degraded ? [] : args.turns;
   const nextRound = prevTurns.reduce((max, t) => Math.max(max, t.round), 0) + 1;
   const mode = args.mode ?? "relay";
+  const record = deps?.record;
+
+  /** 新 turn 逐条 append（含 usage），与会话报告语义一致。 */
+  const recordTurn = (t: DialogueTurn): void => {
+    record?.append({
+      type: "turn",
+      round: t.round,
+      expertId: t.expertId,
+      expertName: t.expertName,
+      icon: t.icon,
+      content: t.content,
+      usage: t.usage,
+    });
+  };
 
   // Semantic compression (task 08-28-semantic-truncation, design §7 / Q2):
   // handler-level summary cache so a relay loop never re-compresses per expert.
@@ -203,31 +220,42 @@ export async function handleBrainstormFollowup(
     const userContent = transcript
       ? `${args.question}\n\n${FOLLOWUP_INSTRUCTION}\n\n${SPECIFIC_EMPHASIS}\n\n此前讨论实录:\n${transcript}`
       : `${args.question}\n\n${FOLLOWUP_INSTRUCTION}\n\n${SPECIFIC_EMPHASIS}`;
-    const newTurns: DialogueTurn[] = [];
+const newTurns: DialogueTurn[] = [];
+    record?.append({ type: "cards", cards: toCardRefs(selection.selected) });
     try {
-      const content = await askExpert(target, userContent, config);
-      newTurns.push({
+      const answer = await askExpert(target, userContent, config);
+      const t: DialogueTurn = {
         round: nextRound,
         expertId: target.expert.id,
         expertName: target.expert.name,
         icon: target.expert.icon,
-        content,
-      });
+        content: answer.content,
+        usage: answer.usage,
+      };
+      newTurns.push(t);
+      recordTurn(t);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      newTurns.push({
+      const t: DialogueTurn = {
         round: nextRound,
         expertId: target.expert.id,
         expertName: target.expert.name,
         icon: target.expert.icon,
         // Privacy: sanitize provider error echoes.
         content: `⚠️ (${target.expert.name} 本轮缺席: ${redactPII(msg)})`,
-      });
+      };
+      newTurns.push(t);
+      recordTurn(t);
     }
     const report =
       formatFollowupReport(args.question, mode, nextRound, newTurns, degraded) +
       formatSelectionNotes(selection, DEFAULT_CARD_LIMIT);
     const allFailed = newTurns.every((t) => t.content.startsWith("⚠️"));
+    record?.finish({
+      status: allFailed ? "all_failed" : "ok",
+      report,
+      usage: sumTurnsUsage(newTurns),
+    });
     return {
       isError: allFailed,
       content: [{ type: "text", text: report }],
@@ -241,32 +269,38 @@ export async function handleBrainstormFollowup(
   if (selection.selected.length === 0) {
     return noSelectedCardsResult(config, selection, args.cards);
   }
-  const targets = selection.selected;
+const targets = selection.selected;
   const newTurns: DialogueTurn[] = [];
+  record?.append({ type: "cards", cards: toCardRefs(targets) });
 
   const runTarget = async (target: ResolvedCard, transcript: string) => {
     const userContent = transcript
       ? `${args.question}\n\n${FOLLOWUP_INSTRUCTION}\n\n此前讨论实录:\n${transcript}`
       : `${args.question}\n\n${FOLLOWUP_INSTRUCTION}`;
     try {
-      const content = await askExpert(target, userContent, config);
-      newTurns.push({
+      const answer = await askExpert(target, userContent, config);
+      const t: DialogueTurn = {
         round: nextRound,
         expertId: target.expert.id,
         expertName: target.expert.name,
         icon: target.expert.icon,
-        content,
-      });
+        content: answer.content,
+        usage: answer.usage,
+      };
+      newTurns.push(t);
+      recordTurn(t);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      newTurns.push({
+      const t: DialogueTurn = {
         round: nextRound,
         expertId: target.expert.id,
         expertName: target.expert.name,
         icon: target.expert.icon,
         // Privacy: sanitize provider error echoes.
         content: `⚠️ (${target.expert.name} 本轮缺席: ${redactPII(msg)})`,
-      });
+      };
+      newTurns.push(t);
+      recordTurn(t);
     }
   };
 
@@ -307,11 +341,25 @@ export async function handleBrainstormFollowup(
     isError = true;
   }
 
-  const report =
+const report =
     formatFollowupReport(args.question, mode, nextRound, newTurns, degraded) +
     formatSelectionNotes(selection, DEFAULT_CARD_LIMIT);
+  record?.finish({
+    status: isError ? "all_failed" : "ok",
+    report,
+    usage: sumTurnsUsage(newTurns),
+  });
   return {
     isError,
     content: [{ type: "text", text: report }],
   };
+}
+
+/** 会话语 usage 归并（turn 级逐条累加）。 */
+function sumTurnsUsage(
+  turns: Array<{ usage?: { promptTokens?: number; completionTokens?: number } }>
+): { promptTokens?: number; completionTokens?: number } | undefined {
+  let acc: { promptTokens?: number; completionTokens?: number } | undefined;
+  for (const t of turns) acc = sumUsage(acc, t.usage);
+  return acc;
 }

@@ -4,6 +4,10 @@ dist/
 experts.local.json
 *.log
 .codebuddy/
+/records/
 
 /.snow
 admin-web/tsconfig.tsbuildinfo
+.codegraph/
+.zcode/
+temp/

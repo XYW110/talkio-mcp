@@ -18,6 +18,8 @@ import {
 } from "./tools/brainstorm-followup.js";
 import { listCardsSchema, handleListCards } from "./tools/list-cards.js";
 import { createMcpNotifier } from "./utils/notify.js";
+import { startSession } from "./records/store.js";
+import type { RecordSession } from "./records/store.js";
 
 /** Server identity advertised to MCP clients. */
 export const SERVER_NAME = "talkio-mcp-expert-council";
@@ -27,11 +29,15 @@ export const SERVER_VERSION = "0.1.0";
  * Create and configure the MCP server. The config is captured in the closure
  * of each tool handler so the handlers receive it without globals.
  */
-export function createServer(config: AppConfig): McpServer {
+export function createServer(
+  config: AppConfig,
+  options?: { recordsDir?: string }
+): McpServer {
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { capabilities: { logging: {} } }
   );
+  const recordsDir = options?.recordsDir;
 
   // 流式增量通知（design §1）：logging notifications 统一由闭包内注入。
   const notifier = createMcpNotifier(server);
@@ -62,7 +68,15 @@ export function createServer(config: AppConfig): McpServer {
     },
     async (args) => {
       // args is already parsed/validated against consultExpertsSchema by the SDK.
-      const result = await handleConsultExperts(args, config, { notifier });
+      const record =
+        (await startSession(
+          { tool: "consult_experts", prompt: args.question, context: args.context },
+          recordsDir
+        )) ?? undefined;
+      const result = await handleConsultExperts(args, config, {
+        notifier,
+        record,
+      });
       return result;
     }
   );
@@ -77,7 +91,17 @@ export function createServer(config: AppConfig): McpServer {
       inputSchema: brainstormSchema,
     },
     async (args) => {
-      const result = await handleBrainstorm(args, config, { notifier });
+      const record =
+        (await startSession(
+          {
+            tool: "brainstorm",
+            prompt: args.topic,
+            mode: args.mode ?? "debate",
+            rounds: args.rounds ?? 1,
+          },
+          recordsDir
+        )) ?? undefined;
+      const result = await handleBrainstorm(args, config, { notifier, record });
       return result;
     }
   );
@@ -93,10 +117,35 @@ export function createServer(config: AppConfig): McpServer {
     },
     async (args) => {
       // 本次不接入流式通知（PRD Notes）：followup 单轮、非多轮编排。
-      const result = await handleBrainstormFollowup(args, config);
+      const record =
+        (await startSession(
+          {
+            tool: "brainstorm_followup",
+            prompt: args.question,
+            degraded: !isValidTurnsInput(args.turns),
+            prevTurnsCount: args.turns?.length ?? 0,
+          },
+          recordsDir,
+        )) ?? undefined;
+      const result = await handleBrainstormFollowup(args, config, { record });
       return result;
-    }
+    },
   );
 
   return server;
+}
+
+/** 简化的 turns 有效性判定，仅供记录 meta 标注 degraded 用（完整判定在 handler）。 */
+function isValidTurnsInput(turns: unknown): boolean {
+  return (
+    Array.isArray(turns) &&
+    turns.length > 0 &&
+    turns.every(
+      (t) =>
+        t !== null &&
+        typeof t === "object" &&
+        typeof (t as { round?: unknown }).round === "number" &&
+        typeof (t as { content?: unknown }).content === "string"
+    )
+  );
 }

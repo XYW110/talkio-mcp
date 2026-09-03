@@ -10,6 +10,7 @@ import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { fetchWithRetry } from "../utils/retry.js";
+import { listSessions, readSession, isValidSessionId } from "../records/store.js";
 
 /** 探测模型时单次超时（ms） */
 const PROBE_TIMEOUT_MS = 10000;
@@ -21,6 +22,8 @@ interface AdminApiOptions {
   staticDir?: string;
   /** 是否需要重启 server 才生效（当前实现：配置在启动时闭合捕获，改完必须重启） */
   restartHint?: boolean;
+  /** 会话记录目录；未配置时 records 接口返回空列表 / 404 */
+  recordsDir?: string;
 }
 
 /** 应答辅助：统一 JSON 输出与错误格式 */
@@ -126,7 +129,7 @@ async function probeModels(baseUrl: string, apiKey: string): Promise<unknown[]> 
  * 返回 true 表示已处理（response 已结束），false 表示未匹配到 /api 路由。
  */
 export function createAdminApi(options: AdminApiOptions) {
-  const { configPath, staticDir } = options;
+  const { configPath, staticDir, recordsDir } = options;
 
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -223,6 +226,47 @@ export function createAdminApi(options: AdminApiOptions) {
           200,
           [...names].map((name) => ({ name, configured: Boolean(process.env[name]) })),
         );
+      } catch (err) {
+        sendError(res, 500, err instanceof Error ? err.message : String(err));
+      }
+      return true;
+    }
+
+    // ── /api/records（会话记录列表，mtime 倒序，limit 默认 50 上限 200）──
+    if (url.pathname === "/api/records" && req.method === "GET") {
+      try {
+        if (!recordsDir) {
+          sendJson(res, 200, []);
+          return true;
+        }
+        const limitRaw = url.searchParams.get("limit");
+        const limit = limitRaw === null ? 50 : Number(limitRaw);
+        const list = await listSessions(recordsDir, Number.isFinite(limit) ? limit : 50);
+        sendJson(res, 200, list);
+      } catch (err) {
+        sendError(res, 500, err instanceof Error ? err.message : String(err));
+      }
+      return true;
+    }
+
+    // ── /api/records/:id（单会话完整事件流）──
+    if (
+      url.pathname.startsWith("/api/records/") &&
+      url.pathname.length > "/api/records/".length &&
+      req.method === "GET"
+    ) {
+      try {
+        const id = decodeURIComponent(url.pathname.slice("/api/records/".length));
+        if (!isValidSessionId(id)) {
+          sendError(res, 404, "记录不存在");
+          return true;
+        }
+        const events = recordsDir ? await readSession(recordsDir, id) : null;
+        if (!events) {
+          sendError(res, 404, "记录不存在");
+          return true;
+        }
+        sendJson(res, 200, { id, events });
       } catch (err) {
         sendError(res, 500, err instanceof Error ? err.message : String(err));
       }

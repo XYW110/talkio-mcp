@@ -39,6 +39,14 @@ export interface DialogueTurn {
   expertName: string;
   icon: string;
   content: string;
+  /** Token usage if reported by the provider (recorded, not prompted). */
+  usage?: { promptTokens?: number; completionTokens?: number };
+}
+
+/** askExpert 的返回：回答正文 + provider 上报的用量（可缺省）。 */
+export interface AskExpertResult {
+  content: string;
+  usage?: { promptTokens?: number; completionTokens?: number };
 }
 
 /** Options for runDialogue. */
@@ -138,13 +146,14 @@ export function formatTranscriptForPrompt(turns: DialogueTurn[]): string {
 
 /**
  * Call one card target with a synthesized user message. Returns the assistant
- * content string, or throws on failure (caller handles per-mode).
+ * content plus provider-reported usage, or throws on failure (caller handles
+ * per-mode).
  */
 export async function askExpert(
   target: ResolvedCard,
   userContent: string,
   config: AppConfig
-): Promise<string> {
+): Promise<AskExpertResult> {
   const resolved = resolveProvider(target.providerName, config);
   if (!resolved) {
     throw new Error(`未找到 provider 配置: "${target.providerName}"`);
@@ -167,7 +176,7 @@ export async function askExpert(
   if (!result || typeof result.content !== "string") {
     throw new Error("provider 返回了无效的响应内容");
   }
-  return result.content;
+  return { content: result.content, usage: result.usage };
 }
 
 // --- Main engine ---------------------------------------------------------
@@ -270,7 +279,8 @@ export async function runDialogue(
             expertId: target.expert.id,
             expertName: target.expert.name,
             icon: target.expert.icon,
-            content: res.value,
+            content: res.value.content,
+            usage: res.value.usage,
           });
         } else {
           const msg =
@@ -309,7 +319,8 @@ export async function runDialogue(
             expertId: target.expert.id,
             expertName: target.expert.name,
             icon: target.expert.icon,
-            content: res.value,
+            content: res.value.content,
+            usage: res.value.usage,
           });
         } else {
           const msg =
@@ -335,13 +346,14 @@ export async function runDialogue(
             ? `${opts.topic}\n\n${RELAY_INSTRUCTION}\n\n此前发言:\n${transcript}`
             : `${opts.topic}\n\n${SEED_INSTRUCTION}`;
         try {
-          const content = await askExpert(target, userContent, config);
+          const answer = await askExpert(target, userContent, config);
           turns.push({
             round,
             expertId: target.expert.id,
             expertName: target.expert.name,
             icon: target.expert.icon,
-            content,
+            content: answer.content,
+            usage: answer.usage,
           });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);

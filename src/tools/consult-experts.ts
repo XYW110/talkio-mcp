@@ -11,12 +11,15 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { runConsultation } from "../orchestrator/parallel.js";
 import type { StreamNotifier } from "../utils/notify.js";
 import { formatConsultReport } from "../utils/format.js";
+import type { RecordSession } from "../records/store.js";
+import { sumUsage } from "../records/store.js";
 import {
   DEFAULT_CARD_LIMIT,
   blankInputError,
   formatSelectionNotes,
   noSelectedCardsResult,
   selectCardsForTool,
+  toCardRefs,
 } from "./select-cards.js";
 
 /** Zod raw shape for consult_experts arguments (passed as inputSchema). */
@@ -54,7 +57,7 @@ export type ConsultExpertsArgs = {
 export async function handleConsultExperts(
   args: ConsultExpertsArgs,
   config: AppConfig,
-  deps?: { notifier?: StreamNotifier },
+  deps?: { notifier?: StreamNotifier; record?: RecordSession },
 ): Promise<CallToolResult> {
   if (args.question.trim() === "") {
     return blankInputError("question");
@@ -68,19 +71,50 @@ export async function handleConsultExperts(
     return noSelectedCardsResult(config, selection, args.cards);
   }
 
+  const record = deps?.record;
+  record?.append({ type: "cards", cards: toCardRefs(selection.selected) });
+
   const items = await runConsultation(args.question, selection.selected, config, {
     context: args.context,
     parallel: args.parallel ?? true,
     notifier: deps?.notifier,
   });
 
+  // 记录每张卡的原始回答/失败原因，语义与报告一致（含全失败聚合项）。
+  for (const item of items) {
+    record?.append({
+      type: "card_result",
+      cardId: item.target.card.id,
+      ok: item.ok,
+      content: item.ok ? item.content : undefined,
+      error: item.ok ? undefined : item.error,
+      usage: item.ok ? item.usage : undefined,
+    });
+  }
+
   const report =
     formatConsultReport(args.question, args.context, items) +
     formatSelectionNotes(selection, DEFAULT_CARD_LIMIT);
 
   const allFailed = items.length > 0 && items.every((it) => !it.ok);
+
+  // 完成：全会话 usage 求和（缺省字段不虚构）。
+  let status: "ok" | "all_failed" | "no_cards" | "error" = "ok";
+  if (items.length === 0) status = "no_cards";
+  else if (allFailed) status = "all_failed";
+  record?.finish({ status, report, usage: sumUsageList(items) });
+
   return {
     isError: allFailed,
     content: [{ type: "text", text: report }],
   };
+}
+
+/** 逐项 usage 归并（sumUsage 一次只能并两个，reduce 串联）。 */
+function sumUsageList(
+  items: Array<{ usage?: { promptTokens?: number; completionTokens?: number } }>
+): { promptTokens?: number; completionTokens?: number } | undefined {
+  let acc: { promptTokens?: number; completionTokens?: number } | undefined;
+  for (const it of items) acc = sumUsage(acc, it.usage);
+  return acc;
 }

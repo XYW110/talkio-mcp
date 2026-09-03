@@ -111,7 +111,12 @@ async function startStdio(): Promise<void> {
 let server: ReturnType<typeof createServer>;
 
 /** Start the server in SSE transport mode using node:http. */
-async function startSse(port: number, host: string, configPath: string): Promise<void> {
+async function startSse(
+  port: number,
+  host: string,
+  configPath: string,
+  recordsDir?: string
+): Promise<void> {
   // Security: warn when binding to a non-loopback address (no auth configured).
   const isLoopback =
     host === "127.0.0.1" || host === "localhost" || host === "::1";
@@ -131,10 +136,11 @@ async function startSse(port: number, host: string, configPath: string): Promise
   const staticDir = await resolveStaticDir(
     path.resolve(path.dirname(adminPath), "admin-web", "dist"),
   );
-  const handleAdmin = createAdminApi({
+const handleAdmin = createAdminApi({
     configPath: adminPath,
     staticDir,
     restartHint: true,
+    recordsDir,
   });
   if (staticDir) {
     log(`管理界面已启用: 访问 http://${host}:${port}/ 打开专家管理页面`);
@@ -259,15 +265,21 @@ async function main(): Promise<void> {
     logger.warn(`[cli] 未知的 --log-level "${args.logLevel}"，已降级为 info`);
   }
 
-  // Load config (may throw with a clear message on invalid experts.json).
+// Load config (may throw with a clear message on invalid experts.json).
   const config = await loadConfig(args.config, { logger });
-  server = createServer(config);
+  // 会话记录目录：<experts.json 所在目录>/records（可被 TALKIO_RECORDS_DIR 覆盖）。
+  const cfgPath = args.config ?? process.env.TALKIO_EXPERTS_CONFIG ?? "experts.json";
+  const recordsDir = path.resolve(
+    path.dirname(path.resolve(cfgPath)),
+    "records",
+  );
+  server = createServer(config, { recordsDir });
 
-  if (args.transport === "stdio") {
+if (args.transport === "stdio") {
     await startStdio();
   } else {
     const cfgPath = args.config ?? process.env.TALKIO_EXPERTS_CONFIG ?? "experts.json";
-    await startSse(args.port, args.host, cfgPath);
+    await startSse(args.port, args.host, cfgPath, recordsDir);
   }
 }
 
