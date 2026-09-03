@@ -9,3 +9,4 @@ Welcome to the backend guidelines.
 - [Error Handling](./error-handling.md) (Filled)
 - [Logging Guidelines](./logging-guidelines.md) (Filled)
 - [Quality Guidelines](./quality-guidelines.md) (Filled)
+- [Records Persistence](./records-persistence.md) (Filled) — JSONL 会话记录 + admin API 契约

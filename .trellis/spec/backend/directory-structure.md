@@ -68,6 +68,8 @@ talkio-mcp-expert-council/
 | 工具          | `src/tools/brainstorm.ts`      | `brainstorm` MCP 工具 schema 与 handler                                                                                       |
 | 重试          | `src/utils/retry.ts`           | 带超时与指数退避重试的 `fetch` 封装，密钥脱敏                                                                                 |
 | 格式化        | `src/utils/format.ts`          | 纯函数生成 Markdown 报告，无副作用                                                                                            |
+| 会话记录      | `src/records/store.ts`         | JSONL 落盘（`startSession`/`append`/`finish`/`flush`）；记录永不影响主流程（PRD R3），失败吞掉并 `[records]` warn；`TALKIO_RECORDS=0` 禁用 |
+| Admin API     | `src/admin/api.ts`             | HTTP 路由：配置 CRUD + `GET /api/records`、`GET /api/records/:id` 会话记录查询；路径穿越由 `isValidSessionId` 拦截               |
 
 ---
 
