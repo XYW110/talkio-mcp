@@ -167,3 +167,26 @@ Completed the 00-bootstrap-guidelines task by filling 12 backend and frontend sp
 
 - brainstorm 增加 context
 - LICENSE / CI / npm 元数据
+
+
+## Session 6: 会话记录落盘（session-records）
+<!-- trellis-session: v=2 fp=a9f2177f3de5c52b -->
+
+**Date**: 2026-09-04
+**Task**: 会话记录落盘（session-records）
+**Branch**: `master`
+
+### Summary
+
+为 consult_experts/brainstorm/brainstorm_followup 三个 MCP 工具新增 JSONL 会话持久化：src/records/store.ts（startSession/append/finish/flush 单 tail-promise 串行化写入）、三工具 deps.record 接线、server/index 装配 recordsDir、admin API GET /api/records(+/:id)。修复 brainstorm-followup 中 askExpert 返回 {content,usage} 的两处损坏调用点。修复同秒创建会话排序断言偶发失败（改为文件名倒序断言）。spec 新增 records-persistence.md（7 节完整契约）。147 测试全通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7d480e5` | feat(records): add JSONL session persistence for consult/brainstorm/followup + admin API |
+| `a57f266` | docs(spec): 记录会话记录落盘契约（records-persistence） |
+
+### Status
+
+[OK] **Completed**

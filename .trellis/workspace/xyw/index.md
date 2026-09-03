@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 5
-- **Last Active**: 2026-08-27
+- **Total Sessions**: 6
+- **Last Active**: 2026-09-04
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~169 | Active |
+| `journal-1.md` | ~192 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 6 | 2026-09-04 | 会话记录落盘（session-records） | `7d480e5`, `a57f266` | `master` |
 | 5 | 2026-08-27 | list_experts 标注缺 key | `0d5147d`, `f4f1cc7` | `master` |
 | 4 | 2026-08-27 | 默认专家筛选与首次调用成本 | `4c9afb0`, `653c705`, `d60fb65` | `master` |
 | 3 | 2026-08-21 | 添加 list_experts 并修复 mock 凭据短路 | `4500240` | `master` |
