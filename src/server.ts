@@ -77,6 +77,7 @@ export function createServer(
         notifier,
         record,
       });
+      finishOnError(record, result);
       return result;
     }
   );
@@ -102,6 +103,7 @@ export function createServer(
           recordsDir
         )) ?? undefined;
       const result = await handleBrainstorm(args, config, { notifier, record });
+      finishOnError(record, result);
       return result;
     }
   );
@@ -128,11 +130,26 @@ export function createServer(
           recordsDir,
         )) ?? undefined;
       const result = await handleBrainstormFollowup(args, config, { record });
+      finishOnError(record, result);
       return result;
     },
   );
 
   return server;
+}
+
+/**
+ * 安全网：handler 的校验失败/早退路径可能未调用 record.finish()，
+ * 导致记录文件缺 done 行。此处对 isError 结果补写 error 终态。
+ * finish() 自带 closed 幂等标志，handler 已正常 finish 时这里是空操作。
+ */
+function finishOnError(
+  record: RecordSession | undefined,
+  result: unknown
+): void {
+  if (record && result && typeof result === "object" && (result as { isError?: unknown }).isError === true) {
+    record.finish({ status: "error" });
+  }
 }
 
 /** 简化的 turns 有效性判定，仅供记录 meta 标注 degraded 用（完整判定在 handler）。 */
