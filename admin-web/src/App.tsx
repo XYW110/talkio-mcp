@@ -7,6 +7,7 @@ import { ProvidersPage } from "./pages/ProvidersPage";
 import { ModelsPage } from "./pages/ModelsPage";
 import { CardsPage } from "./pages/CardsPage";
 import { RecordsPage } from "./pages/RecordsPage";
+import { UsagePage } from "./pages/UsagePage";
 import { ChatPage } from "./pages/ChatPage";
 import { ChevronRow, SectionLabel, Card } from "./components/ui";
 
@@ -24,6 +25,7 @@ type Page =
   | { name: "models" }
   | { name: "cards" }
   | { name: "records" }
+  | { name: "usage" }
   | { name: "chat" };
 
 function ErrorBanner({ msg, onClose }: { msg: string; onClose: () => void }) {
@@ -257,7 +259,7 @@ const providers = Object.entries(config.providers) as [string, ProviderConfig][]
       unit: "个",
       subtitle: "管理各 Provider 下的模型引擎",
     },
-{
+    {
       page: { name: "cards" },
       icon: "🎴",
       title: "角色卡",
@@ -265,13 +267,21 @@ const providers = Object.entries(config.providers) as [string, ProviderConfig][]
       unit: "张",
       subtitle: "专家 + 模型 绑定成一张角色卡",
     },
-{
+    {
       page: { name: "records" },
       icon: "🗂️",
       title: "会话记录",
       count: 0,
       unit: "",
       subtitle: "查看 consult / brainstorm 调用留痕",
+    },
+    {
+      page: { name: "usage" },
+      icon: "📊",
+      title: "用量",
+      count: 0,
+      unit: "",
+      subtitle: "Token 消耗聚合与成本估算",
     },
     {
       page: { name: "chat" },
@@ -351,6 +361,8 @@ const editOverlay = editing && (
     );
   } else if (page.name === "records") {
     content = <RecordsPage onBack={() => setPage({ name: "settings" })} />;
+  } else if (page.name === "usage") {
+    content = <UsagePage onBack={() => setPage({ name: "settings" })} />;
   } else if (page.name === "chat") {
     content = <ChatPage cards={config.cards} />;
   } else {
@@ -449,8 +461,8 @@ const editOverlay = editing && (
       />
 
       <div className="flex min-w-0 flex-1 flex-col gap-2.5">
-        {/* 手机端顶栏岛（返回）—— records 自管理导航（列表↔详情），不重复渲染 */}
-        {page.name !== "settings" && page.name !== "records" && (
+        {/* 手机端顶栏岛（返回）—— records / usage 自管理导航（NavBar 在页内），不重复渲染 */}
+        {page.name !== "settings" && page.name !== "records" && page.name !== "usage" && (
           <div className="island island-strong flex flex-shrink-0 items-center px-3 py-2.5 md:hidden">
             <button
               onClick={() => setPage({ name: "settings" })}
@@ -462,10 +474,10 @@ const editOverlay = editing && (
           </div>
         )}
 
-        {/* 内容岛：桌面端始终是岛；手机端 settings 页自身即首页，直接铺 */}
+        {/* 内容岛：桌面端始终是岛；手机端 settings / records / usage 页自身即岛，直接铺 */}
         <div
           className={
-            page.name === "settings" || page.name === "records"
+            page.name === "settings" || page.name === "records" || page.name === "usage"
               ? "min-h-0 flex-1 overflow-hidden"
               : "island island-strong min-h-0 flex-1 overflow-hidden"
           }

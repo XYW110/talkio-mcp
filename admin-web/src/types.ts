@@ -182,3 +182,31 @@ export type ChatSessionEvent =
   | { type: "brainstorm.round"; round: number; total: number }
   | { type: "done"; isError: boolean; report: string; sessionId: string }
   | { type: "error"; message: string };
+
+// ── Token 用量聚合（GET /api/usage 返回体，mirrors src/records/store.ts UsageAggregate）──
+
+/** GET /api/usage?days=N 返回体 */
+export interface UsageAggregate {
+  /** 实际采用的时间窗（天） */
+  days: number;
+  /** 全部 turn/card_result 事件的 usage 合计 */
+  total: UsageRecord;
+  sessionCount: number;
+  callCount: number;
+  /** 按天聚合，date = 本地 YYYY-MM-DD，升序 */
+  byDay: Array<{ date: string; usage: UsageRecord }>;
+  /** 按角色卡聚合，usage 降序；未匹配到快照的用量归入 cardId "unknown"（cardName 未知卡片） */
+  byCard: Array<{
+    cardId: string;
+    cardName: string;
+    modelId: string;
+    provider: string;
+    usage: UsageRecord;
+    sessions: number;
+    calls: number;
+  }>;
+  /** 按模型聚合，usage 降序 */
+  byModel: Array<{ modelId: string; provider: string; usage: UsageRecord; calls: number }>;
+  /** 解析失败的会话文件数 */
+  skipped: number;
+}

@@ -21,6 +21,7 @@ import {
   deleteSessions,
   clearSessions,
   isValidSessionId,
+  aggregateUsage,
 } from "../records/store.js";
 
 /** 探测模型时单次超时（ms） */
@@ -33,7 +34,7 @@ interface AdminApiOptions {
   staticDir?: string;
   /** 是否需要重启 server 才生效（当前实现：配置在启动时闭合捕获，改完必须重启） */
   restartHint?: boolean;
-  /** 会话记录目录；未配置时 records 接口返回空列表 / 404 */
+  /** 会话记录目录；未配置时 records 接口返回空列表 / 404，usage 返回空结构 */
   recordsDir?: string;
   /** 启动时已校验的配置（用于网页版发起群聊，避免每次重读+重复校验） */
   config: AppConfig;
@@ -439,6 +440,36 @@ export function createAdminApi(options: AdminApiOptions) {
           return true;
         }
         sendJson(res, 200, { id, events });
+      } catch (err) {
+        sendError(res, 500, err instanceof Error ? err.message : String(err));
+      }
+      return true;
+    }
+
+    // ── /api/usage（token 用量聚合；records 未启用返回空结构而非 404）──
+    if (url.pathname === "/api/usage" && req.method === "GET") {
+      try {
+        const daysRaw = url.searchParams.get("days");
+        const daysNum = daysRaw === null ? NaN : Number(daysRaw);
+        // days 钳制到 [1,90]；缺省 / 非数字 → 30
+        const days =
+          daysRaw !== null && Number.isFinite(daysNum)
+            ? Math.min(Math.max(Math.round(daysNum), 1), 90)
+            : 30;
+        if (!recordsDir) {
+          sendJson(res, 200, {
+            days,
+            total: {},
+            sessionCount: 0,
+            callCount: 0,
+            byDay: [],
+            byCard: [],
+            byModel: [],
+            skipped: 0,
+          });
+          return true;
+        }
+        sendJson(res, 200, await aggregateUsage(recordsDir, days));
       } catch (err) {
         sendError(res, 500, err instanceof Error ? err.message : String(err));
       }

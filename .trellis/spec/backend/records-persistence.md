@@ -81,6 +81,7 @@ export function createXxxTool(deps?: { notifier?: StreamNotifier; record?: Recor
 | `GET /api/records?limit=N` | meta 摘要列表（含 `sizeBytes`），按文件名倒序（≈最新在前）；`limit` 非法值回退 50 |
 | `GET /api/records/:id` | `{ id, events }` 完整事件流；`:id` 先 `decodeURIComponent` 再 `isValidSessionId` 校验 |
 | `DELETE /api/records` | body `{ ids?: string[] }`：非空 ids → 批量删；无 body / 空 body / 空 ids → 清空全部。返回 `{ ok, deleted }`（实际删除数）。未配置 recordsDir → 404 |
+| `GET /api/usage?days=N` | 用量聚合（`aggregateUsage` 纯函数）：`{ days, total, sessionCount, callCount, byDay, byCard, byModel, skipped }`。`days` 钳制 [1,90] 缺省 30；mtime 时间窗预过滤；仅统计 `turn`/`card_result` 行（`done` 是会话级汇总不计入避免重复；`vote` 暂不计入）；任一行损坏 → 该文件计入 `skipped` 并跳过。未配置 recordsDir → 200 + 空结构（非 404） |
 
 ## 4. Validation & Error Matrix
 

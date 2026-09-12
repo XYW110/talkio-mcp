@@ -10,6 +10,7 @@ import type {
   DeleteRecordsResult,
   RunBrainstormResult,
   RunBrainstormBody,
+  UsageAggregate,
 } from "./types";
 
 async function http<T>(url: string, init?: RequestInit): Promise<T> {
@@ -57,4 +58,6 @@ deleteRecords: (ids?: string[]) =>
   /** 订阅某个群聊 session 的 SSE 流（事件名 progress / done / error）。 */
   chatEventSource: (sessionId: string) =>
     new EventSource(`/api/chat?session=${encodeURIComponent(sessionId)}`),
+  /** Token 用量聚合（days ∈ [1,90]，后端钳制；缺省 30）。 */
+  getUsage: (days: number) => http<UsageAggregate>(`/api/usage?days=${days}`),
 };

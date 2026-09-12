@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/records-persistence.md", "reason": "聚合函数需按 records JSONL 契约解析 meta/turn/card_result/done 行"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "UsagePage 必须使用 snow token 语义色板，禁止硬编码色值与 alpha 修饰符"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量要求（编译器门禁/文件卫生）"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "损坏文件跳过与空结构分支需对齐错误处理规范"}

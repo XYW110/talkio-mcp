@@ -324,6 +324,245 @@ export async function deleteSessions(
   return deleted;
 }
 
+/** Token 用量聚合结果（GET /api/usage 响应体，见 design.md 契约）。 */
+export interface UsageAggregate {
+  /** 实际采用的时间窗（天） */
+  days: number;
+  /** 全部 turn/card_result 事件的 usage 合计（done 行为会话汇总，不计入避免重复） */
+  total: UsageRecord;
+  /** 时间窗内成功解析的会话文件数 */
+  sessionCount: number;
+  /** turn + card_result 事件数（usage 缺失也照常 +1，见 design.md 错误矩阵） */
+  callCount: number;
+  /** 按天聚合，date = meta.startedAt 的本地 YYYY-MM-DD，升序 */
+  byDay: Array<{ date: string; usage: UsageRecord }>;
+  /** 按角色卡聚合，usage 降序；turn 行 expertId 反查不到快照时归入 "unknown" 桶 */
+  byCard: Array<{
+    cardId: string;
+    cardName: string;
+    modelId: string;
+    provider: string;
+    usage: UsageRecord;
+    sessions: number;
+    calls: number;
+  }>;
+  /** 按模型聚合，usage 降序 */
+  byModel: Array<{ modelId: string; provider: string; usage: UsageRecord; calls: number }>;
+  /** 解析失败（损坏）的文件数 */
+  skipped: number;
+}
+
+/** ISO 时间 → 本地 YYYY-MM-DD（与 RecordsPage 的 localDate 同口径）；无法解析返回 null。 */
+function localDateKey(value: unknown): string | null {
+  if (typeof value !== "string" || value === "") return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/** 聚合输出按 usage 总量（入+出）降序；并列时按 id 字典序保证确定性。 */
+function usageSize(u: UsageRecord): number {
+  return (u.promptTokens ?? 0) + (u.completionTokens ?? 0);
+}
+
+/**
+ * 聚合时间窗内会话记录的 token 用量（纯函数，不碰 HTTP）。
+ *
+ * - 先按文件 mtime 过滤时间窗（与 listSessions 同风格），窗外文件整体排除。
+ * - 逐文件全文逐行 JSON.parse：任一行损坏 → skipped+1 并跳过整个文件（简单可预测，
+ *   单文件失败不影响其余）。
+ * - usage 维度只统计 turn / card_result 行（done 行是会话级汇总，计入会重复）。
+ * - days 也会做防御性钳制（正常路径由 API 路由钳制）。
+ */
+export async function aggregateUsage(
+  recordsDir: string,
+  days: number
+): Promise<UsageAggregate> {
+  // 防御性钳制（正常路径由 API 路由钳制）：NaN/非有限 → 30，其余 clamp 到 [1,90]
+  const truncated = Math.trunc(days);
+  const windowDays = Number.isFinite(truncated) ? Math.min(Math.max(truncated, 1), 90) : 30;
+  const result: UsageAggregate = {
+    days: windowDays,
+    total: {},
+    sessionCount: 0,
+    callCount: 0,
+    byDay: [],
+    byCard: [],
+    byModel: [],
+    skipped: 0,
+  };
+
+  let names: string[];
+  try {
+    names = (await readdir(recordsDir)).filter((n) => n.endsWith(".jsonl"));
+  } catch {
+    return result; // 目录不存在 / 不可读 → 空结构
+  }
+
+  const windowStartMs = Date.now() - windowDays * 24 * 60 * 60 * 1000;
+  const dayMap = new Map<string, UsageRecord>();
+  const cardMap = new Map<
+    string,
+    {
+      cardName: string;
+      modelId: string;
+      provider: string;
+      usage: UsageRecord;
+      sessions: Set<string>;
+      calls: number;
+    }
+  >();
+  const modelMap = new Map<string, { provider: string; usage: UsageRecord; calls: number }>();
+
+  // 归并规则复用 sumUsage：不发明零字段（只在字段出现时累加）
+  const addUsage = (target: UsageRecord, usage: UsageRecord): void => {
+    const merged = sumUsage(target, usage);
+    if (merged) {
+      target.promptTokens = merged.promptTokens;
+      target.completionTokens = merged.completionTokens;
+    }
+  };
+
+  for (const name of names) {
+    const filePath = path.join(recordsDir, name);
+
+    // 1) mtime 预过滤：窗外文件整体排除（不计 skipped）
+    let mtimeMs: number;
+    try {
+      mtimeMs = (await stat(filePath)).mtimeMs;
+    } catch {
+      continue; // 文件在 readdir 与 stat 之间消失——跳过
+    }
+    if (mtimeMs < windowStartMs) continue;
+
+    // 2) 全文逐行解析；任一行 parse 失败 → skipped+1 并跳过整个文件
+    let text: string;
+    try {
+      text = await readFile(filePath, "utf-8");
+    } catch {
+      result.skipped += 1;
+      continue;
+    }
+    const parsed: Array<Record<string, unknown>> = [];
+    let corrupt = false;
+    for (const line of text.split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed === "") continue;
+      try {
+        const obj = JSON.parse(trimmed) as unknown;
+        if (!obj || typeof obj !== "object" || Array.isArray(obj)) throw new Error("非对象行");
+        parsed.push(obj as Record<string, unknown>);
+      } catch {
+        corrupt = true;
+        break;
+      }
+    }
+    if (corrupt) {
+      result.skipped += 1;
+      continue;
+    }
+
+    result.sessionCount += 1;
+
+    // 3) meta 行取 startedAt（本地日）；cards 事件行取快照（expertId/cardId → 卡片信息）
+    let dayKey: string | null = null;
+    let cardSnapshot: RecordCardRef[] = [];
+    for (const obj of parsed) {
+      if (obj.type === "meta") {
+        dayKey = localDateKey(obj.startedAt);
+      } else if (obj.type === "cards" && Array.isArray(obj.cards)) {
+        cardSnapshot = (obj.cards as RecordCardRef[]).filter(
+          (c) => c && typeof c === "object" && typeof c.cardId === "string"
+        );
+      }
+    }
+
+    // 4) turn / card_result 行累计 usage
+    for (const obj of parsed) {
+      if (obj.type !== "turn" && obj.type !== "card_result") continue;
+      result.callCount += 1; // usage 缺失也照常计数（design.md 错误矩阵）
+      const raw = obj.usage as Record<string, unknown> | undefined;
+      if (!raw || typeof raw !== "object") continue; // 无 usage：不计入任何用量合计
+      const usage: UsageRecord = {};
+      if (typeof raw.promptTokens === "number" && Number.isFinite(raw.promptTokens)) {
+        usage.promptTokens = raw.promptTokens;
+      }
+      if (typeof raw.completionTokens === "number" && Number.isFinite(raw.completionTokens)) {
+        usage.completionTokens = raw.completionTokens;
+      }
+      if (usage.promptTokens === undefined && usage.completionTokens === undefined) continue;
+
+      // 归属卡片：card_result 自带 cardId；turn 无 cardId，按 expertId 反查 cards 快照
+      let cardId: string;
+      let ref: RecordCardRef | undefined;
+      if (obj.type === "card_result") {
+        cardId = typeof obj.cardId === "string" && obj.cardId !== "" ? obj.cardId : "unknown";
+        ref = cardSnapshot.find((c) => c.cardId === cardId);
+      } else {
+        const expertId = typeof obj.expertId === "string" ? obj.expertId : "";
+        ref = cardSnapshot.find((c) => c.expertId === expertId);
+        cardId = ref ? ref.cardId : "unknown";
+      }
+      const modelId = ref?.modelId ?? "";
+
+      addUsage(result.total, usage);
+      if (dayKey) {
+        const dayBucket = dayMap.get(dayKey) ?? {};
+        addUsage(dayBucket, usage);
+        dayMap.set(dayKey, dayBucket);
+      }
+
+      let cardBucket = cardMap.get(cardId);
+      if (!cardBucket) {
+        cardBucket = {
+          cardName: cardId === "unknown" ? "未知卡片" : (ref?.cardName ?? cardId),
+          modelId,
+          provider: ref?.provider ?? "",
+          usage: {},
+          sessions: new Set<string>(),
+          calls: 0,
+        };
+        cardMap.set(cardId, cardBucket);
+      }
+      addUsage(cardBucket.usage, usage);
+      cardBucket.calls += 1;
+      cardBucket.sessions.add(name);
+
+      if (modelId !== "") {
+        let modelBucket = modelMap.get(modelId);
+        if (!modelBucket) {
+          modelBucket = { provider: ref?.provider ?? "", usage: {}, calls: 0 };
+          modelMap.set(modelId, modelBucket);
+        }
+        addUsage(modelBucket.usage, usage);
+        modelBucket.calls += 1;
+      }
+    }
+  }
+
+  result.byDay = [...dayMap.entries()]
+    .map(([date, usage]) => ({ date, usage }))
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  result.byCard = [...cardMap.entries()]
+    .map(([cardId, b]) => ({
+      cardId,
+      cardName: b.cardName,
+      modelId: b.modelId,
+      provider: b.provider,
+      usage: b.usage,
+      sessions: b.sessions.size,
+      calls: b.calls,
+    }))
+    .sort((a, b) => usageSize(b.usage) - usageSize(a.usage) || a.cardId.localeCompare(b.cardId));
+  result.byModel = [...modelMap.entries()]
+    .map(([modelId, b]) => ({ modelId, provider: b.provider, usage: b.usage, calls: b.calls }))
+    .sort((a, b) => usageSize(b.usage) - usageSize(a.usage) || a.modelId.localeCompare(b.modelId));
+  return result;
+}
+
 /** Delete all session files in the records dir. Returns how many were removed. */
 export async function clearSessions(recordsDir: string): Promise<number> {
   let names: string[];
