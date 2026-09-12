@@ -5,7 +5,7 @@
  * into Markdown, making them trivially unit-testable.
  */
 import type { ConsultationItem } from "../orchestrator/parallel.js";
-import type { DialogueTurn } from "../orchestrator/dialogue.js";
+import type { DialogueTurn, DialogueAlias } from "../orchestrator/dialogue.js";
 
 /** Build the Markdown consultation report (design §3.1). */
 export function formatConsultReport(
@@ -90,8 +90,19 @@ export function formatTranscript(turns: DialogueTurn[]): string {
   return lines.join("\n").trimEnd();
 }
 
+/** formatBrainstormReport 的可选扩展段（R1 互评投票 / R3 裁决者）。 */
+export interface BrainstormReportExtras {
+  /** 投票轮产物；为空时省略投票段。 */
+  votes?: DialogueTurn[];
+  /** 代号映射：投票逐条匿名展示 + 末尾代号↔专家对照表。 */
+  aliases?: DialogueAlias[];
+  /** 裁决者标注：综合段标题注明裁决卡或回退。 */
+  judgeInfo?: { cardId: string; cardName: string; fallback?: boolean };
+}
+
 /**
- * Build the full brainstorm output: header + transcript + optional summary.
+ * Build the full brainstorm output: header + transcript + optional votes +
+ * optional summary.
  */
 export function formatBrainstormReport(
   topic: string,
@@ -99,6 +110,7 @@ export function formatBrainstormReport(
   rounds: number,
   turns: DialogueTurn[],
   summary?: string,
+  extras?: BrainstormReportExtras,
 ): string {
   const lines: string[] = [];
   lines.push("## 专家头脑风暴实录");
@@ -109,8 +121,37 @@ export function formatBrainstormReport(
   lines.push("");
   lines.push(formatTranscript(turns));
   lines.push("");
+  // 互评投票（R1）：匿名代号逐条呈现，末尾还原代号↔专家对照表。
+  const votes = extras?.votes ?? [];
+  if (votes.length > 0) {
+    const aliasById = new Map(
+      (extras?.aliases ?? []).map((a) => [a.expertId, a.alias]),
+    );
+    lines.push("### 互评投票");
+    lines.push("");
+    for (const v of votes) {
+      lines.push(
+        `- **${aliasById.get(v.expertId) ?? v.expertName}**：${v.content.trim()}`,
+      );
+    }
+    lines.push("");
+    const mapping = (extras?.aliases ?? [])
+      .map((a) => `${a.alias}=${a.expertName}`)
+      .join("、");
+    if (mapping) {
+      lines.push(`> 代号对照：${mapping}`);
+      lines.push("");
+    }
+  }
   if (summary && summary.trim().length > 0) {
-    lines.push("### 讨论总结");
+    // 裁决者标注（R3）：fallback 时在综合段标题注明回退。
+    const ji = extras?.judgeInfo;
+    const heading = ji
+      ? ji.fallback
+        ? "### 讨论总结（裁决者无效，回退第一张卡）"
+        : `### 讨论总结（裁决者：${ji.cardName}）`
+      : "### 讨论总结";
+    lines.push(heading);
     lines.push("");
     lines.push(summary.trim());
     lines.push("");

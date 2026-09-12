@@ -23,7 +23,13 @@ vi.mock("../src/providers/registry.js", () => ({
 }));
 
 import { runConsultation } from "../src/orchestrator/parallel.js";
-import { runDialogue } from "../src/orchestrator/dialogue.js";
+import {
+  runDialogue,
+  VOTE_INSTRUCTION,
+  buildAliases,
+  formatTranscriptForPrompt,
+  type DialogueTurn,
+} from "../src/orchestrator/dialogue.js";
 import type { StreamEvent } from "../src/utils/notify.js";
 
 /**
@@ -763,5 +769,274 @@ describe("语义截断（task 08-28-semantic-truncation，方案 B 增量概要�
     expect(n).toBe(6);
     // 最后一次调用是增量并入（压缩器 system）
     expect(systems[5]).toContain("对话记录压缩器");
+  });
+});
+describe("互评投票与匿名化（task 09-13-peer-review-judge）", () => {
+  const topic = "如何设计一个高并发系统";
+  const targets = [makeTarget("a"), makeTarget("b")];
+
+  function makeFakeNotifier() {
+    const events: StreamEvent[] = [];
+    return { events, notifier: (e: StreamEvent) => void events.push(e) };
+  }
+
+  it("VOTE_INSTRUCTION 导出且含「代号」「认同」关键字", () => {
+    expect(typeof VOTE_INSTRUCTION).toBe("string");
+    expect(VOTE_INSTRUCTION).toContain("代号");
+    expect(VOTE_INSTRUCTION).toContain("认同");
+  });
+
+  it("buildAliases：按 targets 顺序分配 专家A/B/…", () => {
+    const aliases = buildAliases([
+      makeTarget("a"),
+      makeTarget("b"),
+      makeTarget("c"),
+    ]);
+    expect(aliases.map((a) => a.alias)).toEqual(["专家A", "专家B", "专家C"]);
+    expect(aliases.map((a) => a.expertId)).toEqual(["a", "b", "c"]);
+    expect(aliases.map((a) => a.expertName)).toEqual([
+      "专家-a",
+      "专家-b",
+      "专家-c",
+    ]);
+  });
+
+  it("formatTranscriptForPrompt 匿名化：隐藏名称/图标，代号呈现，own 行标注", () => {
+    const aliases = buildAliases(targets);
+    const turns: DialogueTurn[] = [
+      { round: 1, expertId: "a", expertName: "专家-a", icon: "🤖", content: "甲的观点" },
+      { round: 1, expertId: "b", expertName: "专家-b", icon: "🤖", content: "乙的观点" },
+    ];
+    const block = formatTranscriptForPrompt(turns, {
+      anonymize: true,
+      aliases,
+      viewerExpertId: "a",
+    });
+    expect(block).not.toContain("专家-a");
+    expect(block).not.toContain("专家-b");
+    expect(block).not.toContain("🤖");
+    expect(block).toContain("【专家A】(第1轮): 甲的观点（这是你自己的发言）");
+    expect(block).toContain("【专家B】(第1轮): 乙的观点");
+    // 匿名关闭时保持旧行为（名称+图标行头，无 own 标注）
+    const plain = formatTranscriptForPrompt(turns);
+    expect(plain).toContain("【🤖 专家-a】(第1轮): 甲的观点");
+    expect(plain).not.toContain("这是你自己的发言");
+  });
+
+  it("缺席占位符中的专家名在匿名渲染时一并替换为代号", () => {
+    const aliases = buildAliases([makeTarget("a")]);
+    const turns: DialogueTurn[] = [
+      {
+        round: 1,
+        expertId: "a",
+        expertName: "专家-a",
+        icon: "🤖",
+        content: "⚠️ (专家-a 本轮缺席: boom)",
+      },
+    ];
+    const block = formatTranscriptForPrompt(turns, {
+      anonymize: true,
+      aliases,
+    });
+    expect(block).not.toContain("专家-a");
+    expect(block).toContain("【专家A】");
+  });
+
+  it("debate 第 2 轮注入匿名实录：无专家名/icon，own 标注可识别", async () => {
+    const seen: string[] = [];
+    const adapter = makeStubAdapter(async (params) => {
+      seen.push(String(params.messages.at(-1)?.content ?? ""));
+      return { content: "观点" };
+    });
+
+    await runDialogue(
+      { topic, targets, mode: "debate", rounds: 2, summarize: false },
+      makeConfig(adapter)
+    );
+
+    const round2 = seen.slice(2);
+    expect(round2).toHaveLength(2);
+    for (const p of round2) {
+      expect(p).not.toContain("专家-a");
+      expect(p).not.toContain("专家-b");
+      expect(p).not.toContain("🤖");
+      expect(p).toContain("【专家A】");
+      expect(p).toContain("【专家B】");
+      expect(p).toContain("（这是你自己的发言）");
+    }
+  });
+
+  it("压缩路径注入同样匿名：概要输入与最新轮实录均为代号，无专家名/icon", async () => {
+    // 序列：n=1/2 种子（超长触发压缩）→ n=3 压缩器 → n=4/5 第 2 轮作答
+    let n = 0;
+    const seen: string[] = [];
+    const seqAdapter = makeStubAdapter(async (params) => {
+      n += 1;
+      seen.push(String(params.messages.at(-1)?.content ?? ""));
+      if (n <= 2) return { content: "长".repeat(13000) };
+      if (n === 3) return { content: "第1轮概要内容XYZ" };
+      return { content: "第二轮发言" };
+    });
+
+    const { turns } = await runDialogue(
+      { topic, targets, mode: "debate", rounds: 2, summarize: false },
+      makeConfig(seqAdapter)
+    );
+
+    expect(turns).toHaveLength(4);
+    // 压缩器的输入（匿名副本）也必须无专家名
+    const compressorInput = seen[2]!;
+    expect(compressorInput).toContain("【专家A】");
+    expect(compressorInput).toContain("【专家B】");
+    expect(compressorInput).not.toContain("专家-a");
+    expect(compressorInput).not.toContain("专家-b");
+    expect(compressorInput).not.toContain("🤖");
+    // 第 2 轮注入（概要 + 最新轮完整实录）同样匿名，own 标注生效
+    const round2 = seen.slice(3, 5);
+    expect(round2).toHaveLength(2);
+    for (const p of round2) {
+      expect(p).toContain("【对话概要");
+      expect(p).toContain("第1轮概要内容XYZ");
+      expect(p).toContain("最近发言完整实录:");
+      expect(p).toContain("【专家A】");
+      expect(p).toContain("【专家B】");
+      expect(p).not.toContain("专家-a");
+      expect(p).not.toContain("专家-b");
+      expect(p).not.toContain("🤖");
+      expect(p).toContain("（这是你自己的发言）");
+    }
+  });
+
+  it("vote=true + debate：独立 votes（round=0），投票 prompt 匿名，发 brainstorm.vote 通知", async () => {
+    const seen: string[] = [];
+    const adapter = makeStubAdapter(async (params) => {
+      seen.push(String(params.messages.at(-1)?.content ?? ""));
+      return { content: `回复#${seen.length}` };
+    });
+    const { events, notifier } = makeFakeNotifier();
+
+    const { turns, votes, aliases } = await runDialogue(
+      { topic, targets, mode: "debate", rounds: 1, summarize: false, vote: true, notifier },
+      makeConfig(adapter)
+    );
+
+    // 投票不污染内容轮次：turns 仍只有 2 条种子
+    expect(turns).toHaveLength(2);
+    expect(votes).toHaveLength(2);
+    expect(votes!.every((v) => v.round === 0)).toBe(true);
+    expect(aliases!.map((a) => a.alias)).toEqual(["专家A", "专家B"]);
+    // 调用序列：2 种子 + 2 投票
+    expect(adapter.calls).toHaveLength(4);
+    const votePrompts = seen.slice(2);
+    for (const p of votePrompts) {
+      expect(p).toContain("讨论实录（已匿名）");
+      expect(p).toContain(VOTE_INSTRUCTION);
+      expect(p).not.toContain("专家-a");
+      expect(p).not.toContain("专家-b");
+    }
+    expect(votePrompts[0]).toContain("（这是你自己的发言）");
+    expect(events.some((e) => e.type === "brainstorm.vote")).toBe(true);
+  });
+
+  it("vote=true + summarize：综合 prompt 在实录后追加投票摘要块", async () => {
+    const adapter = makeEchoAdapter();
+    const res = await runDialogue(
+      { topic, targets, mode: "debate", rounds: 1, summarize: true, vote: true },
+      makeConfig(adapter)
+    );
+    // 2 种子 + 2 投票 + 1 总结
+    expect(adapter.calls).toHaveLength(5);
+    const userMsg = String(adapter.calls[4]!.messages.at(-1)?.content ?? "");
+    expect(userMsg).toContain("互评投票");
+    expect(userMsg).toContain("请在总结时参考");
+    expect(userMsg).toContain("【专家A】");
+    expect(res.summary).toBeTruthy();
+  });
+
+  it("vote=true + relay：忽略投票（无 votes、调用数不变、无 vote 通知）", async () => {
+    const adapter = makeEchoAdapter();
+    const { events, notifier } = makeFakeNotifier();
+
+    const { votes } = await runDialogue(
+      { topic, targets, mode: "relay", rounds: 1, summarize: false, vote: true, notifier },
+      makeConfig(adapter)
+    );
+
+    expect(votes).toBeUndefined();
+    expect(adapter.calls).toHaveLength(2);
+    expect(events.some((e) => e.type === "brainstorm.vote")).toBe(false);
+  });
+
+  it("vote=true 且 targets<2：跳过投票轮", async () => {
+    const adapter = makeEchoAdapter();
+
+    const { votes } = await runDialogue(
+      {
+        topic,
+        targets: [makeTarget("a")],
+        mode: "debate",
+        rounds: 1,
+        summarize: false,
+        vote: true,
+      },
+      makeConfig(adapter)
+    );
+
+    expect(votes).toBeUndefined();
+    expect(adapter.calls).toHaveLength(1);
+  });
+
+  it("投票部分失败：只保留成功票，不阻断后续综合", async () => {
+    // 调用序列：seed a(0)、seed b(1)、vote a(2)、vote b(3)——第 4 次失败
+    const adapter = makeStubAdapter(async (_params, callIndex) => {
+      if (callIndex === 3) throw new Error("vote boom");
+      return { content: `回复#${callIndex}` };
+    });
+
+    const { votes } = await runDialogue(
+      { topic, targets, mode: "debate", rounds: 1, summarize: false, vote: true },
+      makeConfig(adapter)
+    );
+
+    expect(votes).toHaveLength(1);
+    expect(votes![0]!.expertId).toBe("a");
+  });
+
+  it("judge：综合改用裁决者卡并返回 judgeInfo；fallback 标注回退；缺省无 judgeInfo", async () => {
+    const a = makeTarget("a");
+    const b = makeTarget("b");
+
+    const adapter = makeEchoAdapter();
+    const res = await runDialogue(
+      { topic, targets: [a, b], mode: "debate", rounds: 1, summarize: true, judge: b },
+      makeConfig(adapter)
+    );
+    // 2 种子 + 1 综合
+    expect(adapter.calls).toHaveLength(3);
+    expect(res.judgeInfo).toEqual({ cardId: "card-b", cardName: "b" });
+
+    const res2 = await runDialogue(
+      {
+        topic,
+        targets: [a, b],
+        mode: "debate",
+        rounds: 1,
+        summarize: true,
+        judgeFallbackInfo: { cardId: "nope", cardName: "无效卡" },
+      },
+      makeConfig(adapter)
+    );
+    expect(res2.judgeInfo).toEqual({
+      cardId: "nope",
+      cardName: "无效卡",
+      fallback: true,
+    });
+
+    // AC5：缺省（无 judgeCard）不产生 judgeInfo
+    const res3 = await runDialogue(
+      { topic, targets: [a, b], mode: "debate", rounds: 1, summarize: true },
+      makeConfig(adapter)
+    );
+    expect(res3.judgeInfo).toBeUndefined();
   });
 });

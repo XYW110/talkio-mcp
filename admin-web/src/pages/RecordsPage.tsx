@@ -578,6 +578,33 @@ function EventItem({
     );
   }
 
+  if (event.type === "vote") {
+    // 互评投票（R1）：与 turn 同构的简单展示。
+    return (
+      <div className="flex gap-2.5">
+        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-hover text-base">
+          {event.icon || "🗳️"}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-[14px] font-medium text-ink">{event.expertName}</span>
+            <span className="rounded bg-info-bg px-1.5 py-0.5 text-[10px] text-info-text">
+              互评投票
+            </span>
+            {event.usage && (
+              <span className="ml-auto text-[11px] text-ink-faint">{fmtUsage(event.usage)}</span>
+            )}
+          </div>
+          <div className="mt-1 rounded-xl bg-island-strong px-3 py-2">
+            <pre className="max-h-96 overflow-y-auto whitespace-pre-wrap break-words font-sans text-[13px] leading-relaxed text-ink-mid">
+              {event.content}
+            </pre>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (event.type === "round_end") {
     return (
       <div className="flex items-center gap-3 py-1">

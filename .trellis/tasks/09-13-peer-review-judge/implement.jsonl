@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/records-persistence.md", "reason": "新增 vote 事件类型需遵循 records 落盘契约（meta/done 行不变、additive 事件）"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "投票轮单专家失败不阻断的容错需对齐后端错误处理规范"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端质量要求（测试覆盖/编译器门禁）"}

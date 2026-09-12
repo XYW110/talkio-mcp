@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查后端改动是否符合质量规范"}
+{"file": ".trellis/spec/backend/records-persistence.md", "reason": "检查 vote 事件是否破坏 records 契约（旧记录兼容、done 行完整）"}

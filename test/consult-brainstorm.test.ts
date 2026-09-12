@@ -385,6 +385,129 @@ expect(result.isError).not.toBe(true);
     expect(types).toContain("summary");
     expect(events.at(-1)!.type).toBe("done");
   });
+
+  it("vote=true 时记录含 vote 事件行（位于 round_end 与 summary 之间）", async () => {
+    clearKeys();
+    process.env.OPENAI_API_KEY = "sk-test";
+    const adapter = makeEchoAdapter();
+    const sess = (await createSession("brainstorm", recDir))!;
+    const result = await handleBrainstorm(
+      {
+        topic: "落地路径",
+        cards: ["c-architect", "c-reviewer"],
+        rounds: 1,
+        vote: true,
+      },
+      councilConfig(adapter),
+      { record: sess }
+    );
+    expect(result.isError).not.toBe(true);
+    sess.finish({ status: "ok" });
+    await sess.flush();
+
+    const events = await readEvents(sess.id);
+    const types = events.map((e) => e.type);
+    expect(types.filter((t) => t === "vote")).toHaveLength(2);
+    const lastRoundEnd = types.lastIndexOf("round_end");
+    const firstVote = types.indexOf("vote");
+    const summaryIdx = types.indexOf("summary");
+    expect(firstVote).toBeGreaterThan(lastRoundEnd);
+    expect(firstVote).toBeLessThan(summaryIdx);
+    expect(events.at(-1)!.type).toBe("done");
+  });
+});
+
+describe("互评投票与裁决者（task 09-13-peer-review-judge）", () => {
+  it("vote=true：报告含互评投票段与代号对照，投票不占内容轮次", async () => {
+    clearKeys();
+    process.env.OPENAI_API_KEY = "sk-o";
+    process.env.ANTHROPIC_API_KEY = "sk-a";
+    const adapter = makeEchoAdapter();
+    const result = await handleBrainstorm(
+      {
+        topic: "落地路径",
+        cards: ["c-architect", "c-reviewer"],
+        rounds: 1,
+        vote: true,
+      },
+      councilConfig(adapter)
+    );
+    expect(result.isError).not.toBe(true);
+    // 2 种子 + 2 投票 + 1 总结
+    expect(adapter.calls).toHaveLength(5);
+    const text = textOf(result);
+    expect(text).toContain("### 互评投票");
+    expect(text).toContain("代号对照");
+    expect(text).toContain("专家A=architect");
+    expect(text).toContain("专家B=reviewer");
+    // 报告的投票段落不出现专家名原文（匿名代号呈现）
+    expect(text).toContain("**轮数:** 1");
+  });
+
+  it("vote=true + relay：忽略 vote，行为同现状", async () => {
+    clearKeys();
+    process.env.OPENAI_API_KEY = "sk-o";
+    process.env.ANTHROPIC_API_KEY = "sk-a";
+    const adapter = makeEchoAdapter();
+    const result = await handleBrainstorm(
+      {
+        topic: "落地路径",
+        cards: ["c-architect", "c-reviewer"],
+        rounds: 1,
+        mode: "relay",
+        vote: true,
+      },
+      councilConfig(adapter)
+    );
+    expect(result.isError).not.toBe(true);
+    // 2 接龙 + 1 总结（无投票调用）
+    expect(adapter.calls).toHaveLength(3);
+    expect(textOf(result)).not.toContain("互评投票");
+  });
+
+  it("judgeCard 有效：裁决卡退出议事并由其综合，报告标注裁决者", async () => {
+    clearKeys();
+    process.env.OPENAI_API_KEY = "sk-o";
+    process.env.ANTHROPIC_API_KEY = "sk-a";
+    const adapter = makeEchoAdapter();
+    const result = await handleBrainstorm(
+      {
+        topic: "落地路径",
+        cards: ["c-architect", "c-reviewer"],
+        rounds: 1,
+        judgeCard: "c-reviewer",
+      },
+      councilConfig(adapter)
+    );
+    expect(result.isError).not.toBe(true);
+    // 1 张议事卡（architect）种子 + 1 综合调用（裁决者 c-reviewer）
+    expect(adapter.calls).toHaveLength(2);
+    const text = textOf(result);
+    expect(text).toContain("### 讨论总结（裁决者：c-reviewer）");
+    expect(text).not.toContain("裁决者无效");
+  });
+
+  it("judgeCard 无效：回退第一张卡并在报告注明", async () => {
+    clearKeys();
+    process.env.OPENAI_API_KEY = "sk-o";
+    process.env.ANTHROPIC_API_KEY = "sk-a";
+    const adapter = makeEchoAdapter();
+    const result = await handleBrainstorm(
+      {
+        topic: "落地路径",
+        cards: ["c-architect", "c-reviewer"],
+        rounds: 1,
+        judgeCard: "c-nonexistent",
+      },
+      councilConfig(adapter)
+    );
+    expect(result.isError).not.toBe(true);
+    // 2 种子 + 1 总结（第一张卡 c-architect）
+    expect(adapter.calls).toHaveLength(3);
+    expect(textOf(result)).toContain(
+      "### 讨论总结（裁决者无效，回退第一张卡）"
+    );
+  });
 });
 
 // 小工具：便捷创建会话（meta 由 startSession 写入，done 由 finish 写入）

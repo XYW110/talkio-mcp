@@ -54,6 +54,14 @@ export type RecordEvent =
       content: string;
       usage?: UsageRecord;
     }
+  | {
+      type: "vote";
+      expertId: string;
+      expertName: string;
+      icon: string;
+      content: string;
+      usage?: UsageRecord;
+    }
   | { type: "round_end"; round: number; total: number }
   | { type: "summary"; content: string };
 

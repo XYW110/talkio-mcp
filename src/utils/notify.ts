@@ -31,7 +31,8 @@ export const STREAM_LOGGER = "talkio.stream";
  */
 export type StreamEvent =
   | { type: "consult.card"; card: string; status: "ok" | "failed" }
-  | { type: "brainstorm.round"; round: number; total: number };
+  | { type: "brainstorm.round"; round: number; total: number }
+  | { type: "brainstorm.vote" };
 
 /** 编排器注入的可选增量通知回调。实现不得抛出、不得阻塞业务流。 */
 export interface StreamNotifier {

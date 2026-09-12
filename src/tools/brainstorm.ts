@@ -21,10 +21,13 @@ import {
   DEFAULT_CARD_LIMIT,
   blankInputError,
   formatSelectionNotes,
+  hasProviderKey,
   noSelectedCardsResult,
+  resolveCard,
   selectCardsForTool,
   toCardRefs,
 } from "./select-cards.js";
+import type { ResolvedCard } from "./select-cards.js";
 import type { StreamNotifier } from "../utils/notify.js";
 
 /** Zod raw shape for brainstorm arguments (passed as inputSchema). */
@@ -52,6 +55,18 @@ export const brainstormSchema = {
     .boolean()
     .optional()
     .describe("是否在对话结束后生成收敛总结(默认 true)"),
+  vote: z
+    .boolean()
+    .optional()
+    .describe(
+      "是否开启互评投票(默认 false):全部内容轮结束后、综合之前,每位专家匿名互评最认同的观点;仅 debate 模式生效,relay 下忽略",
+    ),
+  judgeCard: z
+    .string()
+    .optional()
+    .describe(
+      "裁决者角色卡 id:由该卡(而非第一张卡)执行最终综合;该卡若同时参与议事会被剔除;无效时回退第一张卡并在报告注明",
+    ),
 };
 
 /** Inferred argument type for the handler. */
@@ -61,6 +76,8 @@ export type BrainstormArgs = {
   rounds?: number;
   cards?: string[];
   summarize?: boolean;
+  vote?: boolean;
+  judgeCard?: string;
 };
 
 /**
@@ -87,35 +104,82 @@ export async function handleBrainstorm(
     return noSelectedCardsResult(config, selection, args.cards);
   }
 
+  // 裁决者解析（R3）：judgeCard 指向 enabled 且 provider key 可用的卡 → 作为
+  // 综合裁决者；无效（不存在/禁用/缺 key）时回退第一张卡，报告注明。
+  let judge: ResolvedCard | undefined;
+  let judgeFallbackInfo: { cardId: string; cardName: string } | undefined;
+  const judgeCardId = args.judgeCard?.trim();
+  if (judgeCardId) {
+    const cardCfg = config.cards.find((c) => c.id === judgeCardId);
+    const resolved = cardCfg ? resolveCard(cardCfg, config) : null;
+    if (
+      cardCfg &&
+      cardCfg.enabled !== false &&
+      resolved &&
+      hasProviderKey(config, resolved.providerName)
+    ) {
+      judge = resolved;
+    } else {
+      judgeFallbackInfo = { cardId: judgeCardId, cardName: cardCfg?.name ?? judgeCardId };
+    }
+  }
+
+  // 裁决者若同时出现在议事 targets 中且还有其他卡，先剔除（避免既下场辩论又仲裁）。
+  let debateTargets = selection.selected;
+  if (judge && debateTargets.length > 1) {
+    const filtered = debateTargets.filter((t) => t.card.id !== judge!.card.id);
+    if (filtered.length > 0) debateTargets = filtered;
+  }
+
   const opts: DialogueOptions = {
     topic: args.topic,
-    targets: selection.selected,
+    targets: debateTargets,
     mode,
     rounds,
     summarize,
     notifier: deps?.notifier,
+    vote: args.vote === true,
+    judge,
+    judgeFallbackInfo,
   };
 
   const record = deps?.record;
   record?.append({ type: "cards", cards: toCardRefs(selection.selected) });
 
-  const { turns, summary } = await runDialogue(opts, config);
+  const { turns, summary, votes, aliases, judgeInfo } = await runDialogue(
+    opts,
+    config
+  );
 
   // 按轮次分组实录：turn 行 + 轮边界 round_end 行 + 可选 summary 行。
   recordTurns(record, turns, rounds);
+  // 投票轮（R1）：独立 vote 事件行（不占 turn/round 语义）。
+  for (const v of votes ?? []) {
+    record?.append({
+      type: "vote",
+      expertId: v.expertId,
+      expertName: v.expertName,
+      icon: v.icon,
+      content: v.content,
+      usage: v.usage,
+    });
+  }
   if (summary !== undefined) {
     record?.append({ type: "summary", content: summary });
   }
 
   const report =
-    formatBrainstormReport(args.topic, mode, rounds, turns, summary) +
-    formatSelectionNotes(selection, DEFAULT_CARD_LIMIT);
+    formatBrainstormReport(args.topic, mode, rounds, turns, summary, {
+      votes,
+      aliases,
+      judgeInfo,
+    }) + formatSelectionNotes(selection, DEFAULT_CARD_LIMIT);
 
   const isError = turns.length === 0;
   record?.finish({
     status: isError ? "all_failed" : "ok",
     report,
-    usage: sumTurnsUsage(turns),
+    usage: sumTurnsUsage([...turns, ...(votes ?? [])]),
   });
 
   return {
