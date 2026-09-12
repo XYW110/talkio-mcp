@@ -6,6 +6,8 @@ import { ExpertEditPage } from "./pages/ExpertEditPage";
 import { ProvidersPage } from "./pages/ProvidersPage";
 import { ModelsPage } from "./pages/ModelsPage";
 import { CardsPage } from "./pages/CardsPage";
+import { RecordsPage } from "./pages/RecordsPage";
+import { ChatPage } from "./pages/ChatPage";
 import { ChevronRow, SectionLabel, Card } from "./components/ui";
 
 const EMPTY: ConfigFile = {
@@ -20,11 +22,13 @@ type Page =
   | { name: "experts" }
   | { name: "provider" }
   | { name: "models" }
-  | { name: "cards" };
+  | { name: "cards" }
+  | { name: "records" }
+  | { name: "chat" };
 
 function ErrorBanner({ msg, onClose }: { msg: string; onClose: () => void }) {
   return (
-    <div className="fixed top-4 left-1/2 z-[100] flex -translate-x-1/2 items-center gap-3 rounded-xl bg-red-600 px-4 py-2.5 text-white shadow-lg">
+    <div className="fixed top-4 left-1/2 z-[100] flex -translate-x-1/2 items-center gap-3 rounded-xl bg-bad px-4 py-2.5 text-on-solid shadow-lg">
       <span className="text-sm">{msg}</span>
       <button onClick={onClose} className="opacity-80 hover:opacity-100">
         ✕
@@ -78,41 +82,55 @@ export default function App() {
     setDirty(true);
   }, []);
 
-  const deleteExpert = useCallback(
-    (id: string) => {
-      const target = config.experts.find((e) => e.id === id);
-      if (target?.builtin) {
-        window.alert("内置专家不可删除");
-        return;
+  /** 批量删除专家（内置专家跳过并提示）。级联删掉引用它们的角色卡。 */
+  const deleteExperts = useCallback(
+    (ids: string[]) => {
+      const idSet = new Set(ids);
+      const blocked = config.experts.filter((e) => idSet.has(e.id) && e.builtin);
+      if (blocked.length > 0) {
+        window.alert(`内置专家不可删除：${blocked.map((e) => e.name).join("、")}`);
       }
+      const deletable = new Set(
+        config.experts.filter((e) => idSet.has(e.id) && !e.builtin).map((e) => e.id),
+      );
+      if (deletable.size === 0) return;
       setConfig((prev) => {
         // 专家删除后，级联删掉引用它的角色卡
-        const cards = prev.cards.filter((c) => c.expertId !== id);
-        return { ...prev, experts: prev.experts.filter((e) => e.id !== id), cards };
+        const cards = prev.cards.filter((c) => !deletable.has(c.expertId));
+        return { ...prev, experts: prev.experts.filter((e) => !deletable.has(e.id)), cards };
       });
       setDirty(true);
     },
     [config.experts],
   );
 
+  const deleteExpert = useCallback((id: string) => deleteExperts([id]), [deleteExperts]);
+
   const upsertProvider = useCallback((name: string, provider: ProviderConfig) => {
     setConfig((prev) => ({ ...prev, providers: { ...prev.providers, [name]: provider } }));
     setDirty(true);
   }, []);
 
-  const deleteProvider = useCallback((name: string) => {
+  /** 批量删除 provider。级联删掉其下的模型，以及引用被删模型的角色卡。 */
+  const deleteProviders = useCallback((names: string[]) => {
+    const nameSet = new Set(names);
     setConfig((prev) => {
       const providers = Object.fromEntries(
-        Object.entries(prev.providers).filter(([k]) => k !== name),
+        Object.entries(prev.providers).filter(([k]) => !nameSet.has(k)),
       );
       // 级联清理：models 按 providerId 过滤，cards 引用被删模型的也一并清理
-      const models = prev.models.filter((m) => m.providerId !== name);
+      const models = prev.models.filter((m) => !nameSet.has(m.providerId));
       const modelIds = new Set(models.map((m) => m.id));
       const cards = prev.cards.filter((c) => modelIds.has(c.modelId));
       return { ...prev, providers, models, cards };
     });
     setDirty(true);
   }, []);
+
+  const deleteProvider = useCallback(
+    (name: string) => deleteProviders([name]),
+    [deleteProviders],
+  );
 
   // ── 模型 CRUD（供 ModelsPage 调用）──
   const upsertModel = useCallback((model: ModelConfig) => {
@@ -127,17 +145,18 @@ export default function App() {
     setDirty(true);
   }, []);
 
-  const deleteModel = useCallback(
-    (id: string) => {
-      setConfig((prev) => {
-        // 模型删除后，级联删掉引用它的角色卡
-        const cards = prev.cards.filter((c) => c.modelId !== id);
-        return { ...prev, models: prev.models.filter((m) => m.id !== id), cards };
-      });
-      setDirty(true);
-    },
-    [],
-  );
+  /** 批量删除模型。级联删掉引用它们的角色卡。 */
+  const deleteModels = useCallback((ids: string[]) => {
+    const idSet = new Set(ids);
+    setConfig((prev) => {
+      // 模型删除后，级联删掉引用它的角色卡
+      const cards = prev.cards.filter((c) => !idSet.has(c.modelId));
+      return { ...prev, models: prev.models.filter((m) => !idSet.has(m.id)), cards };
+    });
+    setDirty(true);
+  }, []);
+
+  const deleteModel = useCallback((id: string) => deleteModels([id]), [deleteModels]);
 
   // ── 角色卡 CRUD（供 CardsPage 调用）──
   const upsertCard = useCallback((card: CardConfig) => {
@@ -155,10 +174,27 @@ export default function App() {
     setDirty(true);
   }, []);
 
-  const deleteCard = useCallback((id: string) => {
-    setConfig((prev) => ({ ...prev, cards: prev.cards.filter((c) => c.id !== id) }));
+/** 删除角色卡（可批量）。被删掉默认卡时，自动把剩余第一张提升为默认。 */
+  const deleteCards = useCallback((ids: string[]) => {
+    setConfig((prev) => {
+      const idSet = new Set(ids);
+      const remaining = prev.cards.filter((c) => !idSet.has(c.id));
+      if (remaining.length === prev.cards.length) return prev; // 没有真正删掉任何卡
+      // 默认卡被删且还有剩余卡：把第一张提升为默认
+      const lostDefault = prev.cards.some((c) => c.isDefault && idSet.has(c.id));
+      const cards =
+        lostDefault && remaining.length > 0
+          ? remaining.map((c, i) => (i === 0 ? { ...c, isDefault: true } : c))
+          : remaining;
+      return { ...prev, cards };
+    });
     setDirty(true);
   }, []);
+
+  const deleteCard = useCallback(
+    (id: string) => deleteCards([id]),
+    [deleteCards],
+  );
 
   const toggleCard = useCallback((id: string) => {
     setConfig((prev) => ({
@@ -221,7 +257,7 @@ const providers = Object.entries(config.providers) as [string, ProviderConfig][]
       unit: "个",
       subtitle: "管理各 Provider 下的模型引擎",
     },
-    {
+{
       page: { name: "cards" },
       icon: "🎴",
       title: "角色卡",
@@ -229,11 +265,27 @@ const providers = Object.entries(config.providers) as [string, ProviderConfig][]
       unit: "张",
       subtitle: "专家 + 模型 绑定成一张角色卡",
     },
+{
+      page: { name: "records" },
+      icon: "🗂️",
+      title: "会话记录",
+      count: 0,
+      unit: "",
+      subtitle: "查看 consult / brainstorm 调用留痕",
+    },
+    {
+      page: { name: "chat" },
+      icon: "🚀",
+      title: "发起群聊",
+      count: 0,
+      unit: "",
+      subtitle: "填话题让多位专家开会讨论",
+    },
   ];
 
   if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center text-sm text-neutral-500">
+      <div className="flex h-screen items-center justify-center text-[13px] text-ink-dim">
         正在加载配置…
       </div>
     );
@@ -241,7 +293,7 @@ const providers = Object.entries(config.providers) as [string, ProviderConfig][]
 
   // ── 编辑浮层（全屏页）──
 const editOverlay = editing && (
-    <div className="fixed inset-0 z-40 bg-neutral-50 md:flex md:items-center md:justify-center md:bg-black/30 md:p-6">
+    <div className="fixed inset-0 z-40 bg-canvas md:flex md:items-center md:justify-center md:bg-black/30 md:p-6">
       <ExpertEditPage
         initial={editing === "new" ? undefined : editing}
         onSave={upsertExpert}
@@ -262,6 +314,7 @@ const editOverlay = editing && (
           if (ex) setEditing(ex);
         }}
         onDelete={deleteExpert}
+        onDeleteMany={deleteExperts}
       />
     );
   } else if (page.name === "provider") {
@@ -270,6 +323,7 @@ const editOverlay = editing && (
         providers={providers}
         onUpsert={upsertProvider}
         onDelete={deleteProvider}
+        onDeleteMany={deleteProviders}
       />
     );
   } else if (page.name === "models") {
@@ -279,6 +333,7 @@ const editOverlay = editing && (
         providers={providers}
         onUpsert={upsertModel}
         onDelete={deleteModel}
+        onDeleteMany={deleteModels}
       />
     );
   } else if (page.name === "cards") {
@@ -290,21 +345,27 @@ const editOverlay = editing && (
         providers={providers}
         onUpsert={upsertCard}
         onDelete={deleteCard}
+        onDeleteMany={deleteCards}
         onToggle={toggleCard}
       />
     );
+  } else if (page.name === "records") {
+    content = <RecordsPage onBack={() => setPage({ name: "settings" })} />;
+  } else if (page.name === "chat") {
+    content = <ChatPage cards={config.cards} />;
   } else {
     content = (
-<div className="mx-auto w-full max-w-4xl px-4 md:max-w-none md:px-6">
-        <div className="pt-3 pb-2">
-          <h1 className="text-[20px] font-bold tracking-tight text-neutral-900">Talkio 管理</h1>
-          <p className="mt-0.5 text-[13px] text-neutral-500">
+<div className="h-full overflow-y-auto">
+      <div className="mx-auto w-full max-w-4xl px-4 pb-6 pt-4 md:max-w-none md:px-6">
+        <div className="pb-2">
+          <h1 className="text-[20px] font-bold tracking-tight text-ink">Talkio 管理</h1>
+          <p className="mt-0.5 text-[13px] text-ink-dim">
             配置你的 AI 专家、模型与角色卡
           </p>
         </div>
 
-<SectionLabel>配置</SectionLabel>
-        {/* 手机端：iOS 分组列表 */}
+        <SectionLabel>配置</SectionLabel>
+        {/* 手机端：岛内分组列表 */}
         <div className="md:hidden">
           <Card>
             {MENU_ITEMS.map((m, i) => (
@@ -314,9 +375,11 @@ const editOverlay = editing && (
                 icon={<span className="text-xl">{m.icon}</span>}
                 title={m.title}
                 detail={
-                  <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[11px] text-neutral-500">
-                    {m.count} {m.unit}
-                  </span>
+                  m.unit !== "" ? (
+                    <span className="rounded bg-hover px-1.5 py-0.5 text-[11px] text-ink-dim">
+                      {m.count} {m.unit}
+                    </span>
+                  ) : undefined
                 }
                 subtitle={m.subtitle}
                 isLast={i === MENU_ITEMS.length - 1}
@@ -330,63 +393,168 @@ const editOverlay = editing && (
             <button
               key={m.title}
               onClick={() => setPage(m.page)}
-              className="flex flex-col gap-2 rounded-[10px] border border-neutral-200 bg-white p-4 text-left shadow-sm transition-colors hover:bg-neutral-50 active:bg-neutral-100"
+              className="flex flex-col gap-2 rounded-xl border border-line bg-island-strong p-4 text-left shadow-sm transition-colors hover:bg-hover active:bg-pressed"
             >
               <div className="flex items-center justify-between">
                 <span className="text-2xl">{m.icon}</span>
-                <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[11px] text-neutral-500">
-                  {m.count} {m.unit}
-                </span>
+                {m.unit !== "" && (
+                  <span className="rounded bg-hover px-1.5 py-0.5 text-[11px] text-ink-dim">
+                    {m.count} {m.unit}
+                  </span>
+                )}
               </div>
               <div>
-                <p className="text-[16px] font-semibold text-neutral-900">{m.title}</p>
-                <p className="mt-0.5 text-[13px] leading-relaxed text-neutral-500">{m.subtitle}</p>
+                <p className="text-[16px] font-semibold text-ink">{m.title}</p>
+                <p className="mt-0.5 text-[13px] leading-relaxed text-ink-dim">{m.subtitle}</p>
               </div>
             </button>
           ))}
         </div>
 
-        {/* Save bar */}
-        <div className="mt-8 flex items-center gap-2">
+        {/* Save bar — 手机端仅在首页显示；桌面端保存按钮在侧边栏 */}
+        <div className="mt-8 flex items-center gap-2 md:hidden">
           {dirty && (
-            <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-700">
+            <span className="rounded-full bg-warn-bg px-3 py-1 text-xs font-medium text-warn-text">
               有未保存的修改
             </span>
           )}
           <button
             onClick={save}
             disabled={!dirty}
-            className="flex-1 rounded-xl bg-blue-600 px-4 py-2.5 text-[15px] font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex-1 rounded-xl bg-ink px-4 py-2.5 text-[14px] font-semibold text-on-solid transition active:bg-ink-mid disabled:cursor-not-allowed disabled:opacity-40"
           >
             保存配置
           </button>
         </div>
-        <p className="mt-2 text-center text-[11px] text-neutral-400">
+        <p className="mt-2 text-center text-[11px] text-ink-faint">
           保存后需重启 MCP server，新配置才生效
         </p>
       </div>
-    );
+    </div>
+  );
   }
 
   return (
-<div className="relative mx-auto flex h-screen w-full max-w-2xl flex-col bg-neutral-50 md:max-w-5xl lg:max-w-6xl xl:max-w-7xl">
+    // snow-app 布局：灰画布 + 呼吸边距，桌面端「侧栏岛 + 内容岛」，手机端「顶栏岛 + 内容岛」
+    <div className="relative flex h-screen w-full flex-col gap-2.5 bg-canvas p-2.5 md:flex-row">
       {error && <ErrorBanner msg={error} onClose={() => setError(null)} />}
 
-      {/* 子页面顶栏（返回） */}
-      {page.name !== "settings" && (
-        <div className="flex items-center border-b border-neutral-200 bg-white px-2 py-2.5">
-          <button
-            onClick={() => setPage({ name: "settings" })}
-            className="flex min-w-[64px] items-center px-1 text-[17px] text-blue-600 active:opacity-60"
-          >
-            <span className="text-[22px] leading-none">‹</span>
-            <span className="ml-0.5">返回</span>
-          </button>
-        </div>
-      )}
+      {/* PC：左侧悬浮岛导航（手机端不渲染） */}
+      <PcSidebar
+        page={page}
+        onNavigate={setPage}
+        menuItems={MENU_ITEMS}
+        dirty={dirty}
+        onSave={save}
+      />
 
-      <div className="min-h-0 flex-1 overflow-hidden">{content}</div>
+      <div className="flex min-w-0 flex-1 flex-col gap-2.5">
+        {/* 手机端顶栏岛（返回）—— records 自管理导航（列表↔详情），不重复渲染 */}
+        {page.name !== "settings" && page.name !== "records" && (
+          <div className="island island-strong flex flex-shrink-0 items-center px-3 py-2.5 md:hidden">
+            <button
+              onClick={() => setPage({ name: "settings" })}
+              className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[13px] font-medium text-info-text active:bg-pressed"
+            >
+              <span className="text-[16px] leading-none">‹</span>
+              <span>返回总览</span>
+            </button>
+          </div>
+        )}
+
+        {/* 内容岛：桌面端始终是岛；手机端 settings 页自身即首页，直接铺 */}
+        <div
+          className={
+            page.name === "settings" || page.name === "records"
+              ? "min-h-0 flex-1 overflow-hidden"
+              : "island island-strong min-h-0 flex-1 overflow-hidden"
+          }
+        >
+          {content}
+        </div>
+      </div>
       {editOverlay}
     </div>
+  );
+}
+
+// ── PC 独立版布局：左侧固定侧边栏（md+ 显示，手机端完全隐藏）──
+
+function PcSidebar({
+  page,
+  onNavigate,
+  menuItems,
+  dirty,
+  onSave,
+}: {
+  page: Page;
+  onNavigate: (p: Page) => void;
+  menuItems: {
+    page: Page;
+    icon: string;
+    title: string;
+    count: number;
+    unit: string;
+    subtitle: string;
+  }[];
+  dirty: boolean;
+  onSave: () => void;
+}) {
+  const navItems = [
+    { page: { name: "settings" } as Page, icon: "🏠", title: "总览", count: 0, unit: "" },
+    ...menuItems,
+  ];
+  return (
+    <aside className="island island-muted hidden w-[248px] flex-shrink-0 flex-col md:flex">
+      {/* 品牌区 */}
+      <div className="border-b border-line px-5 py-4">
+        <p className="text-[15px] font-bold tracking-tight text-ink">💬 Talkio 管理</p>
+        <p className="mt-0.5 text-[12px] text-ink-faint">AI 专家 · 模型 · 角色卡</p>
+      </div>
+
+      {/* 导航项 */}
+      <nav className="flex-1 overflow-y-auto px-2.5 py-3">
+        {navItems.map((item) => {
+          const active = page.name === item.page.name;
+          return (
+            <button
+              key={item.title}
+              onClick={() => onNavigate(item.page)}
+              className={`mb-0.5 flex w-full items-center gap-3 rounded-md px-3 py-2 text-left transition-colors ${
+                active
+                  ? "nav-item-active bg-info-bg font-medium text-ink"
+                  : "text-ink-mid hover:bg-hover"
+              }`}
+            >
+              <span className="text-base leading-none">{item.icon}</span>
+              <span className="flex-1 text-[13px]">{item.title}</span>
+              {item.unit !== "" && (
+                <span
+                  className={`rounded px-1.5 py-0.5 text-[11px] ${
+                    active ? "bg-info-bg text-info-text" : "bg-hover text-ink-dim"
+                  }`}
+                >
+                  {item.count} {item.unit}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </nav>
+
+      {/* 底部保存区 */}
+      <div className="border-t border-line px-4 py-3">
+        <button
+          onClick={onSave}
+          disabled={!dirty}
+          className="w-full rounded-lg bg-ink px-4 py-2 text-[13px] font-semibold text-on-solid transition hover:bg-ink-mid disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {dirty ? "保存配置 ●" : "保存配置"}
+        </button>
+        <p className="mt-1.5 text-center text-[11px] text-ink-faint">
+          {dirty ? "有未保存的修改" : "保存后需重启 MCP server 生效"}
+        </p>
+      </div>
+    </aside>
   );
 }

@@ -190,3 +190,12 @@ Completed the 00-bootstrap-guidelines task by filling 12 backend and frontend sp
 ### Status
 
 [OK] **Completed**
+
+## Backlog 决议：竞品对比后的改进方向（2026-09-13）
+
+基于竞品对比（block/mcp-council-of-mine、llm-council MCP 版、spranab/brainstorm-mcp、wan-huiyan/agent-review-panel、feiskyer/mcp-ai-hub）头脑风暴后，用户选定两个方向，**待当前 snow-ui-restyle 任务收尾后再开新 Trellis 任务**：
+
+1. **议事质量包**：debate 模式第 2 轮前插入互评投票轮（每人写"最认同谁的观点+理由"，借鉴 Council of Mine）+ 互看 transcript 时匿名化卡名（A/B/C 代号，借鉴 llm-council）+ 可选 `judgeCard` 参数指定裁决者卡替代"第一张卡当 summarizer"。三者改动集中在 `src/orchestrator/dialogue.ts`，可打包为一个任务。
+2. **Token 用量聚合页**：admin-web 新增聚合视图，数据源为 records JSONL 中已有的 per-call/per-session usage（`src/records/store.ts` sumUsage），按卡片/模型/日期聚合，可选价格表换算成本。
+
+备选未选：服务端会话 sessionId 续写（brainstorm_followup 免传 turns）、Admin API 鉴权 + per-provider 并发限流。另注：theodorstorm/brainstorm-mcp 已归档（agent 协调原型），真正对标 brainstorm 的是 spranab/brainstorm-mcp。

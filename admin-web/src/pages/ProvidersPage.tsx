@@ -1,11 +1,20 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { ProviderConfig } from "../types";
-import { Card, NavBar, SectionLabel, ChevronRow, EmptyState } from "../components/ui";
+import {
+  Card,
+  NavBar,
+  SectionLabel,
+  ChevronRow,
+  EmptyState,
+  MultiSelectToolbar,
+  SelectCheckbox,
+} from "../components/ui";
 
 interface Props {
   providers: [string, ProviderConfig][];
   onUpsert: (name: string, provider: ProviderConfig) => void;
   onDelete: (name: string) => void;
+  onDeleteMany: (names: string[]) => void;
 }
 
 // 常用 provider 预设（仿参照项目 ProviderEditPage 的 PRESETS）
@@ -18,21 +27,72 @@ const PRESETS: Record<string, { label: string; baseUrl: string; type: ProviderCo
   ollama: { label: "Ollama", baseUrl: "http://localhost:11434/v1", type: "openai-compatible" },
 };
 
-export function ProvidersPage({ providers, onUpsert, onDelete }: Props) {
+export function ProvidersPage({
+  providers,
+  onUpsert,
+  onDelete,
+  onDeleteMany,
+}: Props) {
   const [editing, setEditing] = useState<{
     name: string;
     value: ProviderConfig;
     isNew: boolean;
   } | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // provider id 就是 name
+  const providerNames = useMemo(() => providers.map(([name]) => name), [providers]);
+  const visibleSelected = providerNames.filter((n) => selected.has(n));
+  const allSelected = providerNames.length > 0 && visibleSelected.length === providerNames.length;
+
+  const toggleSelect = (name: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    setSelected((prev) => {
+      if (allSelected) return new Set();
+      return new Set([...prev, ...providerNames]);
+    });
+  };
+
+  const onDeleteSelected = () => {
+    if (visibleSelected.length === 0) return;
+    if (
+      !window.confirm(
+        `确定删除选中的 ${visibleSelected.length} 个 provider？其下模型与引用它们的角色卡会一并删除。`,
+      )
+    )
+      return;
+    onDeleteMany(visibleSelected);
+    setSelected(new Set());
+  };
+
+  const onClearAll = () => {
+    if (providers.length === 0) return;
+    if (
+      !window.confirm(
+        `确定清空全部 ${providers.length} 个 provider？其下模型与引用它们的角色卡会一并删除。`,
+      )
+    )
+      return;
+    onDeleteMany(providerNames);
+    setSelected(new Set());
+  };
 
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
       <div className="flex-shrink-0 px-4 pt-3 pb-2">
         <div className="mb-1 flex items-center justify-between">
-          <h1 className="text-[20px] font-bold tracking-tight text-neutral-900">
+          <h1 className="text-[20px] font-bold tracking-tight text-ink">
             Provider
-            <span className="ml-2 text-sm font-normal text-neutral-400">{providers.length} 个</span>
+            <span className="ml-2 text-sm font-normal text-ink-faint">{providers.length} 个</span>
           </h1>
           <button
             onClick={() =>
@@ -46,32 +106,64 @@ export function ProvidersPage({ providers, onUpsert, onDelete }: Props) {
                 isNew: true,
               })
             }
-            className="flex h-9 w-9 items-center justify-center rounded-full text-blue-600 hover:bg-blue-50 active:opacity-60"
+            className="flex h-8 w-8 items-center justify-center rounded-md text-info-text hover:bg-info-bg active:bg-pressed"
             title="新建 provider"
           >
             ＋
           </button>
         </div>
-        <p className="text-[13px] text-neutral-500">
+<p className="text-[13px] text-ink-dim">
           配置 API 端点（自定义 URL + key 环境变量名）。真实 key 写在项目根目录 .env。
         </p>
       </div>
 
-{/* 手机端：iOS 分组列表 */}
+      <div className="flex-shrink-0">
+        <MultiSelectToolbar
+          noun="个"
+          totalText={`共 ${providers.length} 个`}
+          selectedCount={visibleSelected.length}
+          selectableCount={providerNames.length}
+          allSelected={allSelected}
+          onToggleAll={toggleSelectAll}
+          onDeleteSelected={onDeleteSelected}
+          onClearAll={onClearAll}
+          clearAllDisabled={providers.length === 0}
+        />
+      </div>
+
+{/* 手机端：分组列表 */}
       <div className="flex-1 overflow-y-auto pb-6 md:hidden">
         {providers.length === 0 ? (
           <EmptyState icon="🔌" title="还没有 provider" subtitle="点右上角 ＋ 新建" />
         ) : (
           <Card>
             {providers.map(([name, p], i) => (
-              <ChevronRow
-                key={name}
-                onClick={() => setEditing({ name, value: { ...p }, isNew: false })}
-                title={name}
-                subtitle={`${p.type} · ${p.baseUrl}`}
-                detail={<span className="font-mono text-[11px] text-neutral-400">{p.apiKeyEnv}</span>}
-                isLast={i === providers.length - 1}
-              />
+              <div key={name} className="flex items-stretch">
+                <SelectCheckbox
+                  checked={selected.has(name)}
+                  onClick={() => toggleSelect(name)}
+                />
+                <div className="min-w-0 flex-1">
+                  <ChevronRow
+                    onClick={() => setEditing({ name, value: { ...p }, isNew: false })}
+                    title={name}
+                    subtitle={`${p.type} · ${p.baseUrl}`}
+                    detail={<span className="font-mono text-[11px] text-ink-faint">{p.apiKeyEnv}</span>}
+                    isLast={i === providers.length - 1}
+                  />
+                </div>
+                <button
+                  onClick={() => {
+                    if (window.confirm(`删除 provider「${name}」？其下模型与引用它们的角色卡会一并删除。`)) {
+                      onDelete(name);
+                    }
+                  }}
+                  className="flex shrink-0 items-center px-2 text-[13px] text-bad hover:opacity-80"
+                  title="删除"
+                >
+                  删除
+                </button>
+              </div>
             ))}
           </Card>
         )}
@@ -84,22 +176,44 @@ export function ProvidersPage({ providers, onUpsert, onDelete }: Props) {
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {providers.map(([name, p]) => (
-              <button
+              <div
                 key={name}
-                onClick={() => setEditing({ name, value: { ...p }, isNew: false })}
-                className="flex flex-col gap-2 rounded-[10px] border border-neutral-200 bg-white p-4 text-left shadow-sm transition-shadow hover:shadow-md"
+                className="flex flex-col gap-2 rounded-xl border border-line bg-island-strong p-4 transition-colors hover:bg-hover"
               >
-                <div className="flex items-center justify-between gap-2">
-                  <p className="truncate font-mono text-[15px] font-semibold text-neutral-900">{name}</p>
-                  <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[11px] text-neutral-500">
-                    {p.type}
-                  </span>
+                <div className="flex items-start gap-2">
+                  <SelectCheckbox
+                    checked={selected.has(name)}
+                    onClick={() => toggleSelect(name)}
+                  />
+                  <button
+                    onClick={() => setEditing({ name, value: { ...p }, isNew: false })}
+                    className="min-w-0 flex-1 text-left"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate font-mono text-[14px] font-semibold text-ink">{name}</p>
+                      <span className="rounded bg-hover px-1.5 py-0.5 text-[11px] text-ink-dim">
+                        {p.type}
+                      </span>
+                    </div>
+                    <p className="truncate font-mono text-[12px] text-ink-dim">{p.baseUrl}</p>
+                  </button>
                 </div>
-                <p className="truncate font-mono text-[12px] text-neutral-500">{p.baseUrl}</p>
-                <p className="mt-auto truncate font-mono text-[11px] text-neutral-400">
-                  环境变量 {p.apiKeyEnv}
-                </p>
-              </button>
+                <div className="mt-auto flex items-center justify-between border-t border-line pt-2.5">
+                  <p className="truncate font-mono text-[11px] text-ink-faint">
+                    环境变量 {p.apiKeyEnv}
+                  </p>
+                  <button
+                    onClick={() => {
+                      if (window.confirm(`删除 provider「${name}」？其下模型与引用它们的角色卡会一并删除。`)) {
+                        onDelete(name);
+                      }
+                    }}
+                    className="text-[13px] font-medium text-bad hover:opacity-80"
+                  >
+                    删除
+                  </button>
+                </div>
+              </div>
             ))}
           </div>
         )}
@@ -168,7 +282,7 @@ function ProviderEditOverlay({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 sm:items-center sm:p-4">
-<div className="flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl md:max-w-lg">
+<div className="island island-strong flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-b-none shadow-2xl sm:rounded-2xl md:max-w-lg">
         <NavBar
           title={initial.isNew ? "新建 Provider" : `编辑 ${initial.name}`}
           onBack={onClose}
@@ -177,14 +291,14 @@ function ProviderEditOverlay({
               {!initial.isNew && (
                 <button
                   onClick={onDelete}
-                  className="text-[13px] text-red-500 active:opacity-60"
+                  className="text-[13px] text-bad hover:opacity-80"
                 >
                   删除
                 </button>
               )}
               <button
                 onClick={handleSave}
-                className="text-[17px] font-semibold text-blue-600 active:opacity-60"
+                className="rounded-md bg-ink px-3 py-1 text-[13px] font-semibold text-on-solid hover:bg-ink-mid"
               >
                 保存
               </button>
@@ -203,7 +317,7 @@ function ProviderEditOverlay({
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                       placeholder="例如 custom / moonshot"
-                      className="w-full bg-transparent py-[11px] font-mono text-[15px] outline-none"
+                      className="w-full bg-transparent py-2.5 font-mono text-[13px] text-ink outline-none placeholder:text-ink-faint"
                     />
                   </div>
                 </Card>
@@ -214,14 +328,12 @@ function ProviderEditOverlay({
                     <button
                       key={k}
                       onClick={() => applyPreset(k)}
-                      className="flex w-full items-center justify-between px-4 py-2.5 text-left hover:bg-neutral-50"
-                      style={{
-                        borderBottom:
-                          i < Object.keys(PRESETS).length - 1 ? "0.5px solid #eee" : "none",
-                      }}
+                      className={`flex w-full items-center justify-between px-4 py-2.5 text-left hover:bg-hover ${
+                        i < Object.keys(PRESETS).length - 1 ? "border-b border-line" : ""
+                      }`}
                     >
-                      <span className="text-[15px] text-neutral-900">{p.label}</span>
-                      <span className="truncate pl-2 font-mono text-[12px] text-neutral-400">
+                      <span className="text-[13px] text-ink">{p.label}</span>
+                      <span className="truncate pl-2 font-mono text-[12px] text-ink-faint">
                         {p.baseUrl}
                       </span>
                     </button>
@@ -233,55 +345,49 @@ function ProviderEditOverlay({
             <SectionLabel>配置</SectionLabel>
             <Card>
               {/* type */}
-              <div
-                className="flex items-center px-4 py-3"
-                style={{ borderBottom: "0.5px solid #eee" }}
-              >
-                <span className="w-24 shrink-0 text-[15px] text-neutral-500">类型</span>
+              <div className="flex items-center border-b border-line px-4 py-3">
+                <span className="w-24 shrink-0 text-[13px] text-ink-dim">类型</span>
                 <div className="relative flex-1">
                   <select
                     value={value.type}
                     onChange={(e) =>
                       setValue({ ...value, type: e.target.value as ProviderConfig["type"] })
                     }
-                    className="w-full appearance-none bg-transparent text-[15px] outline-none"
+                    className="w-full appearance-none bg-transparent text-[13px] text-ink outline-none"
                   >
                     <option value="openai">openai</option>
                     <option value="anthropic">anthropic</option>
                     <option value="openai-compatible">openai-compatible</option>
                   </select>
-                  <span className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 text-neutral-400">
+                  <span className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 text-ink-faint">
                     ▾
                   </span>
                 </div>
               </div>
 
               {/* baseUrl */}
-              <div
-                className="flex items-center px-4 py-3"
-                style={{ borderBottom: "0.5px solid #eee" }}
-              >
-                <span className="w-24 shrink-0 text-[15px] text-neutral-500">Base URL</span>
+              <div className="flex items-center border-b border-line px-4 py-3">
+                <span className="w-24 shrink-0 text-[13px] text-ink-dim">Base URL</span>
                 <input
                   value={value.baseUrl}
                   onChange={(e) => setValue({ ...value, baseUrl: e.target.value })}
                   placeholder="https://api.example.com/v1"
-                  className="flex-1 bg-transparent font-mono text-[13px] outline-none"
+                  className="flex-1 bg-transparent font-mono text-[13px] text-ink outline-none placeholder:text-ink-faint"
                 />
               </div>
 
               {/* apiKeyEnv */}
               <div className="flex items-center px-4 py-3">
-                <span className="w-24 shrink-0 text-[15px] text-neutral-500">API Key 环境变量</span>
+                <span className="w-24 shrink-0 text-[13px] text-ink-dim">API Key 环境变量</span>
                 <input
                   value={value.apiKeyEnv}
                   onChange={(e) => setValue({ ...value, apiKeyEnv: e.target.value.toUpperCase() })}
                   placeholder="CUSTOM_API_KEY"
-                  className="flex-1 bg-transparent font-mono text-[13px] outline-none"
+                  className="flex-1 bg-transparent font-mono text-[13px] text-ink outline-none placeholder:text-ink-faint"
                 />
               </div>
             </Card>
-            <p className="px-1 py-3 text-[11px] leading-relaxed text-neutral-400">
+            <p className="px-1 py-3 text-[11px] leading-relaxed text-ink-faint">
               真实 key 请写到项目根目录 .env（例如 {value.apiKeyEnv}=sk-...），不会写入 experts.json。
               改完配置后需重启 MCP server 才生效。
             </p>

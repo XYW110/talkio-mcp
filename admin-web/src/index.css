@@ -2,13 +2,146 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ===== Design Tokens（snow-app 风格：灰画布 + 悬浮岛）===== */
 :root {
   color-scheme: light;
+
+  /* 画布与岛表面 */
+  --canvas: #eef2f7;
+  --surface-island: rgba(255, 255, 255, 0.78);
+  --surface-island-strong: #ffffff;
+  --surface-island-muted: rgba(248, 250, 252, 0.72);
+  --bg-hover: #f3f4f6;
+  --bg-active: #e5e7eb;
+  --island-shadow:
+    0 14px 34px rgba(15, 23, 42, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.72);
+
+  /* 边框 */
+  --border-color: #e5e7eb;
+
+  /* 文字 */
+  --text-primary: #111827;
+  --text-secondary: #374151;
+  --text-tertiary: #6b7280;
+  --text-muted: #9ca3af;
+
+  /* 状态色（bg / text 成对） */
+  --accent-green: #22c55e;
+  --accent-green-bg: #dcfce7;
+  --accent-green-text: #166534;
+  --accent-red: #ef4444;
+  --accent-red-bg: #fee2e2;
+  --accent-red-text: #991b1b;
+  --accent-blue: #3b82f6;
+  --accent-blue-bg: #dbeafe;
+  --accent-blue-text: #1d4ed8;
+  --accent-amber: #f59e0b;
+  --accent-amber-bg: #fef3c7;
+  --accent-amber-text: #92400e;
+
+  --focus-ring: rgba(17, 24, 39, 0.35);
+  --scrollbar-thumb: rgba(148, 163, 184, 0.58);
+  --scrollbar-thumb-hover: rgba(100, 116, 139, 0.78);
+  --selection-bg: rgba(59, 130, 246, 0.2);
+  --on-solid: #ffffff;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --canvas: #050505;
+  --surface-island: rgba(17, 17, 17, 0.78);
+  --surface-island-strong: #181818;
+  --surface-island-muted: rgba(20, 20, 20, 0.68);
+  --bg-hover: #1f1f1f;
+  --bg-active: #2a2a2a;
+  --island-shadow:
+    0 16px 40px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.035);
+
+  --border-color: #2b2b2b;
+
+  --text-primary: #f5f5f5;
+  --text-secondary: #d4d4d4;
+  --text-tertiary: #a3a3a3;
+  --text-muted: #737373;
+
+  --accent-green: #4ade80;
+  --accent-green-bg: rgba(34, 197, 94, 0.18);
+  --accent-green-text: #86efac;
+  --accent-red: #f87171;
+  --accent-red-bg: rgba(239, 68, 68, 0.18);
+  --accent-red-text: #fca5a5;
+  --accent-blue: #58a6ff;
+  --accent-blue-bg: rgba(59, 130, 246, 0.18);
+  --accent-blue-text: #93c5fd;
+  --accent-amber: #fbbf24;
+  --accent-amber-bg: rgba(245, 158, 11, 0.18);
+  --accent-amber-text: #fcd34d;
+
+  --focus-ring: rgba(212, 212, 212, 0.5);
+  --scrollbar-thumb: rgba(113, 113, 122, 0.68);
+  --scrollbar-thumb-hover: rgba(161, 161, 170, 0.82);
+  --selection-bg: rgba(88, 166, 255, 0.28);
+  --on-solid: #0a0a0a;
 }
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
   margin: 0;
-  background: #fafafa;
+  background: var(--canvas);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: var(--selection-bg);
+}
+
+/* snow-app 细滚动条 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--scrollbar-thumb);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* focus-visible 2px 外圈 */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* 悬浮岛通用皮肤 */
+.island {
+  border-radius: 16px;
+  background: var(--surface-island);
+  box-shadow: var(--island-shadow);
+  overflow: hidden;
+}
+.island-strong {
+  background: var(--surface-island-strong);
+}
+.island-muted {
+  background: var(--surface-island-muted);
+}
+
+/* active 导航项左侧 2px 色条 */
+.nav-item-active {
+  box-shadow: inset 2px 0 0 var(--accent-blue);
 }

@@ -18,6 +18,29 @@
   在基础组件中应用（参考 `temp/src/components/ui/button.tsx`）。
 - **主题化**：通过 `temp/src/index.css` 定义 CSS Variables 令牌（如 `--background`, `--primary`, `--radius` 等 iOS 风格的设计令牌），配合 Tailwind 配置驱动暗黑/明亮模式。
 
+### Convention: admin-web 设计 token（snow-app 悬浮岛体系）
+
+**What**：admin-web（React + Tailwind 3.4，无组件库）的颜色/字号一律走 `admin-web/src/index.css` 中的 CSS 变量 token，经 `admin-web/tailwind.config.js` 映射为语义色名（`canvas` / `island` / `island-strong` / `bg-hover` / `bg-active` / `ink` / `ink-dim` / `line` / 状态成对色 `ok|warn|bad|info` 的 `-bg`/`-text` 变体）。暗色主题仅通过 `:root[data-theme="dark"]` 覆盖变量实现，组件层零改动自动生效；禁止在 tsx 里写 Tailwind 原生色板类（`bg-white`、`gray-*`、`blue-600` 等）或 hex 字面量。
+
+**Why**：token 层保证亮/暗主题一处切换、视觉一致性（13px 基准、岛阴影、active 左 2px 色条等），且 grep 原生色板类即可机械验证暗色无白底残留。
+
+**Example**：
+```tsx
+// Good：语义 token，亮暗自动适配
+<p className="text-[13px] text-info-text">…</p>
+<span className="rounded bg-ok-bg px-1.5 text-ok-text">就绪</span>
+
+// Bad：硬编码色，暗色下白底残留
+<p className="text-blue-600">…</p>
+<div className="bg-white rounded-xl">…</div>
+```
+
+**Gotcha（Tailwind alpha 修饰符在 var() 色上静默失效）**：token 色板映射的是原始 `var(--…)` 字符串，Tailwind 无法注入 alpha 通道，`text-info-text/80` 这类写法会被**静默降级**为无透明度（编译产物只有 `color: var(--accent-blue-text)`）。需要半透明时用 `opacity-*` 工具类或在 index.css 里新增带 alpha 的专用变量。检查手段：对 `src/**/*.tsx` grep `-(bg|text|border)-[a-z-]+/[0-9]+` 应为零命中。
+
+**布局约定**：页面外壳统一用 `.island`（radius 16 + `--island-shadow`）悬浮岛类；桌面端「画布 + 侧栏岛 + 内容岛」，手机端「顶栏岛 + 内容岛」，画布呼吸边距 10px；侧栏 active 项用 `.nav-item-active`（inset 2px 左色条）。
+
+**字号比例**：全局正文基准 13px/1.5，任意值字号收敛到 `12 / 13 / 14 / 16 / 20` 五档（辅助文字/正文/强调/小标题/标题）。当前 pages/*.tsx 尚存 `text-[10px]/[11px]/[15px]/[17px]/[18px]` 共 58 处历史债务（snow-ui-restyle 按"按需归一"放行），后续触碰相关页面时顺带收敛，不强制一次性清理。
+
 ## 组件分层职责 (Component Hierarchy & Responsibilities)
 
 落实 `claude-code-rules.md` 中的**“单一职责”**（Single Responsibility）原则：

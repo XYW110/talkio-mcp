@@ -63,10 +63,10 @@ export function ModelPicker({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 sm:items-center sm:p-4">
-<div className="flex max-h-[90vh] w-full max-w-sm flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl md:max-w-lg">
+<div className="flex max-h-[90vh] w-full max-w-sm flex-col overflow-hidden rounded-t-2xl bg-island-strong shadow-2xl sm:rounded-2xl md:max-w-lg">
         {/* Header */}
-        <div className="flex flex-shrink-0 items-center border-b border-neutral-200 px-2 py-2.5">
-          <button onClick={close} className="min-w-[64px] px-2 text-left text-[15px] text-blue-600">
+        <div className="flex flex-shrink-0 items-center border-b border-line px-2 py-2.5">
+          <button onClick={close} className="min-w-[64px] px-2 text-left text-[15px] text-info-text">
             取消
           </button>
           <span className="flex-1 text-center text-[16px] font-semibold">选择模型</span>
@@ -75,8 +75,8 @@ export function ModelPicker({
 
         {/* Provider hint */}
         {provider && (
-          <div className="border-b border-neutral-100 bg-neutral-50 px-4 py-2">
-            <p className="truncate text-[12px] text-neutral-500">
+          <div className="border-b border-line bg-island-strong px-4 py-2">
+            <p className="truncate text-[12px] text-ink-dim">
               {provider[0]} · {provider[1].baseUrl} · 环境变量 {provider[1].apiKeyEnv}
             </p>
           </div>
@@ -86,7 +86,7 @@ export function ModelPicker({
         <div className="flex min-h-0 flex-1 flex-col p-4">
           {!loaded && (
             <>
-              <p className="mb-2 text-[12px] leading-relaxed text-neutral-500">
+              <p className="mb-2 text-[12px] leading-relaxed text-ink-dim">
                 填写该 provider 的 API Key 后点击「拉取模型」。key 仅用于本次探测，不会写入
                 experts.json。
               </p>
@@ -97,12 +97,12 @@ export function ModelPicker({
                   onChange={(e) => setApiKey(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && probe()}
                   placeholder={`${provider?.[1].apiKeyEnv ?? "API_KEY"} 的值`}
-                  className="flex-1 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-[14px] outline-none focus:border-blue-400"
+                  className="flex-1 rounded-xl border border-line bg-island-strong px-3 py-2 text-[14px] outline-none "
                 />
                 <button
                   onClick={probe}
                   disabled={probing}
-                  className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  className="rounded-xl bg-ink px-4 py-2 text-[13px] font-medium text-on-solid disabled:opacity-50"
                 >
                   {probing ? "拉取中…" : "拉取模型"}
                 </button>
@@ -110,7 +110,7 @@ export function ModelPicker({
             </>
           )}
 
-          {error && <p className="mb-2 text-[12px] text-red-500">{error}</p>}
+          {error && <p className="mb-2 text-[12px] text-bad">{error}</p>}
 
           {loaded && models.length > 0 && (
             <input
@@ -118,17 +118,17 @@ export function ModelPicker({
               onChange={(e) => setSearch(e.target.value)}
               placeholder="搜索模型…"
               autoFocus
-              className="mb-2 w-full rounded-xl bg-neutral-100 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-400"
+              className="mb-2 w-full rounded-xl bg-hover px-3 py-2 text-sm outline-none "
             />
           )}
 
           {/* Model list */}
           <div className="flex-1 overflow-y-auto">
             {loaded && models.length === 0 && !error && (
-              <p className="py-8 text-center text-sm text-neutral-400">该端点没有返回模型</p>
+              <p className="py-8 text-center text-sm text-ink-faint">该端点没有返回模型</p>
             )}
             {!loaded && !error && (
-              <p className="py-8 text-center text-sm text-neutral-400">
+              <p className="py-8 text-center text-sm text-ink-faint">
                 填写 key 后点击「拉取模型」
               </p>
             )}
@@ -142,15 +142,15 @@ export function ModelPicker({
                       onSelect(m.id);
                       close();
                     }}
-                    className="flex w-full items-center justify-between px-1 py-2.5 text-left hover:bg-neutral-50"
+                    className="flex w-full items-center justify-between px-1 py-2.5 text-left hover:bg-island-strong"
                   >
                     <div className="min-w-0">
-                      <p className="truncate font-mono text-[13px] text-neutral-800">{m.id}</p>
+                      <p className="truncate font-mono text-[13px] text-ink">{m.id}</p>
                       {m.ownedBy && (
-                        <p className="truncate text-[11px] text-neutral-400">{m.ownedBy}</p>
+                        <p className="truncate text-[11px] text-ink-faint">{m.ownedBy}</p>
                       )}
                     </div>
-                    {isSelected && <span className="text-blue-600">✓</span>}
+                    {isSelected && <span className="text-info-text">✓</span>}
                   </button>
                 );
               })}

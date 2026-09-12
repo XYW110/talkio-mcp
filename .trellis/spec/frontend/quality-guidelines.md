@@ -31,6 +31,11 @@
   - 若后续引入单元测试，纯粹的领域层函数（在 `lib/utils.ts` 中）和核心状态机必须保证 100% 测试覆盖。
   - 对于 UI 视觉部分，可依托开发环境直接观察与人工介入验收。
 
+## 文件行尾与缩进卫生 (File Hygiene)
+
+- 所有源文件以换行符结尾（no "No newline at end of file"）；编辑既有文件时保持其原有缩进风格，混入不同缩进的增量行会在 diff 中制造噪音、污染后续样式类提交的审查。
+- 典型案例：`admin-web/src/api.ts` 的 `getRecord`/`deleteRecords` 曾以列 0 缩进 + 缺失行尾换行入库，后续重新格式化会与功能 diff 混在一起。
+
 ## TypeScript 与编译器质量阀 (Compiler as Quality Gate)
 
 代码必须通过严苛的 TypeScript 检查（`tsc --noEmit`），作为提交至代码库的最低底线，不可跳过或临时忽略（如不合理的 `// @ts-ignore`）。

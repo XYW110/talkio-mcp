@@ -1,6 +1,14 @@
 import { useMemo, useState } from "react";
 import type { CardConfig, Expert, ModelConfig, ProviderConfig } from "../types";
-import { Card, EmptyState, NavBar, SectionLabel, Toggle } from "../components/ui";
+import {
+  Card,
+  EmptyState,
+  MultiSelectToolbar,
+  NavBar,
+  SectionLabel,
+  SelectCheckbox,
+  Toggle,
+} from "../components/ui";
 
 interface Props {
   cards: CardConfig[];
@@ -9,6 +17,7 @@ interface Props {
   providers: [string, ProviderConfig][];
   onUpsert: (card: CardConfig) => void;
   onDelete: (id: string) => void;
+  onDeleteMany: (ids: string[]) => void;
   onToggle: (id: string) => void;
 }
 
@@ -23,8 +32,59 @@ function slugify(name: string): string {
   );
 }
 
-export function CardsPage({ cards, experts, models, providers, onUpsert, onDelete, onToggle }: Props) {
+export function CardsPage({
+  cards,
+  experts,
+  models,
+  providers,
+  onUpsert,
+  onDelete,
+  onDeleteMany,
+  onToggle,
+}: Props) {
   const [editing, setEditing] = useState<{ initial?: CardConfig; isNew: boolean } | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const cardIds = useMemo(() => cards.map((c) => c.id), [cards]);
+  const visibleSelected = useMemo(
+    () => cardIds.filter((id) => selected.has(id)),
+    [cardIds, selected],
+  );
+  const allSelected = cardIds.length > 0 && visibleSelected.length === cardIds.length;
+
+  const toggleSelect = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    setSelected((prev) => {
+      if (allSelected) {
+        const next = new Set(prev);
+        for (const id of cardIds) next.delete(id);
+        return next;
+      }
+      return new Set([...prev, ...cardIds]);
+    });
+  };
+
+  const onDeleteSelected = () => {
+    if (visibleSelected.length === 0) return;
+    if (!window.confirm(`确定删除选中的 ${visibleSelected.length} 张角色卡？`)) return;
+    onDeleteMany(visibleSelected);
+    setSelected(new Set());
+  };
+
+  const onClearAll = () => {
+    if (cards.length === 0) return;
+    if (!window.confirm(`确定清空全部 ${cards.length} 张角色卡？`)) return;
+    onDeleteMany(cards.map((c) => c.id));
+    setSelected(new Set());
+  };
 
   const expertMap = useMemo(() => new Map(experts.map((e) => [e.id, e])), [experts]);
   const modelMap = useMemo(() => new Map(models.map((m) => [m.id, m])), [models]);
@@ -46,21 +106,35 @@ export function CardsPage({ cards, experts, models, providers, onUpsert, onDelet
       {/* Header */}
       <div className="flex-shrink-0 px-4 pt-3 pb-2">
         <div className="mb-1 flex items-center justify-between">
-          <h1 className="text-[20px] font-bold tracking-tight text-neutral-900">
+          <h1 className="text-[20px] font-bold tracking-tight text-ink">
             角色卡
-            <span className="ml-2 text-sm font-normal text-neutral-400">{cards.length} 张</span>
+            <span className="ml-2 text-sm font-normal text-ink-faint">{cards.length} 张</span>
           </h1>
           <button
             onClick={() => setEditing({ isNew: true })}
-            className="flex h-9 w-9 items-center justify-center rounded-full text-blue-600 hover:bg-blue-50 active:opacity-60"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-info-text hover:bg-info-bg active:opacity-60"
             title="新建角色卡"
           >
             ＋
           </button>
         </div>
-        <p className="text-[13px] text-neutral-500">
+<p className="text-[13px] text-ink-dim">
           一张角色卡 = 一位专家 + 一个模型。MCP 调用时只传卡片 id。
         </p>
+      </div>
+
+      <div className="flex-shrink-0">
+        <MultiSelectToolbar
+          noun="张"
+          totalText={`共 ${cards.length} 张`}
+          selectedCount={visibleSelected.length}
+          selectableCount={cardIds.length}
+          allSelected={allSelected}
+          onToggleAll={toggleSelectAll}
+          onDeleteSelected={onDeleteSelected}
+          onClearAll={onClearAll}
+          clearAllDisabled={cards.length === 0}
+        />
       </div>
 
 {/* 手机端：iOS 分组列表 */}
@@ -72,12 +146,14 @@ export function CardsPage({ cards, experts, models, providers, onUpsert, onDelet
             {cards.map((c, i) => {
               const d = describe(c);
               return (
-                <CardRow
+<CardRow
                   key={c.id}
                   card={c}
                   expertName={d.expertName}
                   modelText={d.modelText}
                   isLast={i === cards.length - 1}
+                  checked={selected.has(c.id)}
+                  onToggleSelect={() => toggleSelect(c.id)}
                   onEdit={() => setEditing({ initial: c, isNew: false })}
                   onDelete={() => {
                     if (window.confirm(`确定删除角色卡「${c.name}」？`)) onDelete(c.id);
@@ -99,35 +175,41 @@ export function CardsPage({ cards, experts, models, providers, onUpsert, onDelet
             {cards.map((c) => {
               const d = describe(c);
               return (
-                <div
+<div
                   key={c.id}
-                  className="flex flex-col justify-between gap-3 rounded-[10px] border border-neutral-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md"
+                  className="flex flex-col justify-between gap-3 rounded-xl border border-line bg-island-strong p-4 shadow-sm transition-shadow hover:shadow-md"
                 >
-                  <button onClick={() => setEditing({ initial: c, isNew: false })} className="flex items-center gap-3 text-left">
-                    <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-50 to-indigo-100 text-lg">
-                      🎴
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <p className="truncate text-[16px] font-medium text-neutral-900">{c.name}</p>
-                        {c.isDefault && (
-                          <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-600">
-                            默认
-                          </span>
-                        )}
-                        {!c.enabled && (
-                          <span className="rounded bg-neutral-200 px-1.5 py-0.5 text-[10px] text-neutral-500">
-                            已禁用
-                          </span>
-                        )}
+                  <div className="flex items-start gap-2">
+                    <SelectCheckbox
+                      checked={selected.has(c.id)}
+                      onClick={() => toggleSelect(c.id)}
+                    />
+                    <button onClick={() => setEditing({ initial: c, isNew: false })} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+                      <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-hover text-lg">
+                        🎴
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="truncate text-[16px] font-medium text-ink">{c.name}</p>
+                          {c.isDefault && (
+                            <span className="rounded bg-info-bg px-1.5 py-0.5 text-[10px] text-info-text">
+                              默认
+                            </span>
+                          )}
+                          {!c.enabled && (
+                            <span className="rounded bg-pressed px-1.5 py-0.5 text-[10px] text-ink-dim">
+                              已禁用
+                            </span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </button>
-                  <p className="text-[13px] leading-relaxed text-neutral-500">
+                    </button>
+                  </div>
+                  <p className="text-[13px] leading-relaxed text-ink-dim">
                     {d.expertName} → {d.modelText}
                   </p>
-                  <div className="flex items-center justify-between border-t border-neutral-100 pt-2.5">
-                    <span className="truncate font-mono text-[11px] text-neutral-300">{c.id}</span>
+                  <div className="flex items-center justify-between border-t border-line pt-2.5">
+                    <span className="truncate font-mono text-[11px] text-ink-faint">{c.id}</span>
                     <div className="flex items-center gap-2">
                       <span title={c.enabled ? "禁用" : "启用"}>
                         <Toggle checked={c.enabled !== false} onChange={() => onToggle(c.id)} />
@@ -137,7 +219,7 @@ export function CardsPage({ cards, experts, models, providers, onUpsert, onDelet
                           ev.stopPropagation();
                           if (window.confirm(`确定删除角色卡「${c.name}」？`)) onDelete(c.id);
                         }}
-                        className="text-[13px] font-medium text-red-500 hover:bg-red-50 active:opacity-60"
+                        className="text-[13px] font-medium text-bad hover:opacity-80 active:opacity-60"
                       >
                         删除
                       </button>
@@ -173,6 +255,8 @@ function CardRow({
   expertName,
   modelText,
   isLast,
+  checked,
+  onToggleSelect,
   onEdit,
   onDelete,
   onToggle,
@@ -181,51 +265,57 @@ function CardRow({
   expertName: string;
   modelText: string;
   isLast: boolean;
+  checked: boolean;
+  onToggleSelect: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onToggle: () => void;
 }) {
   return (
     <div className="group flex items-stretch">
+      <SelectCheckbox checked={checked} onClick={onToggleSelect} />
       <button
-        onClick={onEdit}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-neutral-50"
-        style={{ borderBottom: isLast ? "none" : "0.5px solid #eee" }}
+        onClick={() => {
+          onEdit();
+        }}
+        className={`flex w-full items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-hover ${
+          isLast ? "" : "border-b border-line"
+        }`}
       >
-        <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-50 to-indigo-100 text-lg">
+        <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-hover text-lg">
           🎴
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <p className="truncate text-[16px] font-medium text-neutral-900">{card.name}</p>
+            <p className="truncate text-[16px] font-medium text-ink">{card.name}</p>
             {card.isDefault && (
-              <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-600">
+              <span className="rounded bg-info-bg px-1.5 py-0.5 text-[10px] text-info-text">
                 默认
               </span>
             )}
             {!card.enabled && (
-              <span className="rounded bg-neutral-200 px-1.5 py-0.5 text-[10px] text-neutral-500">
+              <span className="rounded bg-pressed px-1.5 py-0.5 text-[10px] text-ink-dim">
                 已禁用
               </span>
             )}
           </div>
-          <p className="mt-0.5 truncate text-[13px] leading-relaxed text-neutral-500">
+          <p className="mt-0.5 truncate text-[13px] leading-relaxed text-ink-dim">
             {expertName} → {modelText}
           </p>
         </div>
-        <span className="shrink-0 font-mono text-[11px] text-neutral-300">`{card.id}`</span>
-        <span className="shrink-0 text-[18px] leading-none text-neutral-300">›</span>
+        <span className="shrink-0 font-mono text-[11px] text-ink-faint">`{card.id}`</span>
+        <span className="shrink-0 text-[18px] leading-none text-ink-faint">›</span>
       </button>
       <div className="flex shrink-0 items-center gap-2 px-2">
         <span title={card.enabled ? "禁用" : "启用"}>
           <Toggle checked={card.enabled !== false} onChange={() => onToggle()} />
         </span>
-        <button
+<button
           onClick={(ev) => {
             ev.stopPropagation();
             onDelete();
           }}
-          className="text-[13px] text-red-500 opacity-0 group-hover:opacity-100"
+          className="flex shrink-0 items-center px-2 text-[13px] text-bad hover:opacity-80 active:opacity-60"
           title="删除"
         >
           删除
@@ -286,14 +376,14 @@ function CardEditOverlay({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 sm:items-center sm:p-4">
-<div className="flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl md:max-w-lg">
+<div className="flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl bg-island-strong shadow-2xl sm:rounded-2xl md:max-w-lg">
         <NavBar
           title={isNew ? "新建角色卡" : "编辑角色卡"}
           onBack={onClose}
           right={
             <button
               onClick={handleSave}
-              className="text-[17px] font-semibold text-blue-600 active:opacity-60"
+              className="text-[17px] font-semibold text-info-text active:opacity-60"
             >
               保存
             </button>
@@ -305,16 +395,13 @@ function CardEditOverlay({
             <SectionLabel>绑定</SectionLabel>
             <Card>
               {/* expert */}
-              <div
-                className="flex items-center px-4 py-3"
-                style={{ borderBottom: "0.5px solid #eee" }}
-              >
-                <span className="w-20 shrink-0 text-[15px] text-neutral-500">专家</span>
+              <div className="flex items-center border-b border-line px-4 py-3">
+                <span className="w-20 shrink-0 text-[15px] text-ink-dim">专家</span>
                 <div className="relative flex-1">
                   <select
                     value={expertId}
                     onChange={(e) => setExpertId(e.target.value)}
-                    className="w-full appearance-none bg-transparent text-[15px] text-neutral-900 outline-none"
+                    className="w-full appearance-none bg-transparent text-[15px] text-ink outline-none"
                   >
                     {enabledExperts.length === 0 && <option value="">（请先添加专家）</option>}
                     {enabledExperts.map((e) => (
@@ -323,7 +410,7 @@ function CardEditOverlay({
                       </option>
                     ))}
                   </select>
-                  <span className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 text-neutral-400">
+                  <span className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 text-ink-faint">
                     ▾
                   </span>
                 </div>
@@ -331,12 +418,12 @@ function CardEditOverlay({
 
               {/* model */}
               <div className="flex items-center px-4 py-3">
-                <span className="w-20 shrink-0 text-[15px] text-neutral-500">模型</span>
+                <span className="w-20 shrink-0 text-[15px] text-ink-dim">模型</span>
                 <div className="relative flex-1">
                   <select
                     value={modelId}
                     onChange={(e) => setModelId(e.target.value)}
-                    className="w-full appearance-none bg-transparent text-[15px] text-neutral-900 outline-none"
+                    className="w-full appearance-none bg-transparent text-[15px] text-ink outline-none"
                   >
                     {enabledModels.length === 0 && <option value="">（请先添加模型）</option>}
                     {enabledModels.map((m) => (
@@ -345,7 +432,7 @@ function CardEditOverlay({
                       </option>
                     ))}
                   </select>
-                  <span className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 text-neutral-400">
+                  <span className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 text-ink-faint">
                     ▾
                   </span>
                 </div>
@@ -359,23 +446,23 @@ function CardEditOverlay({
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder={isNew && previewId ? `卡片名称，默认 ${previewId}` : "卡片名称（例如：架构师 · GPT-4o）"}
-                  className="bg-transparent py-[11px] text-[17px] text-neutral-900 outline-none placeholder:text-neutral-300"
+                  className="bg-transparent py-[11px] text-[17px] text-ink outline-none placeholder:text-ink-faint"
                 />
               </div>
               {isNew && (
-                <div className="flex items-center px-4 py-0" style={{ borderTop: "0.5px solid #eee" }}>
+                <div className="flex items-center border-t border-line px-4 py-0">
                   <input
                     value={id}
                     onChange={(e) => setId(e.target.value)}
                     placeholder={`ID（英文唯一）: ${slugify(name) || "my-card"}`}
-                    className="bg-transparent py-[11px] font-mono text-[14px] text-neutral-900 outline-none placeholder:text-neutral-300"
+                    className="bg-transparent py-[11px] font-mono text-[14px] text-ink outline-none placeholder:text-ink-faint"
                   />
                 </div>
               )}
             </Card>
 
             {isNew && previewId && (
-              <p className="px-1 pt-2 font-mono text-[12px] text-neutral-400">
+              <p className="px-1 pt-2 font-mono text-[12px] text-ink-faint">
                 角色卡 id：{previewId}
               </p>
             )}
@@ -383,7 +470,7 @@ function CardEditOverlay({
             <SectionLabel>状态</SectionLabel>
             <Card>
               <div className="flex items-center justify-between px-4 py-3">
-                <span className="text-[15px] text-neutral-900">启用此角色卡</span>
+                <span className="text-[15px] text-ink">启用此角色卡</span>
                 <Toggle checked={enabled} onChange={setEnabled} />
               </div>
             </Card>

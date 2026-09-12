@@ -51,7 +51,7 @@ export function ExpertEditPage({ initial, onSave, onClose }: Props) {
   };
 
   return (
-<div className="flex h-full w-full flex-col bg-neutral-50 shadow-2xl md:max-h-[92vh] md:max-w-2xl md:rounded-2xl">
+<div className="island island-strong flex h-full w-full flex-col md:max-h-[92vh] md:max-w-2xl">
       <NavBar
         title={isNew ? "新建专家" : "编辑专家"}
         onBack={onClose}
@@ -59,7 +59,7 @@ export function ExpertEditPage({ initial, onSave, onClose }: Props) {
           <button
             onClick={handleSave}
             disabled={!name.trim() || !systemPrompt.trim()}
-            className="text-[17px] font-semibold text-blue-600 active:opacity-60 disabled:opacity-30"
+            className="rounded-md bg-ink px-3 py-1 text-[13px] font-semibold text-on-solid hover:bg-ink-mid disabled:opacity-30"
           >
             保存
           </button>
@@ -76,30 +76,27 @@ export function ExpertEditPage({ initial, onSave, onClose }: Props) {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="专家名称，例如：情感顾问"
-                className="bg-transparent py-[11px] text-[17px] text-neutral-900 outline-none placeholder:text-neutral-300"
+                className="bg-transparent py-2.5 text-[14px] text-ink outline-none placeholder:text-ink-faint"
               />
             </div>
             {isNew && (
-              <div
-                className="flex items-center px-4 py-0"
-                style={{ borderTop: "0.5px solid #eee" }}
-              >
+              <div className="flex items-center border-t border-line px-4 py-0">
                 <input
                   value={id}
                   onChange={(e) => setId(e.target.value)}
                   placeholder={`ID（英文唯一）: ${slugify(name) || "emotion"}`}
-                  className="bg-transparent py-[11px] font-mono text-[15px] text-neutral-900 outline-none placeholder:text-neutral-300"
+                  className="bg-transparent py-2.5 font-mono text-[13px] text-ink outline-none placeholder:text-ink-faint"
                 />
               </div>
             )}
             {/* Icon picker */}
-            <div className="flex flex-wrap gap-1.5 px-4 py-3" style={{ borderTop: "0.5px solid #eee" }}>
+            <div className="flex flex-wrap gap-1.5 border-t border-line px-4 py-3">
               {ICONS.map((ic) => (
                 <button
                   key={ic}
                   onClick={() => setIcon(ic)}
                   className={`flex h-9 w-9 items-center justify-center rounded-lg text-lg ${
-                    icon === ic ? "bg-blue-100 ring-2 ring-blue-500" : "hover:bg-neutral-100"
+                    icon === ic ? "bg-info-bg ring-2 ring-info" : "hover:bg-hover"
                   }`}
                 >
                   {ic}
@@ -116,7 +113,7 @@ export function ExpertEditPage({ initial, onSave, onClose }: Props) {
                 value={systemPrompt}
                 onChange={(e) => setSystemPrompt(e.target.value)}
                 placeholder="描述这个专家的角色、专长、语气与边界…"
-                className="w-full resize-none bg-transparent text-[15px] leading-relaxed text-neutral-900 outline-none placeholder:text-neutral-300"
+                className="w-full resize-none bg-transparent text-[13px] leading-relaxed text-ink outline-none placeholder:text-ink-faint"
                 style={{ minHeight: 120 }}
                 autoFocus={false}
               />
@@ -127,17 +124,17 @@ export function ExpertEditPage({ initial, onSave, onClose }: Props) {
           <SectionLabel>生成参数</SectionLabel>
           <Card>
             {/* Temperature slider */}
-            <div className="px-4 py-3" style={{ borderBottom: "0.5px solid #eee" }}>
+            <div className="border-b border-line px-4 py-3">
               <div className="flex items-center justify-between">
-                <span className="text-[15px] text-neutral-900">Temperature</span>
-                <span className="font-mono text-[15px] tabular-nums text-neutral-500">
+                <span className="text-[13px] text-ink">Temperature</span>
+                <span className="font-mono text-[13px] tabular-nums text-ink-dim">
                   {temperature.toFixed(1)}
                 </span>
               </div>
               <div className="relative mt-2">
-                <div className="h-[4px] w-full rounded-full bg-neutral-200">
+                <div className="h-[4px] w-full rounded-full bg-pressed">
                   <div
-                    className="h-[4px] rounded-full bg-blue-600 transition-all"
+                    className="h-[4px] rounded-full bg-info transition-all"
                     style={{ width: `${(temperature / 2) * 100}%` }}
                   />
                 </div>
@@ -155,24 +152,24 @@ export function ExpertEditPage({ initial, onSave, onClose }: Props) {
 
             {/* maxTokens / timeoutMs */}
             <div className="grid grid-cols-2">
-              <div className="px-4 py-3" style={{ borderRight: "0.5px solid #eee" }}>
-                <p className="mb-1 text-[12px] text-neutral-400">maxTokens</p>
+              <div className="border-r border-line px-4 py-3">
+                <p className="mb-1 text-[12px] text-ink-faint">maxTokens</p>
                 <input
                   type="number"
                   min={1}
                   value={maxTokens}
                   onChange={(e) => setMaxTokens(Number(e.target.value) || 2048)}
-                  className="w-full bg-transparent font-mono text-[14px] text-neutral-900 outline-none"
+                  className="w-full bg-transparent font-mono text-[13px] text-ink outline-none"
                 />
               </div>
               <div className="px-4 py-3">
-                <p className="mb-1 text-[12px] text-neutral-400">timeoutMs</p>
+                <p className="mb-1 text-[12px] text-ink-faint">timeoutMs</p>
                 <input
                   type="number"
                   min={1000}
                   value={timeoutMs}
                   onChange={(e) => setTimeoutMs(Number(e.target.value) || 120000)}
-                  className="w-full bg-transparent font-mono text-[14px] text-neutral-900 outline-none"
+                  className="w-full bg-transparent font-mono text-[13px] text-ink outline-none"
                 />
               </div>
             </div>
@@ -182,7 +179,7 @@ export function ExpertEditPage({ initial, onSave, onClose }: Props) {
           <SectionLabel>状态</SectionLabel>
           <Card>
             <div className="flex items-center justify-between px-4 py-3">
-              <span className="text-[15px] text-neutral-900">启用此专家</span>
+              <span className="text-[13px] text-ink">启用此专家</span>
               <Toggle checked={enabled} onChange={setEnabled} />
             </div>
           </Card>
