@@ -20,12 +20,16 @@ export interface Expert {
   builtin?: boolean;
 }
 
+export type ThinkingLevel = "high" | "medium" | "low" | "disabled";
+
 export interface ModelConfig {
   id: string;
   providerId: string;
   modelId: string;
   displayName?: string;
   enabled: boolean;
+  /** 思考强度（reasoning 模型专用） */
+  thinkingLevel?: ThinkingLevel;
 }
 
 export interface CardConfig {
@@ -65,3 +69,107 @@ export interface EnvVarStatus {
   name: string;
   configured: boolean;
 }
+
+// ── 会话记录（mirrors src/records/store.ts RecordEvent union）──
+
+export interface UsageRecord {
+  promptTokens?: number;
+  completionTokens?: number;
+}
+
+export interface RecordCardRef {
+  cardId: string;
+  cardName: string;
+  expertId: string;
+  expertName: string;
+  modelId: string;
+  provider: string;
+}
+
+/** meta 行 = listSessions 返回的每个元素（额外带 sizeBytes） */
+export interface SessionMeta {
+  type: "meta";
+  id: string;
+  tool: "consult_experts" | "brainstorm" | "brainstorm_followup";
+  startedAt: string;
+  prompt: string;
+  context?: string;
+  mode?: string;
+  rounds?: number;
+  degraded?: boolean;
+  prevTurnsCount?: number;
+  sizeBytes?: number;
+}
+
+/** 详情接口返回的每个事件（meta 之后的各种类型） */
+export type RecordEvent =
+  | SessionMeta
+  | { type: "cards"; ts?: string; cards: RecordCardRef[] }
+  | {
+      type: "card_result";
+      ts?: string;
+      cardId: string;
+      ok: boolean;
+      content?: string;
+      error?: string;
+      usage?: UsageRecord;
+    }
+  | {
+      type: "turn";
+      ts?: string;
+      round: number;
+      expertId: string;
+      expertName: string;
+      icon: string;
+      content: string;
+      usage?: UsageRecord;
+    }
+  | { type: "round_end"; ts?: string; round: number; total: number }
+  | { type: "summary"; ts?: string; content: string }
+  | {
+      type: "done";
+      ts?: string;
+      status: "ok" | "partial" | "all_failed" | "no_cards" | "error";
+      report?: string;
+      usage?: UsageRecord;
+    };
+
+/** GET /api/records/:id 返回体 */
+export interface SessionDetail {
+  id: string;
+  events: RecordEvent[];
+}
+
+/** DELETE /api/records 返回体（批量删除/清空共用） */
+export interface DeleteRecordsResult {
+  ok: boolean;
+  deleted: number;
+}
+
+// ── 网页版发起群聊（/api/chat POST 返回 + SSE 事件）──
+
+/** POST /api/chat 返回体 */
+export interface RunBrainstormResult {
+  ok: boolean;
+  sessionId: string;
+}
+
+/** 发起群聊请求体 */
+export interface RunBrainstormBody {
+  topic: string;
+  mode?: "debate" | "relay";
+  rounds?: number; // 1-5
+  summarize?: boolean;
+  cards?: string[]; // 角色卡 id 列表
+}
+
+/**
+ * GET /api/chat?session= 的 SSE 事件数据（event 名 = progress / done / error）。
+ * - progress：{ type:"brainstorm.round", round, total }
+ * - done：{ isError, report, sessionId }
+ * - error：{ message }
+ */
+export type ChatSessionEvent =
+  | { type: "brainstorm.round"; round: number; total: number }
+  | { type: "done"; isError: boolean; report: string; sessionId: string }
+  | { type: "error"; message: string };

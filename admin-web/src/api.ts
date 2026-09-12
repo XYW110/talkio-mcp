@@ -1,5 +1,16 @@
 // Browser API client for the MCP backend /api endpoints.
-import type { ConfigFile, ProbeModel, SaveResult, EnvVarStatus, ProbeRequest } from "./types";
+import type {
+  ConfigFile,
+  ProbeModel,
+  SaveResult,
+  EnvVarStatus,
+  ProbeRequest,
+  SessionDetail,
+  SessionMeta,
+  DeleteRecordsResult,
+  RunBrainstormResult,
+  RunBrainstormBody,
+} from "./types";
 
 async function http<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -29,4 +40,21 @@ export const api = {
       body: JSON.stringify(req),
     }),
   envStatus: () => http<EnvVarStatus[]>("/api/env/status"),
+  getRecords: (limit?: number) =>
+    http<SessionMeta[]>(`/api/records${limit ? `?limit=${limit}` : ""}`),
+getRecord: (id: string) => http<SessionDetail>(`/api/records/${encodeURIComponent(id)}`),
+deleteRecords: (ids?: string[]) =>
+    http<DeleteRecordsResult>(`/api/records`, {
+      method: "DELETE",
+      body: JSON.stringify(ids && ids.length > 0 ? { ids } : {}),
+    }),
+  /** 发起一次 brainstorm 群聊，返回 { ok, sessionId }。 */
+  runBrainstorm: (body: RunBrainstormBody) =>
+    http<RunBrainstormResult>(`/api/chat`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  /** 订阅某个群聊 session 的 SSE 流（事件名 progress / done / error）。 */
+  chatEventSource: (sessionId: string) =>
+    new EventSource(`/api/chat?session=${encodeURIComponent(sessionId)}`),
 };
