@@ -5,6 +5,17 @@ import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createAdminApi } from "../src/admin/api.js";
 import { startSession } from "../src/records/store.js";
+import { createLogger } from "../src/utils/log.js";
+import type { AppConfig } from "../src/types.js";
+
+/** createAdminApi 需要的配置桩（records 路由只用 recordsDir，config 仅为满足签名）。 */
+const stubConfig: AppConfig = {
+  providers: {},
+  experts: [],
+  models: [],
+  cards: [],
+};
+const logger = createLogger("error");
 
 /** 最小 req/res 桩：仅覆盖 createAdminApi 用到的 surface。 */
 function makeReqRes(
@@ -18,7 +29,36 @@ function makeReqRes(
 } {
   let statusCode = 0;
   let data = "";
-  const req = { method, url } as unknown as IncomingMessage;
+  type Listener = (chunk?: unknown) => void;
+  const listeners: Record<string, Listener[]> = {};
+  let reqBody: string | undefined;
+  let emitted = false;
+  // readBody 注册完 data/end 监听后派发，让它的 Promise 落定。
+  // body 在 handle 之前注入（测试里 req.body = ...）或未注入（空 body）都成立。
+  const emit = () => {
+    if (emitted) return;
+    emitted = true;
+    if (reqBody !== undefined && reqBody !== "") {
+      const buf = Buffer.from(reqBody, "utf-8");
+      for (const cb of listeners["data"] ?? []) cb(buf);
+    }
+    for (const cb of listeners["end"] ?? []) cb();
+  };
+  const req = {
+    method,
+    url,
+    get body() {
+      return reqBody;
+    },
+    set body(v: string | undefined) {
+      reqBody = v;
+    },
+    on(event: string, cb: Listener) {
+      (listeners[event] ??= []).push(cb);
+      // "end" 在 "data" 之后注册（readBody 固定顺序），此时派发即可。
+      if (event === "end") emit();
+    },
+  } as unknown as IncomingMessage;
   const res = {
     writeHead(code: number, _headers?: unknown) {
       statusCode = code;
@@ -54,7 +94,7 @@ describe("admin API /api/records", () => {
     sess.finish({ status: "ok", report: "R" });
     await sess.flush();
 
-    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir });
+    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, config: stubConfig, logger });
 
     // 列表
     const listRes = makeReqRes("GET", "/api/records");
@@ -78,7 +118,7 @@ describe("admin API /api/records", () => {
   });
 
   it("未知 id 返回 404", async () => {
-    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir });
+    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, config: stubConfig, logger });
     const res = makeReqRes("GET", "/api/records/20260101-000000-ffff");
     const handled = await handle(res.req, res.res);
     expect(handled).toBe(true);
@@ -86,7 +126,7 @@ describe("admin API /api/records", () => {
   });
 
   it("路径穿越 id 返回 404，不读文件", async () => {
-    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir });
+    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, config: stubConfig, logger });
     const res = makeReqRes("GET", "/api/records/..%2F..%2Fexperts.json");
     const handled = await handle(res.req, res.res);
     expect(handled).toBe(true);
@@ -94,7 +134,7 @@ describe("admin API /api/records", () => {
   });
 
   it("recordsDir 未配置时列表返回空数组、详情 404", async () => {
-    const handle = createAdminApi({ configPath: path.join(dir, "experts.json") });
+    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), config: stubConfig, logger });
 
     const listRes = makeReqRes("GET", "/api/records");
     await handle(listRes.req, listRes.res);
@@ -114,10 +154,69 @@ describe("admin API /api/records", () => {
     await a.flush();
     await b.flush();
 
-    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir });
+    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, config: stubConfig, logger });
     const res = makeReqRes("GET", "/api/records?limit=1");
     await handle(res.req, res.res);
     const list = JSON.parse(res.body()) as unknown[];
     expect(list).toHaveLength(1);
+  });
+
+  it("DELETE /api/records 批量删除指定会话；未知 id 静默跳过", async () => {
+    const a = (await startSession({ tool: "brainstorm", prompt: "A" }, dir))!;
+    const b = (await startSession({ tool: "brainstorm", prompt: "B" }, dir))!;
+    a.finish({ status: "ok" });
+    b.finish({ status: "ok" });
+    await a.flush();
+    await b.flush();
+
+    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, config: stubConfig, logger });
+    const res = makeReqRes("DELETE", "/api/records");
+    (res.req as { body?: unknown }).body = JSON.stringify({
+      ids: [a.id, "20260101-000000-ffff", "..%2F..%2Fexperts.json"],
+    });
+    const handled = await handle(res.req, res.res);
+    expect(handled).toBe(true);
+    expect(res.status()).toBe(200);
+    expect(JSON.parse(res.body())).toEqual({ ok: true, deleted: 1 });
+
+    // 只删掉了 a
+    const listRes = makeReqRes("GET", "/api/records");
+    await handle(listRes.req, listRes.res);
+    const list = JSON.parse(listRes.body()) as Array<{ id: string }>;
+    expect(list.map((s) => s.id)).toEqual([b.id]);
+  });
+
+  it("DELETE /api/records 不带 ids 时清空全部", async () => {
+    const a = (await startSession({ tool: "brainstorm", prompt: "A" }, dir))!;
+    const b = (await startSession({ tool: "brainstorm", prompt: "B" }, dir))!;
+    a.finish({ status: "ok" });
+    b.finish({ status: "ok" });
+    await a.flush();
+    await b.flush();
+
+    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, config: stubConfig, logger });
+    const res = makeReqRes("DELETE", "/api/records");
+    const handled = await handle(res.req, res.res);
+    expect(handled).toBe(true);
+    expect(res.status()).toBe(200);
+    expect(JSON.parse(res.body())).toEqual({ ok: true, deleted: 2 });
+
+    const listRes = makeReqRes("GET", "/api/records");
+    await handle(listRes.req, listRes.res);
+    expect(JSON.parse(listRes.body())).toEqual([]);
+  });
+
+  it("DELETE /api/records 空 ids 数组视为清空；recordsDir 未配置返回 404", async () => {
+    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, config: stubConfig, logger });
+    const res = makeReqRes("DELETE", "/api/records");
+    (res.req as { body?: unknown }).body = JSON.stringify({ ids: [] });
+    await handle(res.req, res.res);
+    expect(res.status()).toBe(200);
+    expect(JSON.parse(res.body())).toEqual({ ok: true, deleted: 0 });
+
+    const noDir = createAdminApi({ configPath: path.join(dir, "experts.json"), config: stubConfig, logger });
+    const res404 = makeReqRes("DELETE", "/api/records");
+    await noDir(res404.req, res404.res);
+    expect(res404.status()).toBe(404);
   });
 });

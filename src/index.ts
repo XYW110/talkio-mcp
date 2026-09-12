@@ -115,7 +115,9 @@ async function startSse(
   port: number,
   host: string,
   configPath: string,
-  recordsDir?: string
+  recordsDir: string | undefined,
+  config: ReturnType<typeof loadConfig> extends Promise<infer T> ? T : never,
+  logger: ReturnType<typeof createLogger>
 ): Promise<void> {
   // Security: warn when binding to a non-loopback address (no auth configured).
   const isLoopback =
@@ -141,6 +143,8 @@ const handleAdmin = createAdminApi({
     staticDir,
     restartHint: true,
     recordsDir,
+    config,
+    logger,
   });
   if (staticDir) {
     log(`管理界面已启用: 访问 http://${host}:${port}/ 打开专家管理页面`);
@@ -278,8 +282,8 @@ async function main(): Promise<void> {
 if (args.transport === "stdio") {
     await startStdio();
   } else {
-    const cfgPath = args.config ?? process.env.TALKIO_EXPERTS_CONFIG ?? "experts.json";
-    await startSse(args.port, args.host, cfgPath, recordsDir);
+const cfgPath = args.config ?? process.env.TALKIO_EXPERTS_CONFIG ?? "experts.json";
+    await startSse(args.port, args.host, cfgPath, recordsDir, config, logger);
   }
 }
 

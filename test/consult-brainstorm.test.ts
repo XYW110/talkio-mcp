@@ -275,7 +275,7 @@ describe("handleBrainstorm", () => {
     expect(adapter.calls).toHaveLength(0);
   });
 
-  it("未传参时 rounds=1 且不总结：三把 key 齐时最多 3 次 LLM", async () => {
+  it("未传参时 rounds=1 且默认总结：三把 key 齐时 3 次作答 + 1 次总结", async () => {
     clearKeys();
     process.env.OPENAI_API_KEY = "sk-o";
     process.env.ANTHROPIC_API_KEY = "sk-a";
@@ -286,9 +286,9 @@ describe("handleBrainstorm", () => {
       councilConfig(adapter)
     );
     expect(result.isError).not.toBe(true);
-    expect(adapter.calls).toHaveLength(3);
+    expect(adapter.calls).toHaveLength(4);
     expect(textOf(result)).toContain("**轮数:** 1");
-    expect(textOf(result)).not.toContain("### 讨论总结");
+    expect(textOf(result)).toContain("### 讨论总结");
   });
 
 it("显式 rounds=2 summarize=true 仍按用户指定跑", async () => {

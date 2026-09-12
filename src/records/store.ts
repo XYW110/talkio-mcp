@@ -13,7 +13,7 @@
  * Privacy: callers record already-redacted content (redactPII happens before
  * anything reaches the LLM or the report). This module adds no new exposure.
  */
-import { appendFile, mkdir, readdir, readFile, stat } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { defaultLogger, type Logger } from "../utils/log.js";
@@ -285,4 +285,54 @@ export async function readSession(
   } catch {
     return null;
   }
+}
+
+/**
+ * Delete one session file by id. Returns true when a file was actually
+ * removed (invalid ids and missing files yield false — never throws).
+ */
+export async function deleteSession(recordsDir: string, id: string): Promise<boolean> {
+  if (!isValidSessionId(id)) return false;
+  const filePath = path.join(recordsDir, `${id}.jsonl`);
+  try {
+    // 先确认文件真实存在：rm force 对不存在的文件不抛错，无法区分「已删」与「本就不存在」。
+    await stat(filePath);
+    await rm(filePath, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Delete the given sessions in one call. Returns how many files were removed. */
+export async function deleteSessions(
+  recordsDir: string,
+  ids: string[]
+): Promise<number> {
+  let deleted = 0;
+  for (const id of ids) {
+    if (await deleteSession(recordsDir, id)) deleted += 1;
+  }
+  return deleted;
+}
+
+/** Delete all session files in the records dir. Returns how many were removed. */
+export async function clearSessions(recordsDir: string): Promise<number> {
+  let names: string[];
+  try {
+    names = await readdir(recordsDir);
+  } catch {
+    return 0;
+  }
+  let deleted = 0;
+  for (const name of names) {
+    if (!name.endsWith(".jsonl")) continue;
+    try {
+      await rm(path.join(recordsDir, name), { force: true });
+      deleted += 1;
+    } catch {
+      // Skip files we cannot remove (locked/permission); keep counting the rest.
+    }
+  }
+  return deleted;
 }

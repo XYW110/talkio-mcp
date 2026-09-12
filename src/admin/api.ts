@@ -7,10 +7,21 @@
 import { readFile, writeFile, stat } from "node:fs/promises";
 import { mkdir, readdir } from "node:fs/promises";
 import path from "node:path";
+import { EventEmitter } from "node:events";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { fetchWithRetry } from "../utils/retry.js";
-import { listSessions, readSession, isValidSessionId } from "../records/store.js";
+import type { AppConfig } from "../types.js";
+import { handleBrainstorm } from "../tools/brainstorm.js";
+import { startSession, type RecordSession } from "../records/store.js";
+import type { Logger } from "../utils/log.js";
+import {
+  listSessions,
+  readSession,
+  deleteSessions,
+  clearSessions,
+  isValidSessionId,
+} from "../records/store.js";
 
 /** 探测模型时单次超时（ms） */
 const PROBE_TIMEOUT_MS = 10000;
@@ -24,7 +35,14 @@ interface AdminApiOptions {
   restartHint?: boolean;
   /** 会话记录目录；未配置时 records 接口返回空列表 / 404 */
   recordsDir?: string;
+  /** 启动时已校验的配置（用于网页版发起群聊，避免每次重读+重复校验） */
+  config: AppConfig;
+  /** 日志器（复用主循环 logger，避免 admin 层自建） */
+  logger: Logger;
 }
+
+/** 群聊 SSE 频道端点前缀。 */
+export const CHAT_CHANNEL_PREFIX = "/api/chat";
 
 /** 应答辅助：统一 JSON 输出与错误格式 */
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -129,7 +147,24 @@ async function probeModels(baseUrl: string, apiKey: string): Promise<unknown[]> 
  * 返回 true 表示已处理（response 已结束），false 表示未匹配到 /api 路由。
  */
 export function createAdminApi(options: AdminApiOptions) {
-  const { configPath, staticDir, recordsDir } = options;
+  const { configPath, staticDir, recordsDir, config: baseConfig, logger } = options;
+
+  // 群聊 SSE：按 sessionId 分频道的广播器（支持多点开 concurrent 群聊）。
+  const chatBus = new EventEmitter();
+
+  /** 向某个频道广播一条 SSE 事件（JSON 载荷）。见 sendSseEvent。 */
+  function broadcast(channel: string, type: string, data: unknown): void {
+    chatBus.emit(channel, type, data);
+  }
+
+  /**
+   * 以原始 SSE 帧写一条事件到响应流：`event:` 名 + `data:` JSON 载荷。
+   * 兼容 EventSource/SSE 客户端：默认事件（无自定义 event 名）客户端走 onmessage。
+   */
+  function writeSseFrame(res: ServerResponse, data: unknown, event?: string): void {
+    if (event) res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  }
 
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -232,6 +267,115 @@ export function createAdminApi(options: AdminApiOptions) {
       return true;
     }
 
+// ── /api/chat （网页版发起群聊）──
+    // POST: 触发一次 brainstorm，返回 { sessionId }；结果经 GET /api/chat?session=SSE 实时推送。
+    // GET:  订阅某个 session 的 SSE 流（EventSource 兼容）。
+    if (url.pathname === CHAT_CHANNEL_PREFIX) {
+      if (req.method === "POST") {
+        try {
+          const bodyText = await readBody(req);
+          const body = JSON.parse(bodyText) as {
+            topic?: unknown;
+            mode?: unknown;
+            rounds?: unknown;
+            summarize?: unknown;
+            cards?: unknown;
+          };
+          const topic = String(body.topic ?? "").trim();
+          if (!topic) {
+            sendError(res, 400, "topic 不能为空");
+            return true;
+          }
+          const mode = body.mode === "relay" ? "relay" : "debate";
+          const roundsRaw = Number(body.rounds);
+          const rounds = Number.isFinite(roundsRaw) ? Math.min(Math.max(Math.round(roundsRaw), 1), 5) : 1;
+          const summarize = body.summarize !== false;
+          const cards = Array.isArray(body.cards)
+            ? body.cards.map((c) => String(c)).filter((c) => c.length > 0)
+            : undefined;
+
+          // 复用会话记录链路（与 MCP 工具一致，落盘到同一 records 目录）。
+          let record: RecordSession | undefined;
+          try {
+            record =
+              (await startSession(
+                { tool: "brainstorm", prompt: topic, mode, rounds },
+                recordsDir,
+                logger,
+              )) ?? undefined;
+          } catch {
+            record = undefined; // 记录失败不影响群聊本身
+          }
+          const sessionId = record?.id ?? `web-${Date.now()}`;
+          const channel = `${CHAT_CHANNEL_PREFIX}/${sessionId}`;
+
+          // fire-and-forget：后台跑群聊，进度经 chatBus 广播到 SSE 频道。
+          void (async () => {
+            const notifier = (ev: { type: string; round?: number; total?: number }) => {
+              broadcast(channel, "progress", ev);
+            };
+            try {
+              const result = await handleBrainstorm(
+                { topic, mode, rounds, summarize, cards },
+                baseConfig,
+                { notifier: notifier as never, record },
+              );
+              const text =
+                result.content
+                  ?.map((c) =>
+                    typeof c === "object" && c && "text" in c ? String((c as { text: unknown }).text) : "",
+                  )
+                  .filter(Boolean)
+                  .join("\n")
+                  .trim() ?? "";
+              broadcast(channel, "done", {
+                isError: Boolean(result.isError),
+                report: text,
+                sessionId,
+              });
+            } catch (err) {
+              broadcast(channel, "error", {
+                message: err instanceof Error ? err.message : String(err),
+              });
+            }
+          })();
+
+          sendJson(res, 200, { ok: true, sessionId });
+        } catch (err) {
+          sendError(res, 400, err instanceof Error ? err.message : String(err));
+        }
+        return true;
+      }
+
+      if (req.method === "GET") {
+        const sessionId = url.searchParams.get("session");
+        if (!sessionId || !isValidSessionId(sessionId)) {
+          sendError(res, 400, "缺少有效的 session 参数");
+          return true;
+        }
+        const channel = `${CHAT_CHANNEL_PREFIX}/${sessionId}`;
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-store",
+          Connection: "keep-alive",
+        });
+        res.write(": connected\n\n");
+        const onEvent = (type: string, data: unknown) =>
+          writeSseFrame(res, data, type === "progress" ? "progress" : type);
+        chatBus.on(channel, onEvent);
+        // 30s 心跳，避免代理/浏览器断开空闲连接。
+        const beat = setInterval(() => res.write(": ping\n\n"), 20000);
+        req.on("close", () => {
+          clearInterval(beat);
+          chatBus.off(channel, onEvent);
+        });
+        return true;
+      }
+
+      sendError(res, 405, "Method not allowed");
+      return true;
+    }
+
     // ── /api/records（会话记录列表，mtime 倒序，limit 默认 50 上限 200）──
     if (url.pathname === "/api/records" && req.method === "GET") {
       try {
@@ -245,6 +389,34 @@ export function createAdminApi(options: AdminApiOptions) {
         sendJson(res, 200, list);
       } catch (err) {
         sendError(res, 500, err instanceof Error ? err.message : String(err));
+      }
+      return true;
+    }
+
+    // ── DELETE /api/records（清空 / 批量删除）──
+    // body 可带 { ids?: string[] }：提供 ids 则只删这些会话；否则清空全部。
+    if (url.pathname === "/api/records" && req.method === "DELETE") {
+      try {
+        if (!recordsDir) {
+          sendError(res, 404, "记录未启用");
+          return true;
+        }
+        const bodyText = await readBody(req);
+        let ids: string[] | undefined;
+        if (bodyText.trim() !== "") {
+          const parsed = JSON.parse(bodyText) as { ids?: unknown };
+          if (parsed.ids !== undefined) {
+            if (!Array.isArray(parsed.ids)) throw new Error("ids 需要是数组");
+            ids = parsed.ids.map(String);
+          }
+        }
+        const deleted =
+          ids && ids.length > 0
+            ? await deleteSessions(recordsDir, ids)
+            : await clearSessions(recordsDir);
+        sendJson(res, 200, { ok: true, deleted });
+      } catch (err) {
+        sendError(res, 400, err instanceof Error ? err.message : String(err));
       }
       return true;
     }

@@ -71,6 +71,7 @@ const modelSchema = z.object({
   modelId: z.string().min(1),
   displayName: z.string().min(1),
   enabled: z.boolean().default(true),
+  thinkingLevel: z.enum(["high", "medium", "low", "disabled"]).optional(),
 });
 
 const cardSchema = z.object({

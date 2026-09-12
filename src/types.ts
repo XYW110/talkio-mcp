@@ -7,9 +7,9 @@
  *   校验 + defaults 合并后产出本文件中的类型。
  */
 
-import type { ChatMessage, ChatParams, ChatResult, ProviderAdapter } from "./providers/adapter.js";
+import type { ChatMessage, ChatParams, ChatResult, ProviderAdapter, ThinkingLevel } from "./providers/adapter.js";
 
-export type { ChatMessage, ChatParams, ChatResult, ProviderAdapter };
+export type { ChatMessage, ChatParams, ChatResult, ProviderAdapter, ThinkingLevel };
 
 /** provider 适配器类型名（registry 中注册的三个实现） */
 export type ProviderType = "openai" | "anthropic" | "openai-compatible";
@@ -58,6 +58,8 @@ export interface ModelConfig {
   displayName: string;
   /** 是否启用 */
   enabled: boolean;
+  /** 思考强度（reasoning 模型专用；undefined = 不传额外参数，使用模型默认行为） */
+  thinkingLevel?: ThinkingLevel;
 }
 
 /** 角色卡 —— 专家 × 模型的绑定实体（第三个独立概念） */

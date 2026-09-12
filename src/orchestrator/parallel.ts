@@ -112,6 +112,7 @@ export async function callExpert(
       temperature: target.expert.temperature,
       maxTokens: target.expert.maxTokens,
       timeoutMs: target.expert.timeoutMs,
+      thinkingLevel: target.thinkingLevel,
     };
     const result: ChatResult = await adapter.chat(params, creds);
     if (!result || typeof result.content !== "string") {

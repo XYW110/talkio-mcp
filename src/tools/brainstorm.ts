@@ -51,7 +51,7 @@ export const brainstormSchema = {
   summarize: z
     .boolean()
     .optional()
-    .describe("是否在对话结束后生成总结(默认 false)"),
+    .describe("是否在对话结束后生成收敛总结(默认 true)"),
 };
 
 /** Inferred argument type for the handler. */
@@ -77,7 +77,7 @@ export async function handleBrainstorm(
 
   const mode = args.mode ?? "debate";
   const rounds = args.rounds ?? 1;
-  const summarize = args.summarize ?? false;
+  const summarize = args.summarize ?? true;
 
   const selection = selectCardsForTool(config, args.cards, {
     defaultLimit: DEFAULT_CARD_LIMIT,

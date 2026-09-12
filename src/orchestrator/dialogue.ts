@@ -92,6 +92,15 @@ export const SUMMARIZER_SYSTEM =
 const PER_TURN_TRUNCATE_CHARS = 500;
 /** Hard cap on the assembled transcript block injected into a prompt. */
 const TRANSCRIPT_BUDGET_CHARS = 12000;
+/** Max chars kept per expert in the local fallback summary. */
+const FALLBACK_SUMMARY_TRUNCATE_CHARS = 400;
+
+/** Truncate a turn's content for the local fallback summary. */
+function truncateForSummary(content: string): string {
+  const trimmed = content.trim();
+  if (trimmed.length <= FALLBACK_SUMMARY_TRUNCATE_CHARS) return trimmed;
+  return trimmed.slice(0, FALLBACK_SUMMARY_TRUNCATE_CHARS) + "…";
+}
 
 // --- Internal helpers ----------------------------------------------------
 
@@ -171,6 +180,7 @@ export async function askExpert(
     temperature: target.expert.temperature,
     maxTokens: target.expert.maxTokens,
     timeoutMs: target.expert.timeoutMs,
+    thinkingLevel: target.thinkingLevel,
   };
   const result: ChatResult = await adapter.chat(params, creds);
   if (!result || typeof result.content !== "string") {
@@ -399,6 +409,7 @@ export async function runDialogue(
           temperature: summarizer.expert.temperature,
           maxTokens: summarizer.expert.maxTokens,
           timeoutMs: summarizer.expert.timeoutMs,
+          thinkingLevel: summarizer.thinkingLevel,
         };
         const result = await adapter.chat(params, creds);
         if (result && typeof result.content === "string") {
@@ -406,7 +417,21 @@ export async function runDialogue(
         }
       }
     } catch {
-      // Summary is best-effort; leave undefined on failure.
+      // LLM summary is best-effort; fall back to a local convergence below.
+    }
+    if (!summary || summary.trim() === "") {
+      // Guaranteed convergence: when the LLM summary is unavailable (failed,
+      // empty, or no usable provider), build a deterministic local summary
+      // from the last round's turns so the report always ends with one.
+      const lastRound = turns[turns.length - 1]?.round ?? 0;
+      const lastRoundTurns = turns.filter((t) => t.round === lastRound);
+      const bulletList = lastRoundTurns
+        .map((t) => `- **${t.expertName}**：${truncateForSummary(t.content)}`)
+        .join("\n");
+      summary = [
+        "> ⚠️ 本条为本地兜底收敛（LLM 总结调用失败，以下为最后一轮各专家观点摘录）：",
+        bulletList,
+      ].join("\n");
     }
   }
 

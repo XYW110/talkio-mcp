@@ -25,6 +25,12 @@ import { LoggingMessageNotificationSchema } from "@modelcontextprotocol/sdk/type
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const serverEntry = resolve(__dirname, "..", "dist", "index.js");
 
+/** 冒烟脚本默认卡 id 与专家展示名（需与 experts.json 当前配置保持一致） */
+const DEFAULT_CARD = "card-security-deepseek";
+const DEFAULT_EXPERT_NAME = "安全专家";
+const DEFAULT_EXPERT_ID = "security";
+const DEFAULT_MODEL_NAME = "deepseek-v4-flash";
+
 let failures = 0;
 
 function check(label, condition, detail = "") {
@@ -85,13 +91,13 @@ check("listTools 返回 brainstorm", names.includes("brainstorm"), `实际: ${na
   const listed = await client.callTool({ name: "list_cards", arguments: {} });
   const listedText = textOf(listed);
   check("list_cards 未返回 isError", listed.isError !== true, JSON.stringify(listed).slice(0, 200));
-  check("list_cards 包含 architect 卡", listedText.includes("architect-openai-gpt-4o"));
-  check("list_cards 展示专家名", listedText.includes("架构师") || listedText.includes("architect"));
-  check("list_cards 展示模型名", listedText.includes("gpt-4o"));
+  check("list_cards 包含默认卡", listedText.includes(DEFAULT_CARD));
+  check("list_cards 展示专家名", listedText.includes(DEFAULT_EXPERT_NAME));
+  check("list_cards 展示模型名", listedText.includes(DEFAULT_MODEL_NAME));
 
   const consult = await client.callTool({
     name: "consult_experts",
-    arguments: { question: "测试问题", cards: ["architect-openai-gpt-4o"] },
+    arguments: { question: "测试问题", cards: [DEFAULT_CARD] },
   });
 const consultText = textOf(consult);
   check("consult_experts 未返回 isError", consult.isError !== true, JSON.stringify(consult).slice(0, 200));
@@ -113,7 +119,7 @@ const consultText = textOf(consult);
     name: "brainstorm",
     arguments: {
       topic: "测试主题",
-      cards: ["architect-openai-gpt-4o"],
+      cards: [DEFAULT_CARD],
       rounds: 1,
       summarize: false,
     },
@@ -134,7 +140,7 @@ const brainstormText = textOf(brainstorm);
     name: "consult_experts",
     arguments: { question: "测试问题", cards: ["no-such-card"] },
   });
-check("不存在的卡返回 isError 并列出可用卡", bad.isError === true && textOf(bad).includes("architect-openai-gpt-4o"), JSON.stringify(bad).slice(0, 300));
+check("不存在的卡返回 isError 并列出可用卡", bad.isError === true && textOf(bad).includes(DEFAULT_CARD), JSON.stringify(bad).slice(0, 300));
 
   // brainstorm_followup：带上一步 brainstorm 的 turns + 追问 → 全体（无 card）单轮追问
   const followup = await client.callTool({
@@ -142,7 +148,7 @@ check("不存在的卡返回 isError 并列出可用卡", bad.isError === true &
     arguments: {
       question: "追问问题",
       turns: [
-        { round: 1, expertId: "architect", expertName: "架构师", icon: "🤖", content: brainstormText },
+        { round: 1, expertId: DEFAULT_EXPERT_ID, expertName: DEFAULT_EXPERT_NAME, icon: "🤖", content: brainstormText },
       ],
     },
   });
@@ -164,7 +170,7 @@ check(
         { round: 1, expertId: "architect", expertName: "架构师", icon: "🤖", content: "长".repeat(13000) },
         { round: 2, expertId: "security", expertName: "安全师", icon: "🛡️", content: "超长补充意见".repeat(90) },
       ],
-      cards: ["architect-openai-gpt-4o"],
+      cards: [DEFAULT_CARD],
     },
   });
   const bigFollowupText = textOf(bigFollowup);

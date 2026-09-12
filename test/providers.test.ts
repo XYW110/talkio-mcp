@@ -237,6 +237,95 @@ describe("openai-compatible adapter", () => {
     ]);
     expect(body.temperature).toBe(0.7);
     expect(body.max_tokens).toBe(1024);
+    expect(body.stream).toBe(true);
+  });
+
+  /** 构造一个 SSE 文本响应（text/event-stream） */
+  function makeSseResponse(events: string[]): Response {
+    const text = events.map((e) => `data: ${e}\n\n`).join("") + "data: [DONE]\n\n";
+    return makeResponse(200, text, { "content-type": "text/event-stream" });
+  }
+
+  it("SSE 流式聚合：delta.content 多 chunk 拼接 + 末尾 usage", async () => {
+    fetchMock.mockResolvedValue(
+      makeSseResponse([
+        JSON.stringify({ choices: [{ delta: { content: "你" } }] }),
+        JSON.stringify({ choices: [{ delta: { content: "好，" } }] }),
+        JSON.stringify({ choices: [{ delta: { content: "世界" } }] }),
+        JSON.stringify({
+          choices: [{ delta: {} }],
+          usage: { prompt_tokens: 5, completion_tokens: 6 },
+        }),
+      ])
+    );
+
+    const adapter = getAdapter("openai-compatible");
+    const result = await adapter.chat(makeChatParams(), CREDS);
+
+    expect(result.content).toBe("你好，世界");
+    expect(result.usage?.promptTokens).toBe(5);
+    expect(result.usage?.completionTokens).toBe(6);
+  });
+
+  it("reasoning 模型兜底：全程无 delta.content 但有 reasoning_content", async () => {
+    fetchMock.mockResolvedValue(
+      makeSseResponse([
+        JSON.stringify({ choices: [{ delta: { reasoning_content: "思考中" } }] }),
+        JSON.stringify({ choices: [{ delta: { reasoning_content: "…" } }] }),
+      ])
+    );
+
+    const adapter = getAdapter("openai");
+    const result = await adapter.chat(makeChatParams(), CREDS);
+
+    expect(result.content).toBe("思考中…");
+    // 上游未报 usage → 按字符数估算
+    expect(result.usage?.completionTokens).toBeGreaterThanOrEqual(1);
+  });
+
+  it("混合输出：content 与 reasoning_content 并存时只取 content", async () => {
+    fetchMock.mockResolvedValue(
+      makeSseResponse([
+        JSON.stringify({
+          choices: [{ delta: { content: "正答", reasoning_content: "思路" } }],
+        }),
+      ])
+    );
+
+    const adapter = getAdapter("openai-compatible");
+    const result = await adapter.chat(makeChatParams(), CREDS);
+    expect(result.content).toBe("正答");
+  });
+
+  it("thinkingLevel=disabled → body 含 thinking:{type:\"disabled\"}", async () => {
+    fetchMock.mockResolvedValue(
+      makeSseResponse([
+        JSON.stringify({ choices: [{ delta: { content: "快答" } }] }),
+      ])
+    );
+
+    const adapter = getAdapter("openai-compatible");
+    await adapter.chat(
+      makeChatParams({ thinkingLevel: "disabled" }),
+      CREDS
+    );
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(body.thinking).toEqual({ type: "disabled" });
+  });
+
+  it("thinkingLevel=undefined → body 不含 thinking 字段", async () => {
+    fetchMock.mockResolvedValue(
+      makeSseResponse([
+        JSON.stringify({ choices: [{ delta: { content: "默认" } }] }),
+      ])
+    );
+
+    const adapter = getAdapter("openai-compatible");
+    await adapter.chat(makeChatParams(), CREDS);
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(body.thinking).toBeUndefined();
   });
 
   it("响应映射：content + usage 正确解析为 ChatResult", async () => {

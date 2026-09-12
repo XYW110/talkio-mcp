@@ -176,6 +176,7 @@ export async function compressTurns(
     temperature: target.expert.temperature,
     maxTokens: target.expert.maxTokens,
     timeoutMs: target.expert.timeoutMs,
+    thinkingLevel: target.thinkingLevel,
   };
   const result = await adapter.chat(params, creds);
   if (!result || typeof result.content !== "string") {

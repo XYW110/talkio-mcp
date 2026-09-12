@@ -10,12 +10,17 @@ export interface ChatMessage {
   content: string;
 }
 
+/** 思考强度等级（reasoning 模型专用，undefined = 不传，使用模型默认行为） */
+export type ThinkingLevel = "high" | "medium" | "low" | "disabled";
+
 export interface ChatParams {
   model: string;
   messages: ChatMessage[];
   temperature?: number;
   maxTokens?: number;
   timeoutMs?: number;
+  /** 思考强度（仅 reasoning 模型生效，由 openai-compatible adapter 映射到 body 参数） */
+  thinkingLevel?: ThinkingLevel;
 }
 
 export interface ChatResult {

@@ -12,6 +12,7 @@ import type {
   CardConfig,
   ExpertConfig,
   ModelConfig,
+  ThinkingLevel,
 } from "../types.js";
 
 /** Default cap for unattended consult / brainstorm. */
@@ -25,6 +26,8 @@ export interface ResolvedCard {
   providerName: string;
   /** 真实模型名（传给 provider adapter），来自 model.modelId */
   modelId: string;
+  /** 思考强度（来自 model.thinkingLevel，undefined = 不传额外参数） */
+  thinkingLevel?: ThinkingLevel;
 }
 
 /** ResolvedCard → 会话记录 meta 里的卡片快照（records 模块形状的最小子集）。 */
@@ -103,6 +106,7 @@ export function resolveCard(
     expert,
     providerName: model.providerId,
     modelId: model.modelId,
+    thinkingLevel: model.thinkingLevel,
   };
 }
 

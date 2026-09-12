@@ -27,6 +27,9 @@ export async function listSessions(
   limit?: number                                             // 默认 50，clamp 到 [1, 200]
 ): Promise<Array<Record<string, unknown> & { sizeBytes: number }>>;
 export async function readSession(recordsDir: string, id: string): Promise<unknown[] | null>;
+export async function deleteSession(recordsDir: string, id: string): Promise<boolean>; // 先 stat 再 rm force；非法/不存在 → false（rm force 不区分「已删」与「本就不存在」）
+export async function deleteSessions(recordsDir: string, ids: string[]): Promise<number>; // 返回实际删除数（逐个 deleteSession，非法 id 静默跳过）
+export async function clearSessions(recordsDir: string): Promise<number>; // 清空全部：只删 *.jsonl，逐文件 catch，单个失败不中断；返回删除数
 
 export interface RecordSession {
   readonly id: string;        // YYYYMMDD-HHmmss-<4 hex>
@@ -76,6 +79,7 @@ export function createXxxTool(deps?: { notifier?: StreamNotifier; record?: Recor
 | ---- | ---- |
 | `GET /api/records?limit=N` | meta 摘要列表（含 `sizeBytes`），按文件名倒序（≈最新在前）；`limit` 非法值回退 50 |
 | `GET /api/records/:id` | `{ id, events }` 完整事件流；`:id` 先 `decodeURIComponent` 再 `isValidSessionId` 校验 |
+| `DELETE /api/records` | body `{ ids?: string[] }`：非空 ids → 批量删；无 body / 空 body / 空 ids → 清空全部。返回 `{ ok, deleted }`（实际删除数）。未配置 recordsDir → 404 |
 
 ## 4. Validation & Error Matrix
 
@@ -89,7 +93,10 @@ export function createXxxTool(deps?: { notifier?: StreamNotifier; record?: Recor
 | `readSession` id 不合法（含路径穿越 `../x`） | `null` → API 404 |
 | `readSession` 文件不存在 | `null` → API 404 |
 | `readSession` 存在坏 JSON 行 | 静默跳过，返回其余合法行 |
-| `admin` 未配置 `recordsDir` | 列表 `200 []`；详情 `404` |
+| `admin` 未配置 `recordsDir` | 列表 `200 []`；详情 `404`；DELETE `404 记录未启用` |
+| DELETE `ids` 非数组 / body JSON 非法 | `400`（消息为具体错误） |
+| DELETE `ids` 含非法 / 路径穿越 / 不存在的 id | 静默跳过，不计入 `deleted`（`deleteSession` 先 `stat` 再 `rm force`，不存在返回 `false`） |
+| DELETE 无 body / 空 body / 空 ids | 视为清空全部；`clearSessions` 只删 `*.jsonl`，逐文件 catch，单个失败不中断 |
 
 ## 5. Good / Base / Bad Cases
 
@@ -110,7 +117,7 @@ record?.append({ type: "card_result", cardId, ok, content, error, usage });
 ## 6. Tests Required
 
 - `test/records.test.ts`：`startSession+append+finish` 后逐行 JSON.parse 校验行序（meta 首行 / done 末行）；禁用 → `null`；IO 失败 → `null`；`sumUsage` 不虚构零字段；`listSessions` 排序断言用**文件名倒序**（同秒创建时序不可靠，禁止断言创建顺序）；`readSession` 坏行跳过 + 非法 id → `null`。读文件前必须 `await flush()`。
-- `test/admin-records.test.ts`：列表/详情/404/路径穿越 `..%2F` / 无 recordsDir → `[]`。
+- `test/admin-records.test.ts`：列表/详情/404/路径穿越 `..%2F` / 无 recordsDir → `[]`；DELETE 批量删（含未知/穿越 id 静默跳过不计数）、无 ids 清空、空 ids 视清空、未配置 recordsDir → 404。桩 `makeReqRes` 的 body 派发在 `on("end")` 触发（依赖 `readBody` 固定 data→end 注册顺序；若改 `readBody` 顺序需同步）。
 - `test/consult-brainstorm.test.ts`（record wiring）：以 `startSession` 传入 `deps.record`，断言 consult 的 meta/cards/card_result/done、brainstorm 的 turn/round_end/summary/done 数量。
 
 ## 7. Common Mistakes
