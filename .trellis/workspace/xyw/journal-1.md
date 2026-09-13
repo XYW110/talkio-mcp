@@ -199,3 +199,68 @@ Completed the 00-bootstrap-guidelines task by filling 12 backend and frontend sp
 2. **Token 用量聚合页**：admin-web 新增聚合视图，数据源为 records JSONL 中已有的 per-call/per-session usage（`src/records/store.ts` sumUsage），按卡片/模型/日期聚合，可选价格表换算成本。
 
 备选未选：服务端会话 sessionId 续写（brainstorm_followup 免传 turns）、Admin API 鉴权 + per-provider 并发限流。另注：theodorstorm/brainstorm-mcp 已归档（agent 协调原型），真正对标 brainstorm 的是 spranab/brainstorm-mcp。
+
+
+## Session 7: 议事增强 P1——投票透明化与推理策略（council-enhancement）
+
+**Date**: 2026-09-13
+**Task**: council-enhancement（P1：投票聚合落盘 + reasoningStrategy）
+**Branch**: `master`
+
+### Summary
+
+基于竞品深抓研究（tavily 5 项目，沉淀于任务 research/competitor-deep-dive.md）落地 P1：brainstorm 互评投票改为每会话一条聚合 vote 事件（voterCardId/votedForAlias/reason，理由截断 200 字），报告新增「投票明细」小节，admin Records 兼容新旧两种 vote shape 渲染；ExpertConfig 增可选 reasoningStrategy（systematic/adversarial/backward），经 strategy.ts 的 applyReasoningStrategy 统一注入 system prompt，缺省路径逐字节不变（toBe 引用断言）。实现中发现并替换了 HEAD 1378969 遗留的旧版逐专家 vote 事件，顺带修复 vote-prompt-fix 会话 2 处坏断言。190 测试通过后检查（pass-with-notes，仅 P3），按 PRD 实际展示层级修订 D3 措辞（报告用别名、admin 用真实卡名）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `98ec22e` | feat(council): 投票聚合落盘、投票明细报告与推理策略注入 |
+| `90c97ca` | feat(admin-web): 投票明细渲染与专家推理策略编辑 |
+| `a7bbc40` | chore(task): council-enhancement 任务文档与竞品研究沉淀 |
+| `dd21081` | docs(spec): 前后端共享值域常量约定与 admin 保存无校验已知限制 |
+
+### Testing
+
+- [OK] npm test 190 passed（14 文件）；npm run typecheck 通过；npm --prefix admin-web run build 通过
+
+### Status
+
+[OK] **Completed**（已归档 archive/2026-09/）
+
+### Next Steps
+
+- 真实模型跑一次 vote 开启的 brainstorm，观察 votedForAlias 文本解析命中率
+- P2/P3 方向见 Session 8 与 prd-draft.md
+
+
+## Session 8: 议事增强 P2——信号路由选卡、工具开关与模型分级（council-enhancement-p2）
+
+**Date**: 2026-09-13
+**Task**: council-enhancement-p2（P2-A/B + P3-B tier；Q1=A/Q2=B/Q3=A 已拍板）
+**Branch**: `master`
+
+### Summary
+
+新增 src/tools/signal-routing.ts（10 个内置信号组 + 中英双语关键词表 + matchSignals/selectCardsBySignals，general 卡永远可候选）；consult_experts/brainstorm 增 optional `select:"auto"` 参数（显式 cards 优先并注明忽略、零命中回退默认卡并在 notes 注明、缺省路径逐字节不变）；config.disabledTools 支持禁用非核心工具（核心 list_cards/consult_experts/brainstorm 禁用即 loadConfig 报错，followup 可禁用不注册，server.ts 另有注册守卫兜底）；ModelConfig.tier（1-100 可选正整数）仅用于 admin ModelsPage/ModelPicker 稳定排序展示。admin CardsPage 增信号标签 chip 编辑（SIGNAL_GROUPS 前端副本与后端互指注释）。216 测试通过，检查 pass-with-notes（3 条 P3：general-only notes 措辞、admin 保存无 zod 校验的预先存在限制、server.ts 缩进）。runs 并集与 provider preset 留 backlog。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0527411` | feat(council): 信号路由自动选卡、工具开关与模型分级 |
+| `8bc0680` | feat(admin-web): 信号标签编辑与模型分级排序 |
+| `000cdfb` | chore(task): council-enhancement-p2 任务文档（信号路由选卡/工具开关/tier） |
+
+### Testing
+
+- [OK] npm test 216 passed（16 文件）；npm run typecheck 通过；npm --prefix admin-web run build 通过
+
+### Status
+
+[OK] **Completed**（已归档 archive/2026-09/）
+
+### Next Steps
+
+- backlog：P3-A runs 并集+稳定性标注（建议等 P1 投票真实使用反馈）、P3-C provider preset
+- admin API 保存配置无 zod 校验的即时反馈（spec 已记录该限制）
