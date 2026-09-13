@@ -264,3 +264,35 @@ Completed the 00-bootstrap-guidelines task by filling 12 backend and frontend sp
 
 - backlog：P3-A runs 并集+稳定性标注（建议等 P1 投票真实使用反馈）、P3-C provider preset
 - admin API 保存配置无 zod 校验的即时反馈（spec 已记录该限制）
+
+
+## Session 9: 投票轮 prompt 修复接手收尾——AC4 真实验证（vote-prompt-fix）
+
+**Date**: 2026-09-13
+**Task**: vote-prompt-fix（接手并行会话的 in_progress 任务做 AC4 闭环后归档）
+**Branch**: `master`
+
+### Summary
+
+接手 vote-prompt-fix：其代码改动（VOTE_INSTRUCTION 禁自投+限长、own 标注行头前移）已随 1378969/98ec22e 入库（与 council-enhancement P1 同文件交织），缺的是 AC4 修复后真实验证。用 npx tsx 直调 handleBrainstorm 以与修复前 peer-review-judge 验证完全一致的参数（同 topic、debate 2 轮、性能专家+情感顾问、judgeCard=安全专家、vote=true）真实跑通：**零自投**（修复前双双自投）、票文约 90 字无标题（修复前 500+ 字多级标题）、own 标注误认未复现，AC4 通过。证据追加至 scripts/vote-report.md「修复后真实验证」节 + 任务目录 ac4-after-run.md 全实录。遗留 P3：专家A 用裸代号「B」导致 votedForAlias 解析显示「未识别代号」占位（可放宽正则接受 bare A-Z 作后续小改进）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `be945f4` | docs(vote): vote-prompt-fix 修复后 AC4 真实验证证据（零自投+票文限长达标） |
+| `98ec22e` | (fix 代码本体，随 council P1 提交) |
+| `1378969` | (投票特性本体，并行会话提交) |
+
+### Testing
+
+- [OK] AC4 真实验证通过（同参数对比：零自投 + 票文限长达标）；修复代码已包含在 216 测试全绿的回归范围内
+
+### Status
+
+[OK] **Completed**（已归档 archive/2026-09/）
+
+### Next Steps
+
+- P3 小改进：votedForAlias 解析放宽接受裸代号（A/B/C）
+- P3-A runs 并集立项时可直接引用本次验证的投票质量基线
