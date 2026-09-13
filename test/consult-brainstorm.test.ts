@@ -26,6 +26,10 @@ vi.mock("../src/providers/registry.js", () => ({
 
 import { handleConsultExperts } from "../src/tools/consult-experts.js";
 import { handleBrainstorm } from "../src/tools/brainstorm.js";
+import {
+  REASONING_STRATEGY_INSTRUCTIONS,
+  applyReasoningStrategy,
+} from "../src/orchestrator/strategy.js";
 
 const ENV_KEYS = [
   "OPENAI_API_KEY",
@@ -383,10 +387,12 @@ expect(result.isError).not.toBe(true);
     expect(types.filter((t) => t === "turn")).toHaveLength(4);
     expect(types.filter((t) => t === "round_end")).toHaveLength(2);
     expect(types).toContain("summary");
+    // 红线（R3）：不开 vote 的会话 JSONL 无 vote 行
+    expect(types.filter((t) => t === "vote")).toHaveLength(0);
     expect(events.at(-1)!.type).toBe("done");
   });
 
-  it("vote=true 时记录含 vote 事件行（位于 round_end 与 summary 之间）", async () => {
+  it("vote=true 时记录含一条按轮聚合的 vote 事件（round_end 后、summary 前）", async () => {
     clearKeys();
     process.env.OPENAI_API_KEY = "sk-test";
     const adapter = makeEchoAdapter();
@@ -407,13 +413,30 @@ expect(result.isError).not.toBe(true);
 
     const events = await readEvents(sess.id);
     const types = events.map((e) => e.type);
-    expect(types.filter((t) => t === "vote")).toHaveLength(2);
+    // D2：按轮聚合，每轮一条（投票轮发生在全部内容轮后 → 恰好 1 条）
+    expect(types.filter((t) => t === "vote")).toHaveLength(1);
     const lastRoundEnd = types.lastIndexOf("round_end");
-    const firstVote = types.indexOf("vote");
+    const voteIdx = types.indexOf("vote");
     const summaryIdx = types.indexOf("summary");
-    expect(firstVote).toBeGreaterThan(lastRoundEnd);
-    expect(firstVote).toBeLessThan(summaryIdx);
+    expect(voteIdx).toBeGreaterThan(lastRoundEnd);
+    expect(voteIdx).toBeLessThan(summaryIdx);
     expect(events.at(-1)!.type).toBe("done");
+
+    // 字段完整性（AC1）：round + votes[].voterCardId/votedForAlias/reason
+    const voteEvent = events[voteIdx] as {
+      round: number;
+      votes: Array<{ voterCardId: string; votedForAlias: string; reason: string }>;
+    };
+    expect(voteEvent.round).toBe(1);
+    expect(voteEvent.votes).toHaveLength(2);
+    const byCard = new Map(voteEvent.votes.map((v) => [v.voterCardId, v]));
+    // echo adapter 的票文含匿名实录：投票者跳过自己 → 投给另一位专家的代号
+    expect(byCard.get("c-architect")?.votedForAlias).toBe("专家B");
+    expect(byCard.get("c-reviewer")?.votedForAlias).toBe("专家A");
+    for (const v of voteEvent.votes) {
+      expect(typeof v.reason).toBe("string");
+      expect(v.reason.length).toBeGreaterThan(0);
+    }
   });
 });
 
@@ -440,6 +463,10 @@ describe("互评投票与裁决者（task 09-13-peer-review-judge）", () => {
     expect(text).toContain("代号对照");
     expect(text).toContain("专家A=architect");
     expect(text).toContain("专家B=reviewer");
+    // 投票明细（P1-A）：投票汇总小节后逐票一行 `投票者 → 被投代号：理由`
+    expect(text).toContain("### 投票明细");
+    expect(text).toContain("专家A → 专家B：");
+    expect(text).toContain("专家B → 专家A：");
     // 报告的投票段落不出现专家名原文（匿名代号呈现）
     expect(text).toContain("**轮数:** 1");
   });
@@ -517,3 +544,93 @@ async function createSession(
 ): Promise<RecordSession | null> {
   return startSession({ tool, prompt: "x" }, recDir);
 }
+
+describe("推理策略注入（task 09-13-council-enhancement P1-B）", () => {
+  it("applyReasoningStrategy：default/缺省/未知值返回原字符串引用（逐字节一致红线）", () => {
+    const base = "你是专家";
+    expect(applyReasoningStrategy(base)).toBe(base);
+    expect(applyReasoningStrategy(base, "default")).toBe(base);
+    expect(applyReasoningStrategy(base, "not-a-strategy")).toBe(base);
+    expect(applyReasoningStrategy(base, "")).toBe(base);
+  });
+
+  it("applyReasoningStrategy：systematic/adversarial/backward 末尾追加 \\n\\n + 指令", () => {
+    const base = "你是专家";
+    for (const s of ["systematic", "adversarial", "backward"] as const) {
+      expect(applyReasoningStrategy(base, s)).toBe(
+        `${base}\n\n${REASONING_STRATEGY_INSTRUCTIONS[s]}`
+      );
+    }
+  });
+
+  it("consult：strategy=adversarial 的专家 system prompt 含对抗式指令", async () => {
+    clearKeys();
+    process.env.OPENAI_API_KEY = "sk-test";
+    const adapter = makeEchoAdapter();
+    const config = councilConfig(adapter);
+    config.experts[0] = makeExpert("architect", { reasoningStrategy: "adversarial" });
+
+    const result = await handleConsultExperts(
+      { question: "x", cards: ["c-architect"] },
+      config
+    );
+    expect(result.isError).not.toBe(true);
+    expect(adapter.calls).toHaveLength(1);
+    const sys = adapter.calls[0]!.messages[0]!;
+    expect(sys.role).toBe("system");
+    expect(sys.content.startsWith("你是 architect\n\n")).toBe(true);
+    expect(sys.content).toContain(REASONING_STRATEGY_INSTRUCTIONS.adversarial);
+  });
+
+  it("consult：缺省专家 system prompt 与基线逐字节一致（快照断言）", async () => {
+    clearKeys();
+    process.env.OPENAI_API_KEY = "sk-test";
+    // 无策略
+    const plain = makeEchoAdapter();
+    await handleConsultExperts(
+      { question: "x", cards: ["c-architect"] },
+      councilConfig(plain)
+    );
+    // 显式 default
+    const defaulted = makeEchoAdapter();
+    const cfg2 = councilConfig(defaulted);
+    cfg2.experts[0] = makeExpert("architect", { reasoningStrategy: "default" });
+    await handleConsultExperts(
+      { question: "x", cards: ["c-architect"] },
+      cfg2
+    );
+
+    const baseline = "你是 architect";
+    expect(plain.calls[0]!.messages[0]!.content).toBe(baseline);
+    expect(defaulted.calls[0]!.messages[0]!.content).toBe(baseline);
+    // 消息序列形状不变：system + user 两条
+    expect(plain.calls[0]!.messages).toHaveLength(2);
+  });
+
+  it("brainstorm：strategy=systematic 的专家各轮 system prompt 均注入指令", async () => {
+    clearKeys();
+    process.env.OPENAI_API_KEY = "sk-test";
+    const adapter = makeEchoAdapter();
+    const config = councilConfig(adapter);
+    config.experts[0] = makeExpert("architect", { reasoningStrategy: "systematic" });
+
+    const result = await handleBrainstorm(
+      {
+        topic: "落地路径",
+        cards: ["c-architect", "c-reviewer"],
+        rounds: 1,
+        summarize: false,
+      },
+      config
+    );
+    expect(result.isError).not.toBe(true);
+    // 第 1 次调用 = architect 种子轮
+    const sys = adapter.calls[0]!.messages[0]!;
+    expect(sys.role).toBe("system");
+    expect(sys.content).toBe(
+      `你是 architect\n\n${REASONING_STRATEGY_INSTRUCTIONS.systematic}`
+    );
+    // 未配置策略的 reviewer 不受影响
+    expect(adapter.calls[1]!.messages[0]!.content).toBe("你是 reviewer");
+  });
+});

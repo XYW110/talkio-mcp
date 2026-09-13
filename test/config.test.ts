@@ -221,6 +221,28 @@ describe("loadConfig", () => {
     });
   });
 
+  describe("reasoningStrategy（P1-B，council-enhancement）", () => {
+    it("合法枚举值加载通过；缺省字段不出现在解析产物中", async () => {
+      const raw = JSON.parse(makeValidExpertsJson()) as {
+        experts: Array<{ id: string; reasoningStrategy?: string }>;
+      };
+      raw.experts[0]!.reasoningStrategy = "adversarial";
+      const config = await loadConfig(writeFixture(JSON.stringify(raw)));
+
+      expect(config.experts[0]!.reasoningStrategy).toBe("adversarial");
+      // 旧 experts.json（无该字段）可加载，且 zod 产物不新增缺省键
+      expect(config.experts[1]).not.toHaveProperty("reasoningStrategy");
+    });
+
+    it("非法枚举值报校验错误", async () => {
+      const raw = JSON.parse(makeValidExpertsJson()) as {
+        experts: Array<{ id: string; reasoningStrategy?: string }>;
+      };
+      raw.experts[0]!.reasoningStrategy = "chaotic";
+      await expect(loadConfig(writeFixture(JSON.stringify(raw)))).rejects.toThrow();
+    });
+  });
+
   describe("旧格式迁移", () => {
     it("检测到旧格式自动迁移并写回，生成 .bak 备份", async () => {
       const filePath = writeFixture(makeLegacyExpertsJson());

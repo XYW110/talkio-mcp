@@ -60,6 +60,11 @@ const expertSchema = z.object({
   timeoutMs: z.number().int().positive(),
   enabled: z.boolean().default(true),
   builtin: z.boolean().default(false),
+  // 可选推理策略（P1-B）：旧 experts.json 无此字段照常加载；非法值报校验错误。
+  // 普通 optional（不用 .default）保证缺省时 zod 产物不新增该键，序列化文件保持干净。
+  reasoningStrategy: z
+    .enum(["systematic", "adversarial", "backward", "default"])
+    .optional(),
 });
 
 const modelSchema = z.object({

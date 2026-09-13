@@ -18,6 +18,7 @@ import { redactPII } from "../utils/redact.js";
 import { defaultLogger, type Logger } from "../utils/log.js";
 import type { StreamNotifier } from "../utils/notify.js";
 import type { ResolvedCard } from "../tools/select-cards.js";
+import { applyReasoningStrategy } from "./strategy.js";
 
 /** Per-card outcome of a single-round consultation. */
 export interface ConsultationItem {
@@ -47,8 +48,13 @@ export function buildTargetMessages(
   context?: string
 ): ChatMessage[] {
   const messages: ChatMessage[] = [];
-  if (target.expert.systemPrompt) {
-    messages.push({ role: "system", content: target.expert.systemPrompt });
+  // 推理策略（P1-B）：default/缺省时返回原串引用，prompt 逐字节不变。
+  const systemPrompt = applyReasoningStrategy(
+    target.expert.systemPrompt,
+    target.expert.reasoningStrategy
+  );
+  if (systemPrompt) {
+    messages.push({ role: "system", content: systemPrompt });
   }
   const userContent =
     context && context.trim().length > 0

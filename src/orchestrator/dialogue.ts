@@ -31,6 +31,7 @@ import {
   exceedsBudget,
   type SummaryState,
 } from "./context-compressor.js";
+import { applyReasoningStrategy } from "./strategy.js";
 
 /** A single turn in the dialogue transcript. */
 export interface DialogueTurn {
@@ -86,8 +87,28 @@ export interface DialogueResult {
   votes?: DialogueTurn[];
   /** 代号映射（R2）：报告对照表 / 投票摘要渲染用；与 votes 一同返回。 */
   aliases?: DialogueAlias[];
+  /** 结构化投票结果（P1-A）：vote 开启且至少一票成功时返回。 */
+  roundVotes?: RoundVotes;
   /** 裁决者信息（R3）：报告综合段标注用；未提供 judgeCard 时缺省。 */
   judgeInfo?: { cardId: string; cardName: string; fallback?: boolean };
+}
+
+/** 单张选票（P1-A 结构化中间结果；voterCardId 仅落盘用，展示一律走别名）。 */
+export interface VoteBallot {
+  /** 投票者真实卡 id（JSONL 内部映射，与 card_result 同等可见级别）。 */
+  voterCardId: string;
+  /** 投票者匿名别名（如 "专家A"，报告用）。 */
+  voterAlias: string;
+  /** 被投者别名；无法从票文识别时为空串。 */
+  votedForAlias: string;
+  /** 投票理由原文（截断到 ~200 字符，超长加省略号）。 */
+  reason: string;
+}
+
+/** 每轮投票结果（P1-A/D2：投票轮发生在全部内容轮后，round = 内容轮数）。 */
+export interface RoundVotes {
+  round: number;
+  ballots: VoteBallot[];
 }
 
 // --- Prompt templates (exported for unit testing) -----------------------
@@ -108,9 +129,11 @@ export const RELAY_INSTRUCTION =
 export const SUMMARIZER_SYSTEM =
   "你是一位中立的讨论主持人。请基于以下完整的讨论实录,客观总结各方达成的共识、仍存在的分歧,以及可执行的下一步建议。用 Markdown 输出。";
 
-/** 投票轮指令（R1）：注入在匿名实录之后，要求每位专家给出互评投票。 */
+/** 投票轮指令（R1）：注入在匿名实录之后，要求每位专家给出互评投票。
+ * 禁自投 + 限长：真实验证发现模型会投自己且票文过长（vote-prompt-fix），
+ * 匿名制下自投等于无效票，票文过长会让投票段退化成第三轮发言。 */
 export const VOTE_INSTRUCTION =
-  "以上是本次讨论的完整实录（已匿名）。请指出你最认同哪位专家（代号）的观点及理由,并简述你是否修正了自己的立场。";
+  "以上是本次讨论的完整实录（已匿名，标注【你的发言】的行是你本人的观点）。请投票：选出你最认同的一位其他专家（代号），不得投给你自己。150 字以内，直接给出专家代号与核心理由，并一句话说明你是否修正了自己的立场；不要展开论述，不要使用标题。";
 
 // --- Token budget constants ---------------------------------------------
 
@@ -126,6 +149,34 @@ function truncateForSummary(content: string): string {
   const trimmed = content.trim();
   if (trimmed.length <= FALLBACK_SUMMARY_TRUNCATE_CHARS) return trimmed;
   return trimmed.slice(0, FALLBACK_SUMMARY_TRUNCATE_CHARS) + "…";
+}
+
+/** 选票理由摘录上限（P1-A design：~200 字符，超长加省略号）。 */
+const BALLOT_REASON_TRUNCATE_CHARS = 200;
+
+/** Truncate a vote's raw text into the ballot reason excerpt. */
+function truncateBallotReason(content: string): string {
+  const trimmed = content.trim();
+  if (trimmed.length <= BALLOT_REASON_TRUNCATE_CHARS) return trimmed;
+  return trimmed.slice(0, BALLOT_REASON_TRUNCATE_CHARS) + "…";
+}
+
+/**
+ * 从票文中解析被投者代号（P1-A）：按出现顺序找到第一个「不是投票者本人」的
+ * 已知别名。匿名实录中投票者自己的行带 own 标注且排在最前，真实票文里
+ * 提及的第一个他人代号即被投者；识别失败返回空串（调用方按未识别展示）。
+ */
+export function parseVotedForAlias(
+  content: string,
+  voterAlias: string,
+  knownAliases: string[]
+): string {
+  const known = new Set(knownAliases);
+  const matches = content.match(/专家[A-Z]/g) ?? [];
+  for (const m of matches) {
+    if (known.has(m) && m !== voterAlias) return m;
+  }
+  return "";
 }
 
 // --- Internal helpers ----------------------------------------------------
@@ -162,10 +213,12 @@ function anonymizeTurnCopies(
     if (t.expertName && t.expertName !== alias) {
       content = content.split(t.expertName).join(alias);
     }
-    if (viewerExpertId !== undefined && t.expertId === viewerExpertId) {
-      content = `${content}（这是你自己的发言）`;
-    }
-    return { ...t, expertName: alias, icon: "", content };
+    // own 标注进 expertName（行头）：真实验证发现尾部追加会被长发言淹没。
+    const name =
+      viewerExpertId !== undefined && t.expertId === viewerExpertId
+        ? `${alias} · 你的发言`
+        : alias;
+    return { ...t, expertName: name, icon: "", content };
   });
 }
 
@@ -224,22 +277,23 @@ export function formatTranscriptForPrompt(
       truncated = true;
     }
     let header: string;
-    let ownMark = "";
     if (anonymize) {
       const alias = aliasById.get(turn.expertId) ?? turn.expertName; // 映射缺失兜底
       if (turn.expertName && turn.expertName !== alias) {
         text = text.split(turn.expertName).join(alias);
       }
-      header = `【${alias}】(第${turn.round}轮)`;
-      if (viewerExpertId !== undefined && turn.expertId === viewerExpertId) {
-        ownMark = "（这是你自己的发言）";
-      }
+      // own 标注进行头（vote-prompt-fix）：尾部追加在长发言下不够显眼。
+      const ownSuffix =
+        viewerExpertId !== undefined && turn.expertId === viewerExpertId
+          ? " · 你的发言"
+          : "";
+      header = `【${alias}${ownSuffix}】(第${turn.round}轮)`;
     } else {
       // icon 为空的匿名副本（压缩器输入走本分支）渲染为 "【代号】" 而非 "【 代号】"。
       const iconPrefix = turn.icon ? `${turn.icon} ` : "";
       header = `【${iconPrefix}${turn.expertName}】(第${turn.round}轮)`;
     }
-    lines.push(`${header}: ${text}${ownMark}`);
+    lines.push(`${header}: ${text}`);
   }
   let block = lines.join("\n\n");
   if (block.length > TRANSCRIPT_BUDGET_CHARS) {
@@ -269,8 +323,13 @@ export async function askExpert(
   }
   const { adapter, creds } = resolved;
   const messages: ChatMessage[] = [];
-  if (target.expert.systemPrompt) {
-    messages.push({ role: "system", content: target.expert.systemPrompt });
+  // 推理策略（P1-B）：default/缺省时返回原串引用，prompt 逐字节不变。
+  const systemPrompt = applyReasoningStrategy(
+    target.expert.systemPrompt,
+    target.expert.reasoningStrategy
+  );
+  if (systemPrompt) {
+    messages.push({ role: "system", content: systemPrompt });
   }
   // Privacy: mask rule-based PII before anything leaves for the LLM.
   messages.push({ role: "user", content: redactPII(userContent) });
@@ -656,6 +715,28 @@ export async function runDialogue(
   if (votes.length > 0) {
     result.votes = votes;
     result.aliases = aliases;
+    // 结构化投票结果（P1-A）：别名解析 + 被投代号识别，供 JSONL 落盘与报告明细。
+    const aliasByExpertId = new Map(aliases.map((a) => [a.expertId, a.alias]));
+    const cardIdByExpertId = new Map(
+      targets.map((t) => [t.expert.id, t.card.id])
+    );
+    const knownAliases = aliases.map((a) => a.alias);
+    result.roundVotes = {
+      round: rounds,
+      ballots: votes.map((v) => {
+        const voterAlias = aliasByExpertId.get(v.expertId) ?? v.expertName;
+        return {
+          voterCardId: cardIdByExpertId.get(v.expertId) ?? v.expertId,
+          voterAlias,
+          votedForAlias: parseVotedForAlias(
+            v.content,
+            voterAlias,
+            knownAliases
+          ),
+          reason: truncateBallotReason(v.content),
+        };
+      }),
+    };
   }
   // 裁决者信息（R3）：报告综合段标注用；无效时标注 fallback。
   if (opts.judge) {

@@ -780,10 +780,11 @@ describe("互评投票与匿名化（task 09-13-peer-review-judge）", () => {
     return { events, notifier: (e: StreamEvent) => void events.push(e) };
   }
 
-  it("VOTE_INSTRUCTION 导出且含「代号」「认同」关键字", () => {
+  it("VOTE_INSTRUCTION 含禁自投与限长约束（vote-prompt-fix）", () => {
     expect(typeof VOTE_INSTRUCTION).toBe("string");
-    expect(VOTE_INSTRUCTION).toContain("代号");
-    expect(VOTE_INSTRUCTION).toContain("认同");
+    expect(VOTE_INSTRUCTION).toContain("不得投给你自己");
+    expect(VOTE_INSTRUCTION).toContain("150 字以内");
+    expect(VOTE_INSTRUCTION).toContain("你的发言");
   });
 
   it("buildAliases：按 targets 顺序分配 专家A/B/…", () => {
@@ -815,7 +816,7 @@ describe("互评投票与匿名化（task 09-13-peer-review-judge）", () => {
     expect(block).not.toContain("专家-a");
     expect(block).not.toContain("专家-b");
     expect(block).not.toContain("🤖");
-    expect(block).toContain("【专家A】(第1轮): 甲的观点（这是你自己的发言）");
+    expect(block).toContain("【专家A · 你的发言】(第1轮): 甲的观点");
     expect(block).toContain("【专家B】(第1轮): 乙的观点");
     // 匿名关闭时保持旧行为（名称+图标行头，无 own 标注）
     const plain = formatTranscriptForPrompt(turns);
@@ -860,10 +861,13 @@ describe("互评投票与匿名化（task 09-13-peer-review-judge）", () => {
       expect(p).not.toContain("专家-a");
       expect(p).not.toContain("专家-b");
       expect(p).not.toContain("🤖");
-      expect(p).toContain("【专家A】");
-      expect(p).toContain("【专家B】");
-      expect(p).toContain("（这是你自己的发言）");
+      // 自己的行带 own 标注，他人的行为普通代号
+      expect(p).toMatch(/【专家[AB] · 你的发言】/);
+      expect(p).toMatch(/【专家[AB]】/);
     }
+    // own 标注逐阅读者生效：两个 prompt 各自恰好有一行带自己的 own 标注
+    expect(round2.filter((p) => p.includes("【专家A · 你的发言】"))).toHaveLength(1);
+    expect(round2.filter((p) => p.includes("【专家B · 你的发言】"))).toHaveLength(1);
   });
 
   it("压缩路径注入同样匿名：概要输入与最新轮实录均为代号，无专家名/icon", async () => {
@@ -891,20 +895,22 @@ describe("互评投票与匿名化（task 09-13-peer-review-judge）", () => {
     expect(compressorInput).not.toContain("专家-a");
     expect(compressorInput).not.toContain("专家-b");
     expect(compressorInput).not.toContain("🤖");
-    // 第 2 轮注入（概要 + 最新轮完整实录）同样匿名，own 标注生效
+    // 第 2 轮注入（概要 + 最新轮完整实录）同样匿名，own 标注逐阅读者生效
     const round2 = seen.slice(3, 5);
     expect(round2).toHaveLength(2);
     for (const p of round2) {
       expect(p).toContain("【对话概要");
       expect(p).toContain("第1轮概要内容XYZ");
       expect(p).toContain("最近发言完整实录:");
-      expect(p).toContain("【专家A】");
-      expect(p).toContain("【专家B】");
       expect(p).not.toContain("专家-a");
       expect(p).not.toContain("专家-b");
       expect(p).not.toContain("🤖");
-      expect(p).toContain("（这是你自己的发言）");
+      // 自己的行带 own 标注，他人的行为普通代号
+      expect(p).toMatch(/【专家[AB] · 你的发言】/);
+      expect(p).toMatch(/【专家[AB]】/);
     }
+    expect(round2.filter((p) => p.includes("【专家A · 你的发言】"))).toHaveLength(1);
+    expect(round2.filter((p) => p.includes("【专家B · 你的发言】"))).toHaveLength(1);
   });
 
   it("vote=true + debate：独立 votes（round=0），投票 prompt 匿名，发 brainstorm.vote 通知", async () => {
@@ -934,7 +940,8 @@ describe("互评投票与匿名化（task 09-13-peer-review-judge）", () => {
       expect(p).not.toContain("专家-a");
       expect(p).not.toContain("专家-b");
     }
-    expect(votePrompts[0]).toContain("（这是你自己的发言）");
+    expect(votePrompts[0]).toContain("【专家A · 你的发言】");
+    expect(votePrompts[0]).not.toContain("【专家B · 你的发言】");
     expect(events.some((e) => e.type === "brainstorm.vote")).toBe(true);
   });
 

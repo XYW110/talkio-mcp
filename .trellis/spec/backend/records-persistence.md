@@ -61,7 +61,7 @@ export function createXxxTool(deps?: { notifier?: StreamNotifier; record?: Recor
 | `card_result` | `cardId, ok, content?, error?, usage?` | consult 每张卡 |
 | `turn` | `round, expertId, expertName, icon, content, usage?` | brainstorm/followup 每轮 |
 | `round_end` | `round, total` | brainstorm/followup 每轮结束 |
-| `vote` | `expertId, expertName, icon, content, usage?` | brainstorm 议事质量包（peer-review-judge）：`vote: true` 时内容轮结束后的互评投票轮，每位专家一行；additive，旧记录无此类型，消费端需容错 |
+| `vote` | `round, votes: { voterCardId, votedForAlias, reason }[]` | brainstorm 议事质量包（peer-review-judge + council-enhancement P1-A）：`vote: true` 时内容轮结束后的互评投票，**按轮聚合一条**（投票轮发生在全部内容轮后 → 恰好 1 条，`round` = 内容轮数）；`voterCardId` 供内部映射，展示一律走匿名别名；additive，旧记录为逐专家行 shape（`expertId/expertName/icon/content`），读侧需容错 |
 | `summary` | `content` | brainstorm/followup 启用总结时 |
 | `done` | `status, report?, usage?`（+`ts`） | finish；`status ∈ ok/partial/all_failed/no_cards/error` |
 

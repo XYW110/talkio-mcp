@@ -44,6 +44,11 @@ export interface ExpertConfig {
   enabled: boolean;
   /** 是否为内置专家（随系统分发，不可删除，仅可启停/编辑） */
   builtin: boolean;
+  /**
+   * 可选推理策略（P1-B，council-enhancement）：注入到 system prompt 末尾的
+   * 差异化指令；缺省 / "default" 时不追加任何内容（system prompt 逐字节不变）。
+   */
+  reasoningStrategy?: "systematic" | "adversarial" | "backward" | "default";
 }
 
 /** 单个模型配置 —— 只定义「用什么引擎」，挂在 Provider 下、与专家无关 */

@@ -56,11 +56,12 @@ export type RecordEvent =
     }
   | {
       type: "vote";
-      expertId: string;
-      expertName: string;
-      icon: string;
-      content: string;
-      usage?: UsageRecord;
+      round: number;
+      votes: {
+        voterCardId: string;
+        votedForAlias: string;
+        reason: string;
+      }[];
     }
   | { type: "round_end"; round: number; total: number }
   | { type: "summary"; content: string };

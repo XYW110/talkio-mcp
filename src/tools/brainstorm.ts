@@ -146,22 +146,22 @@ export async function handleBrainstorm(
   const record = deps?.record;
   record?.append({ type: "cards", cards: toCardRefs(selection.selected) });
 
-  const { turns, summary, votes, aliases, judgeInfo } = await runDialogue(
-    opts,
-    config
-  );
+  const { turns, summary, votes, aliases, roundVotes, judgeInfo } =
+    await runDialogue(opts, config);
 
   // 按轮次分组实录：turn 行 + 轮边界 round_end 行 + 可选 summary 行。
   recordTurns(record, turns, rounds);
-  // 投票轮（R1）：独立 vote 事件行（不占 turn/round 语义）。
-  for (const v of votes ?? []) {
+  // 投票轮（P1-A/D2）：按轮聚合一条 vote 事件（round + 结构化选票数组）；
+  // 投票者用 voterCardId 内部映射，展示层一律走匿名别名。不开 vote 无 vote 行。
+  if (roundVotes && roundVotes.ballots.length > 0) {
     record?.append({
       type: "vote",
-      expertId: v.expertId,
-      expertName: v.expertName,
-      icon: v.icon,
-      content: v.content,
-      usage: v.usage,
+      round: roundVotes.round,
+      votes: roundVotes.ballots.map((b) => ({
+        voterCardId: b.voterCardId,
+        votedForAlias: b.votedForAlias,
+        reason: b.reason,
+      })),
     });
   }
   if (summary !== undefined) {
@@ -172,6 +172,7 @@ export async function handleBrainstorm(
     formatBrainstormReport(args.topic, mode, rounds, turns, summary, {
       votes,
       aliases,
+      roundVotes,
       judgeInfo,
     }) + formatSelectionNotes(selection, DEFAULT_CARD_LIMIT);
 

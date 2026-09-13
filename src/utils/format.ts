@@ -5,7 +5,11 @@
  * into Markdown, making them trivially unit-testable.
  */
 import type { ConsultationItem } from "../orchestrator/parallel.js";
-import type { DialogueTurn, DialogueAlias } from "../orchestrator/dialogue.js";
+import type {
+  DialogueTurn,
+  DialogueAlias,
+  RoundVotes,
+} from "../orchestrator/dialogue.js";
 
 /** Build the Markdown consultation report (design §3.1). */
 export function formatConsultReport(
@@ -96,6 +100,8 @@ export interface BrainstormReportExtras {
   votes?: DialogueTurn[];
   /** 代号映射：投票逐条匿名展示 + 末尾代号↔专家对照表。 */
   aliases?: DialogueAlias[];
+  /** 结构化投票结果（P1-A）：渲染「投票明细」小节；为空时省略。 */
+  roundVotes?: RoundVotes;
   /** 裁决者标注：综合段标题注明裁决卡或回退。 */
   judgeInfo?: { cardId: string; cardName: string; fallback?: boolean };
 }
@@ -140,6 +146,19 @@ export function formatBrainstormReport(
       .join("、");
     if (mapping) {
       lines.push(`> 代号对照：${mapping}`);
+      lines.push("");
+    }
+    // 投票明细（P1-A）：在投票汇总小节后新增结构化逐票一行
+    // `专家A → 专家B：理由摘录`；被投代号未识别时以占位符呈现。
+    const roundVotes = extras?.roundVotes;
+    if (roundVotes && roundVotes.ballots.length > 0) {
+      lines.push("### 投票明细");
+      lines.push("");
+      for (const b of roundVotes.ballots) {
+        lines.push(
+          `- ${b.voterAlias} → ${b.votedForAlias || "（未识别代号）"}：${b.reason}`,
+        );
+      }
       lines.push("");
     }
   }
