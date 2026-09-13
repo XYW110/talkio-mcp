@@ -113,3 +113,18 @@ vi.mock('../src/providers/registry.js', () => ({
   "test:watch": "vitest"
 }
 ```
+
+### 5. 前后端共享值域常量（Convention）
+
+**What**：当某个值域同时被后端（zod 校验/业务逻辑）与 admin-web（表单选项/展示）使用时（例：`SIGNAL_GROUPS` 信号组，分别位于 `src/tools/signal-routing.ts` 与 `admin-web/src/types.ts`），后端文件是**唯一权威来源**，前端放常量副本并在两处注释**互指对方**。
+
+**Why**：前端无法 import 后端运行时代码；不加互指注释，新增枚举值时极易只改一边，导致「admin 能选出但后端 zod 拒绝」或反向的静默漂移。
+
+**How to apply**：
+1. 新增/修改值域时，先改后端常量，再同步前端副本与显示名映射；
+2. check 阶段机械 diff 两处常量数组（id 与顺序）；
+3. zod 校验必须以 `z.enum(常量数组)` 引用，禁止在 zod 里手写重复字面量。
+
+### 6. 已知限制：admin 保存配置不做 zod 校验
+
+`src/admin/api.ts` 的配置写入端点保存请求体时不执行 zod 校验——非法值（如越界 `tier`、未知 `signals`）会落盘成功，直到下次 `loadConfig`（服务重启）才以 fatal error 暴露。这是刻意的快速失败设计（服务端权威校验），但意味着 **admin UI 无保存即时反馈**。若要在 admin 侧加即时校验，需把 zod schema 同步到前端（无法共享运行时代码），属独立任务范畴。
