@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "图标替换涉及组件 props 与新依赖引入规范"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端规范入口"}

@@ -59,10 +59,12 @@ export function createXxxTool(deps?: { notifier?: StreamNotifier; record?: Recor
 | `meta` | `type, id, tool, startedAt, prompt, context?, mode?, rounds?, degraded?, prevTurnsCount?` | `startSession` |
 | `cards` | `cards: RecordCardRef[]` | consult/brainstorm/followup 选卡后 |
 | `card_result` | `cardId, ok, content?, error?, usage?` | consult 每张卡 |
-| `turn` | `round, expertId, expertName, icon, content, usage?` | brainstorm/followup 每轮 |
-| `round_end` | `round, total` | brainstorm/followup 每轮结束 |
-| `vote` | `round, votes: { voterCardId, votedForAlias, reason }[]` | brainstorm 议事质量包（peer-review-judge + council-enhancement P1-A）：`vote: true` 时内容轮结束后的互评投票，**按轮聚合一条**（投票轮发生在全部内容轮后 → 恰好 1 条，`round` = 内容轮数）；`voterCardId` 供内部映射，展示一律走匿名别名；additive，旧记录为逐专家行 shape（`expertId/expertName/icon/content`），读侧需容错 |
-| `summary` | `content` | brainstorm/followup 启用总结时 |
+| `turn` | `round, expertId, expertName, icon, content, usage?`（+`run?`，P3-A） | brainstorm/followup 每轮 |
+| `round_end` | `round, total`（+`run?`，P3-A） | brainstorm/followup 每轮结束 |
+| `vote` | `round, votes: { voterCardId, votedForAlias, reason }[]`（+`run?`，P3-A） | brainstorm 议事质量包（peer-review-judge + council-enhancement P1-A）：`vote: true` 时内容轮结束后的互评投票，**按轮聚合一条**（投票轮发生在全部内容轮后 → 恰好 1 条，`round` = 内容轮数）；`voterCardId` 供内部映射，展示一律走匿名别名；additive，旧记录为逐专家行 shape（`expertId/expertName/icon/content`），读侧需容错 |
+| `summary` | `content`（+`run?`，P3-A） | brainstorm/followup 启用总结时 |
+
+**`run` 字段（council-enhancement P3-A）**：brainstorm `runs > 1` 时，turn/round_end/vote/summary 事件带 `run: number`（1 起）区分多轮运行；**runs 缺省或 =1 时所有事件不带 `run` 键**（缺省字段不落盘红线，等价性测试锚定）。读侧对 `run` 缺失/存在都要容错；admin SessionDetailView 以 `R{n}` 徽标渲染。
 | `done` | `status, report?, usage?`（+`ts`） | finish；`status ∈ ok/partial/all_failed/no_cards/error` |
 
 ### 环境变量 / 目录装配
@@ -127,3 +129,33 @@ record?.append({ type: "card_result", cardId, ok, content, error, usage });
 - **`askExpert` 返回值形状**：`dialogue.ts` 的 `askExpert` 返回 `{ content: string; usage?: UsageRecord }`（不是 string）。任何新调用点必须解构 `.content` / `.usage` —— 漏改会在 typecheck 暴露，但若用 `String(await askExpert(...))` 会静默产出 `[object Object]` 记录。
 - **同秒会话排序**：session id 时间戳前缀精确到秒，同一秒内多个会话的顺序由 4 位随机 hex 决定——测试与 UI 均不得假设"后创建 = 列表在前"。
 - **flush 语义**：写入是单条 tail-promise 链串行化；只有 `flush()` 能确定性等待全部落盘（测试读文件前必调）。不要在主流程 `await flush()`——主流程从不等待记录。
+
+## 8. Brainstorm runs 契约（council-enhancement P3-A，2026-09-13）
+
+### Signatures
+- `BrainstormArgs.runs?: 1 | 2 | 3`（zod `z.union([z.literal(1), z.literal(2), z.literal(3)])`；缺省 1）。
+- `DialogueOptions.aliasRotation?: number`（确定性轮换 `rotate(run-1)`；offset=0 必须返回原引用）。
+
+### Contracts
+- `runs > 1`：完整重跑 N 次对话，每次别名映射不同；结束后**一次**合并调用（merger = `judge ?? debateTargets[0]`，与 summarize 总结者同源），结论去重合并并标 `[K/N RUNS]` 稳定性。
+- 报告：头注 `（runs=N）`（仅 N>1）+ 新「多轮稳定性」小节（`formatRunsSection`）。
+- `finish.usage` = 全部 runs 的 turns+votes+合并调用 归并（合并调用失败无 usage 可计，固有限制）。
+
+### Validation & Error Matrix
+| 条件 | 行为 |
+| ---- | ---- |
+| `runs` 传 0/4/1.5/"2"/null | zod 拒绝（tools/list inputSchema 即枚举） |
+| 合并调用抛错 | `logger.warn`（脱敏）+ 回退「逐运行结论并列」；**不翻转 isError** |
+| runs 缺省或 =1 | 零额外调用、事件无 `run` 键、报告与改造前逐字节一致（兼容红线，测试锚定） |
+
+### Wrong vs Correct
+#### Wrong
+```ts
+// 用数组整体旋转别名——expertId↔alias 映射不变，等于没换（已踩过的坑）
+const rotated = [...aliases.slice(run - 1), ...aliases.slice(0, run - 1)];
+```
+#### Correct
+```ts
+// 固定专家顺序，只轮换代号字符串
+rotateAliases(experts, offset) // alias(architect) 在 run1=专家A、run2=专家B…
+```
