@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from "react";
+import { X } from "lucide-react";
 
 // ── snowapp 浮层：DrawerSheet（移动端底部滑入）/ DetailPanel（右侧 slide-over）──
 
@@ -96,7 +97,7 @@ export function DetailPanel({
             aria-label="关闭"
             className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg text-ink-faint hover:bg-hover"
           >
-            ✕
+            <X size={18} aria-hidden="true" />
           </button>
         </div>
         {/* body */}

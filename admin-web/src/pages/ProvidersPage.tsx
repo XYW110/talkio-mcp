@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Plug } from "lucide-react";
 import type { ProviderConfig } from "../types";
 import {
   Card,
@@ -9,7 +10,7 @@ import {
   MultiSelectToolbar,
   SelectCheckbox,
 } from "../components/ui";
-import { Button, SelectInput } from "../components/controls";
+import { Button, Chip, SelectInput } from "../components/controls";
 
 interface Props {
   providers: [string, ProviderConfig][];
@@ -18,15 +19,26 @@ interface Props {
   onDeleteMany: (names: string[]) => void;
 }
 
-// 常用 provider 预设（仿参照项目 ProviderEditPage 的 PRESETS）
-const PRESETS: Record<string, { label: string; baseUrl: string; type: ProviderConfig["type"] }> = {
-  deepseek: { label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", type: "openai-compatible" },
-  openai: { label: "OpenAI", baseUrl: "https://api.openai.com/v1", type: "openai" },
-  anthropic: { label: "Anthropic", baseUrl: "https://api.anthropic.com", type: "anthropic" },
-  openrouter: { label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", type: "openai-compatible" },
-  groq: { label: "Groq", baseUrl: "https://api.groq.com/openai/v1", type: "openai-compatible" },
-  ollama: { label: "Ollama", baseUrl: "http://localhost:11434/v1", type: "openai-compatible" },
-};
+/** 内置 provider 预设（P3-C，来源 PAL MCP 轻量化）：一键填充 baseUrl（type 固定
+ * openai-compatible）+ apiKeyEnv 建议值；只填充表单，不直接写盘（保存流程不变）。
+ * apiKeyEnv 为空 = 本地端点通常无需 key：保留表单当前值，仅给提示。 */
+interface ProviderPreset {
+  id: string;
+  label: string;
+  baseUrl: string;
+  apiKeyEnv: string;
+  hint: string;
+}
+
+const PROVIDER_PRESETS: ProviderPreset[] = [
+  { id: "ollama", label: "Ollama（本地）", baseUrl: "http://localhost:11434/v1", apiKeyEnv: "", hint: "本地通常无需真实 key：.env 中给该变量设任意占位值即可（如 OLLAMA_API_KEY=dummy）" },
+  { id: "lmstudio", label: "LM Studio（本地）", baseUrl: "http://localhost:1234/v1", apiKeyEnv: "", hint: "本地通常无需真实 key：.env 中给该变量设任意占位值即可" },
+  { id: "vllm", label: "vLLM", baseUrl: "http://localhost:8000/v1", apiKeyEnv: "", hint: "按部署配置 token；若部署未启用鉴权，同样可设占位值" },
+  { id: "openrouter", label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", apiKeyEnv: "OPENROUTER_API_KEY", hint: "已填充 OPENROUTER_API_KEY，真实 key 写入项目根目录 .env" },
+  { id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com", apiKeyEnv: "DEEPSEEK_API_KEY", hint: "已填充 DEEPSEEK_API_KEY，真实 key 写入项目根目录 .env" },
+  { id: "moonshot", label: "Moonshot", baseUrl: "https://api.moonshot.cn/v1", apiKeyEnv: "MOONSHOT_API_KEY", hint: "已填充 MOONSHOT_API_KEY，真实 key 写入项目根目录 .env" },
+  { id: "zhipu", label: "智谱", baseUrl: "https://open.bigmodel.cn/api/paas/v4", apiKeyEnv: "ZHIPU_API_KEY", hint: "已填充 ZHIPU_API_KEY，真实 key 写入项目根目录 .env" },
+];
 
 export function ProvidersPage({
   providers,
@@ -136,7 +148,7 @@ export function ProvidersPage({
 {/* 手机端：分组列表 */}
       <div className="flex-1 overflow-y-auto pb-6 md:hidden">
         {providers.length === 0 ? (
-          <EmptyState icon="🔌" title="还没有 provider" subtitle="点右上角 ＋ 新建" />
+          <EmptyState icon={<Plug size={40} />} title="还没有 provider" subtitle="点右上角 ＋ 新建" />
         ) : (
           <Card>
             {providers.map(([name, p], i) => (
@@ -176,7 +188,7 @@ export function ProvidersPage({
       {/* 桌面端（md+）：卡片网格 */}
       <div className="hidden flex-1 overflow-y-auto px-4 pb-6 md:block">
         {providers.length === 0 ? (
-          <EmptyState icon="🔌" title="还没有 provider" subtitle="点右上角 ＋ 新建" />
+          <EmptyState icon={<Plug size={40} />} title="还没有 provider" subtitle="点右上角 ＋ 新建" />
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {providers.map(([name, p]) => (
@@ -260,12 +272,23 @@ function ProviderEditOverlay({
 }) {
   const [name, setName] = useState(initial.name);
   const [value, setValue] = useState<ProviderConfig>(initial.value);
+  // 最近点击的预设提示（P3-C：apiKeyEnv 建议值 / 本地可留空说明）
+  const [presetHint, setPresetHint] = useState("");
 
-  const applyPreset = (key: string) => {
-    const p = PRESETS[key];
-    if (p) {
-      setValue({ ...value, baseUrl: p.baseUrl, type: p.type });
-    }
+  const applyPreset = (p: ProviderPreset) => {
+    // 只填充表单：编辑已有 provider 时即覆盖当前值（名称不动）；不触发保存。
+    setValue({
+      ...value,
+      baseUrl: p.baseUrl,
+      type: "openai-compatible",
+      ...(p.apiKeyEnv ? { apiKeyEnv: p.apiKeyEnv } : {}),
+    });
+    setPresetHint(
+      p.hint ||
+        (p.apiKeyEnv
+          ? `已填充 ${p.apiKeyEnv}，真实 key 写入项目根目录 .env`
+          : "")
+    );
   };
 
   const handleSave = () => {
@@ -320,25 +343,29 @@ function ProviderEditOverlay({
                     />
                   </div>
                 </Card>
-
-                <SectionLabel>快速填充</SectionLabel>
-                <Card>
-                  {Object.entries(PRESETS).map(([k, p], i) => (
-                    <button
-                      key={k}
-                      onClick={() => applyPreset(k)}
-                      className={`flex w-full items-center justify-between px-4 py-2.5 text-left hover:bg-hover ${
-                        i < Object.keys(PRESETS).length - 1 ? "border-b border-line" : ""
-                      }`}
-                    >
-                      <span className="text-[13px] text-ink">{p.label}</span>
-                      <span className="truncate pl-2 font-mono text-[12px] text-ink-faint">
-                        {p.baseUrl}
-                      </span>
-                    </button>
-                  ))}
-                </Card>
               </>
+            )}
+
+            <SectionLabel>快速填充</SectionLabel>
+            <Card>
+              <div className="flex flex-wrap gap-2 px-4 py-3">
+                {PROVIDER_PRESETS.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => applyPreset(p)}
+                    title={p.baseUrl}
+                    className="transition-opacity hover:opacity-80"
+                  >
+                    <Chip>{p.label}</Chip>
+                  </button>
+                ))}
+              </div>
+            </Card>
+            {presetHint && (
+              <p className="px-1 pt-1 text-[11px] leading-relaxed text-ink-faint">
+                {presetHint}
+              </p>
             )}
 
             <SectionLabel>配置</SectionLabel>

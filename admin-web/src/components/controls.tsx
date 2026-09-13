@@ -4,6 +4,7 @@ import type {
   ReactNode,
   SelectHTMLAttributes,
 } from "react";
+import { ChevronDown } from "lucide-react";
 
 // ── snowapp 控件层：Button / TextInput / SelectInput / Chip / Pill / NavTab ──
 // 皮肤规格见 .trellis/tasks/09-13-snowapp-restyle/research/components-inventory.md
@@ -63,9 +64,11 @@ export function SelectInput({ className = "", children, ...rest }: SelectInputPr
       >
         {children}
       </select>
-      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[12px] text-ink-faint">
-        ▾
-      </span>
+      <ChevronDown
+        size={14}
+        className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-ink-faint"
+        aria-hidden="true"
+      />
     </div>
   );
 }

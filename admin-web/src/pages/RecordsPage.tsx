@@ -1,4 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Bot,
+  Check,
+  ChevronRight,
+  CornerDownLeft,
+  FileText,
+  FolderClock,
+  Inbox,
+  Lightbulb,
+  LoaderCircle,
+  RefreshCw,
+  Stethoscope,
+  TriangleAlert,
+  Vote,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { api } from "../api";
 import type { RecordEvent, SessionMeta, UsageRecord } from "../types";
 import { Card, EmptyState, NavBar, SectionLabel } from "../components/ui";
@@ -10,11 +27,17 @@ const TOOL_LABEL: Record<string, string> = {
   brainstorm_followup: "追问",
 };
 
-const TOOL_ICON: Record<string, string> = {
-  consult_experts: "🩺",
-  brainstorm: "💡",
-  brainstorm_followup: "↩️",
+const TOOL_ICON: Record<string, LucideIcon> = {
+  consult_experts: Stethoscope,
+  brainstorm: Lightbulb,
+  brainstorm_followup: CornerDownLeft,
 };
+
+/** 记录行工具图标（未知工具兜底 FileText），颜色继承文字色。 */
+function ToolIcon({ tool, size = 20 }: { tool: string; size?: number }) {
+  const Icon = TOOL_ICON[tool] ?? FileText;
+  return <Icon size={size} className="shrink-0 text-ink-mid" aria-hidden="true" />;
+}
 
 const STATUS_LABEL: Record<string, string> = {
   ok: "成功",
@@ -189,7 +212,7 @@ export function RecordsPage({ onBack }: { onBack: () => void }) {
         onBack={onBack}
         right={
           <Button variant="icon" onClick={load} aria-label="刷新" title="刷新">
-            ⟳
+            <RefreshCw size={16} aria-hidden="true" />
           </Button>
         }
       />
@@ -205,12 +228,12 @@ export function RecordsPage({ onBack }: { onBack: () => void }) {
         <TextInput
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="🔍 搜索提问 / 工具 / 会话 id…"
+          placeholder="搜索提问 / 工具 / 会话 id…"
           aria-label="搜索会话记录"
         />
         {query && (
           <Button variant="ghost" onClick={() => setQuery("")} aria-label="清除搜索" className="px-2">
-            ✕
+            <X size={14} aria-hidden="true" />
           </Button>
         )}
       </div>
@@ -259,7 +282,7 @@ export function RecordsPage({ onBack }: { onBack: () => void }) {
               allSelected ? "border-info bg-info" : "border-line bg-island-strong"
             }`}
           >
-            {allSelected && <span className="text-[10px] leading-none text-on-solid">✓</span>}
+            {allSelected && <Check size={10} className="leading-none text-on-solid" aria-hidden="true" />}
           </span>
           全选
         </button>
@@ -288,12 +311,12 @@ export function RecordsPage({ onBack }: { onBack: () => void }) {
 
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         {loading ? (
-          <EmptyState icon="⏳" title="加载中…" />
+          <EmptyState icon={<LoaderCircle size={40} />} title="加载中…" />
         ) : error ? (
-          <EmptyState icon="⚠️" title="加载失败" subtitle={error} />
+          <EmptyState icon={<TriangleAlert size={40} />} title="加载失败" subtitle={error} />
         ) : filtered.length === 0 ? (
           <EmptyState
-            icon="🗂️"
+            icon={<FolderClock size={40} />}
             title={hasFilter ? "没有匹配的记录" : "还没有会话记录"}
             subtitle={hasFilter ? "换个条件试试" : "调用 MCP 工具后会自动落盘"}
           />
@@ -322,9 +345,9 @@ export function RecordsPage({ onBack }: { onBack: () => void }) {
                       background: checked ? "var(--accent-blue)" : "var(--surface-island-strong)",
                     }}
                   >
-                    {checked && <span className="text-[11px] leading-none text-on-solid">✓</span>}
+                    {checked && <Check size={12} className="leading-none text-on-solid" aria-hidden="true" />}
                   </button>
-                  <span className="shrink-0 text-xl">{TOOL_ICON[r.tool] ?? "📝"}</span>
+                  <ToolIcon tool={r.tool} />
                   <div className="min-w-0 flex-1">
                     <span className="block truncate text-[16px] font-medium text-ink">
                       {r.prompt}
@@ -335,7 +358,7 @@ export function RecordsPage({ onBack }: { onBack: () => void }) {
                       )}`}
                     </p>
                   </div>
-                  <span className="shrink-0 text-[18px] leading-none text-ink-faint">›</span>
+                  <ChevronRight size={16} className="shrink-0 text-ink-faint" aria-hidden="true" />
                 </div>
               );
             })}
@@ -388,7 +411,7 @@ function SessionDetailView({ id, onBack }: { id: string; onBack: () => void }) {
   if (error) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-ink-dim">
-        <span className="text-4xl opacity-40">⚠️</span>
+        <TriangleAlert size={40} className="opacity-40" aria-hidden="true" />
         <p>{error}</p>
         <button onClick={onBack} className="rounded-lg bg-hover px-4 py-2 text-[13px] text-ink-mid hover:bg-pressed">
           返回列表
@@ -447,7 +470,7 @@ function SessionDetailView({ id, onBack }: { id: string; onBack: () => void }) {
         {/* 事件流 */}
         <SectionLabel>事件流</SectionLabel>
         {body.length === 0 ? (
-          <EmptyState icon="📭" title="没有事件" subtitle="会话可能刚创建或无专家回复" />
+          <EmptyState icon={<Inbox size={40} />} title="没有事件" subtitle="会话可能刚创建或无专家回复" />
         ) : (
           <div className="space-y-2">
             {body.map((ev, i) => (
@@ -485,6 +508,12 @@ function SessionDetailView({ id, onBack }: { id: string; onBack: () => void }) {
       </div>
     </div>
   );
+}
+
+/** P3-A runs：多轮运行徽标（如 R2）；无 run 字段（旧 JSONL）不渲染。 */
+function RunBadge({ run }: { run?: number }) {
+  if (typeof run !== "number") return null;
+  return <Pill tone="info">R{run}</Pill>;
 }
 
 function InfoRow({ label, value, isLast }: { label: string; value: React.ReactNode; isLast: boolean }) {
@@ -561,8 +590,8 @@ function EventItem({
   if (event.type === "turn") {
     return (
       <div className="flex gap-2.5">
-        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-hover text-base">
-          {event.icon || "🤖"}
+        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-hover text-ink-mid">
+          {event.icon || <Bot size={16} aria-hidden="true" />}
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -570,6 +599,7 @@ function EventItem({
             <span className="rounded bg-hover px-1.5 py-0.5 text-[10px] text-ink-dim">
               第 {event.round} 轮
             </span>
+            <RunBadge run={event.run} />
             {event.usage && (
               <span className="ml-auto text-[11px] text-ink-faint">{fmtUsage(event.usage)}</span>
             )}
@@ -590,8 +620,9 @@ function EventItem({
       return (
         <Card>
           <div className="px-4 py-2.5">
-            <p className="text-[13px] text-ink-faint">
+            <p className="flex items-center gap-2 text-[13px] text-ink-faint">
               互评投票（第 {event.round} 轮后 · {event.votes.length} 票）
+              <RunBadge run={event.run} />
             </p>
             <div className="mt-2 space-y-1.5">
               {event.votes.map((v, i) => (
@@ -614,8 +645,8 @@ function EventItem({
     // 旧版逐专家一行（仅旧 JSONL 存在）：与 turn 同构的简单展示。
     return (
       <div className="flex gap-2.5">
-        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-hover text-base">
-          {event.icon || "🗳️"}
+        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-hover text-ink-mid">
+          {event.icon || <Vote size={16} aria-hidden="true" />}
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -639,8 +670,9 @@ function EventItem({
     return (
       <div className="flex items-center gap-3 py-1">
         <div className="h-px flex-1 bg-pressed" />
-        <span className="text-[11px] text-ink-faint">
+        <span className="flex items-center gap-2 text-[11px] text-ink-faint">
           第 {event.round} / {event.total} 轮结束
+          <RunBadge run={event.run} />
         </span>
         <div className="h-px flex-1 bg-pressed" />
       </div>
@@ -651,7 +683,10 @@ function EventItem({
     return (
       <Card>
         <div className="px-4 py-2.5">
-          <p className="text-[13px] text-ink-faint">总结</p>
+          <p className="flex items-center gap-2 text-[13px] text-ink-faint">
+            总结
+            <RunBadge run={event.run} />
+          </p>
           <pre className="mt-1 whitespace-pre-wrap break-words font-sans text-[13px] leading-relaxed text-ink-mid">
             {event.content}
           </pre>

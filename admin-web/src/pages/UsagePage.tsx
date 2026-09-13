@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { LoaderCircle, RefreshCw, TriangleAlert } from "lucide-react";
 import { api } from "../api";
 import type { UsageAggregate, UsageRecord } from "../types";
 import { Card, EmptyState, NavBar, SectionLabel } from "../components/ui";
@@ -157,7 +158,7 @@ export function UsagePage({ onBack }: { onBack: () => void }) {
               ¥
             </Button>
             <Button variant="icon" onClick={load} aria-label="刷新" title="刷新">
-              ⟳
+              <RefreshCw size={16} aria-hidden="true" />
             </Button>
           </div>
         }
@@ -165,9 +166,9 @@ export function UsagePage({ onBack }: { onBack: () => void }) {
 
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         {loading ? (
-          <EmptyState icon="⏳" title="加载中…" />
+          <EmptyState icon={<LoaderCircle size={40} />} title="加载中…" />
         ) : error ? (
-          <EmptyState icon="⚠️" title="加载失败" subtitle={error} />
+          <EmptyState icon={<TriangleAlert size={40} />} title="加载失败" subtitle={error} />
         ) : !data ? null : (
           <>
             {/* 顶部统计岛卡：总 token / 会话与调用 / 时间窗 */}

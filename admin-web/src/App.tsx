@@ -1,4 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
+import {
+  Bot,
+  Brain,
+  ChartNoAxesColumn,
+  ChevronLeft,
+  FolderClock,
+  House,
+  IdCard,
+  MessageCircle,
+  Plug,
+  Rocket,
+  Save,
+  Settings,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { api } from "./api";
 import type { CardConfig, ConfigFile, Expert, ModelConfig, ProviderConfig } from "./types";
 import { ExpertsPage } from "./pages/ExpertsPage";
@@ -35,8 +51,8 @@ function ErrorBanner({ msg, onClose }: { msg: string; onClose: () => void }) {
   return (
     <div className="fixed top-4 left-1/2 z-[100] flex -translate-x-1/2 items-center gap-3 rounded-xl bg-bad px-4 py-2.5 text-on-solid shadow-lg">
       <span className="text-sm">{msg}</span>
-      <button onClick={onClose} className="opacity-80 hover:opacity-100">
-        ✕
+      <button onClick={onClose} className="opacity-80 hover:opacity-100" aria-label="关闭">
+        <X size={14} aria-hidden="true" />
       </button>
     </div>
   );
@@ -235,7 +251,7 @@ const providers = Object.entries(config.providers) as [string, ProviderConfig][]
   // ── 首页菜单项（手机端分组列表 / 桌面端卡片网格共用）──
   const MENU_ITEMS: {
     page: Page;
-    icon: string;
+    icon: LucideIcon;
     title: string;
     count: number;
     unit: string;
@@ -243,7 +259,7 @@ const providers = Object.entries(config.providers) as [string, ProviderConfig][]
   }[] = [
     {
       page: { name: "experts" },
-      icon: "🤖",
+      icon: Bot,
       title: "专家",
       count: config.experts.length,
       unit: "位",
@@ -251,7 +267,7 @@ const providers = Object.entries(config.providers) as [string, ProviderConfig][]
     },
     {
       page: { name: "provider" },
-      icon: "🔌",
+      icon: Plug,
       title: "Provider",
       count: providers.length,
       unit: "个",
@@ -259,7 +275,7 @@ const providers = Object.entries(config.providers) as [string, ProviderConfig][]
     },
     {
       page: { name: "models" },
-      icon: "🧠",
+      icon: Brain,
       title: "模型",
       count: config.models.length,
       unit: "个",
@@ -267,7 +283,7 @@ const providers = Object.entries(config.providers) as [string, ProviderConfig][]
     },
     {
       page: { name: "cards" },
-      icon: "🎴",
+      icon: IdCard,
       title: "角色卡",
       count: config.cards.length,
       unit: "张",
@@ -275,7 +291,7 @@ const providers = Object.entries(config.providers) as [string, ProviderConfig][]
     },
     {
       page: { name: "records" },
-      icon: "🗂️",
+      icon: FolderClock,
       title: "会话记录",
       count: 0,
       unit: "",
@@ -283,7 +299,7 @@ const providers = Object.entries(config.providers) as [string, ProviderConfig][]
     },
     {
       page: { name: "usage" },
-      icon: "📊",
+      icon: ChartNoAxesColumn,
       title: "用量",
       count: 0,
       unit: "",
@@ -291,7 +307,7 @@ const providers = Object.entries(config.providers) as [string, ProviderConfig][]
     },
     {
       page: { name: "chat" },
-      icon: "🚀",
+      icon: Rocket,
       title: "发起群聊",
       count: 0,
       unit: "",
@@ -386,11 +402,13 @@ const editOverlay = editing && (
         {/* 手机端：岛内分组列表 */}
         <div className="md:hidden">
           <Card>
-            {MENU_ITEMS.map((m, i) => (
-              <ChevronRow
-                key={m.title}
-                onClick={() => setPage(m.page)}
-                icon={<span className="text-xl">{m.icon}</span>}
+            {MENU_ITEMS.map((m, i) => {
+              const MenuIcon = m.icon;
+              return (
+                <ChevronRow
+                  key={m.title}
+                  onClick={() => setPage(m.page)}
+                  icon={<MenuIcon size={20} className="shrink-0" aria-hidden="true" />}
                 title={m.title}
                 detail={
                   m.unit !== "" ? (
@@ -402,19 +420,22 @@ const editOverlay = editing && (
                 subtitle={m.subtitle}
                 isLast={i === MENU_ITEMS.length - 1}
               />
-            ))}
+              );
+            })}
           </Card>
         </div>
         {/* 桌面端（md+）：卡片网格 */}
 <div className="hidden md:grid md:grid-cols-2 md:gap-3 lg:grid-cols-4">
-          {MENU_ITEMS.map((m) => (
-            <button
-              key={m.title}
-              onClick={() => setPage(m.page)}
-              className="flex flex-col gap-2 rounded-xl border border-line bg-island-strong p-4 text-left shadow-sm transition-colors hover:bg-hover active:bg-pressed"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-2xl">{m.icon}</span>
+          {MENU_ITEMS.map((m) => {
+            const MenuIcon = m.icon;
+            return (
+              <button
+                key={m.title}
+                onClick={() => setPage(m.page)}
+                className="flex flex-col gap-2 rounded-xl border border-line bg-island-strong p-4 text-left shadow-sm transition-colors hover:bg-hover active:bg-pressed"
+              >
+                <div className="flex items-center justify-between">
+                  <MenuIcon size={24} className="text-ink-mid" aria-hidden="true" />
                 {m.unit !== "" && (
                   <span className="rounded bg-hover px-1.5 py-0.5 text-[11px] text-ink-dim">
                     {m.count} {m.unit}
@@ -426,7 +447,8 @@ const editOverlay = editing && (
                 <p className="mt-0.5 text-[13px] leading-relaxed text-ink-dim">{m.subtitle}</p>
               </div>
             </button>
-          ))}
+            );
+          })}
         </div>
 
         {/* Save bar — 手机端仅在首页显示；桌面端保存按钮在侧边栏 */}
@@ -475,7 +497,7 @@ const editOverlay = editing && (
               onClick={() => setPage({ name: "settings" })}
               className="flex min-h-[40px] items-center gap-1 rounded-md px-1.5 py-2 text-[13px] font-medium text-info-text active:bg-pressed"
             >
-              <span className="text-[16px] leading-none">‹</span>
+              <ChevronLeft size={16} className="shrink-0 leading-none" aria-hidden="true" />
               <span>返回总览</span>
             </button>
           </div>
@@ -494,14 +516,14 @@ const editOverlay = editing && (
       </div>
       {editOverlay}
 
-      {/* 移动端/平板档主题入口（桌面档走侧栏切换器）：⚙ → DrawerSheet 内同款切换控件 */}
+      {/* 移动端/平板档主题入口（桌面档走侧栏切换器）：Settings 图标 → DrawerSheet 内同款切换控件 */}
       <button
         type="button"
         onClick={() => setThemeOpen(true)}
         aria-label="主题设置"
         className="fixed bottom-4 right-4 z-30 flex h-11 w-11 items-center justify-center rounded-full border border-line bg-island-strong text-[17px] shadow-island transition-colors hover:bg-hover lg:hidden"
       >
-        ⚙️
+        <Settings size={20} aria-hidden="true" />
       </button>
       <div className="lg:hidden">
         <DrawerSheet open={themeOpen} onClose={() => setThemeOpen(false)} title="主题">
@@ -513,7 +535,7 @@ const editOverlay = editing && (
 }
 
 // ── PC 独立版布局：左侧固定侧边栏（md+ 显示）。
-// 三档：≥1024（lg）248px 完整栏；768~1023（md）64px 图标栏；<768 不渲染（顶栏岛 + 浮动 ⚙）──
+// 三档：≥1024（lg）248px 完整栏；768~1023（md）64px 图标栏；<768 不渲染（顶栏岛 + 浮动主题按钮）──
 
 function PcSidebar({
   page,
@@ -526,7 +548,7 @@ function PcSidebar({
   onNavigate: (p: Page) => void;
   menuItems: {
     page: Page;
-    icon: string;
+    icon: LucideIcon;
     title: string;
     count: number;
     unit: string;
@@ -536,15 +558,15 @@ function PcSidebar({
   onSave: () => void;
 }) {
   const navItems = [
-    { page: { name: "settings" } as Page, icon: "🏠", title: "总览", count: 0, unit: "" },
+    { page: { name: "settings" } as Page, icon: House, title: "总览", count: 0, unit: "" },
     ...menuItems,
   ];
   return (
     <aside className="island island-muted hidden w-16 flex-shrink-0 flex-col md:flex lg:w-[248px]">
-      {/* 品牌区（平板档只留 emoji 图标） */}
+      {/* 品牌区（平板档只留图标） */}
       <div className="border-b border-line px-2 py-4 text-center lg:px-5 lg:text-left">
         <p className="text-[15px] font-bold tracking-tight text-ink">
-          <span className="text-[18px]">💬</span>
+          <MessageCircle size={18} className="inline-block align-[-3px]" aria-hidden="true" />
           <span className="hidden lg:inline"> Talkio 管理</span>
         </p>
         <p className="mt-0.5 hidden text-[12px] text-ink-faint lg:block">AI 专家 · 模型 · 角色卡</p>
@@ -554,6 +576,7 @@ function PcSidebar({
       <nav className="flex-1 overflow-y-auto px-2.5 py-3">
         {navItems.map((item) => {
           const active = page.name === item.page.name;
+          const NavIcon = item.icon;
           return (
             <button
               key={item.title}
@@ -566,7 +589,7 @@ function PcSidebar({
                   : "text-ink-mid hover:bg-hover"
               }`}
             >
-              <span className="text-base leading-none">{item.icon}</span>
+              <NavIcon size={16} className="shrink-0 leading-none" aria-hidden="true" />
               <span className="hidden flex-1 text-[13px] lg:inline">{item.title}</span>
               {item.unit !== "" && (
                 <span
@@ -582,7 +605,7 @@ function PcSidebar({
         })}
       </nav>
 
-      {/* 主题切换（平板图标栏放不下，仅桌面档显示；移动端走浮动 ⚙ 抽屉） */}
+      {/* 主题切换（平板图标栏放不下，仅桌面档显示；移动端走浮动主题按钮抽屉） */}
       <div className="hidden border-t border-line px-4 py-3 lg:block">
         <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-ink-faint">
           主题
@@ -601,7 +624,7 @@ function PcSidebar({
         >
           <span className="hidden lg:inline">{dirty ? "保存配置 ●" : "保存配置"}</span>
           <span className="lg:hidden" aria-hidden="true">
-            💾
+            <Save size={16} />
           </span>
         </Button>
         <p className="mt-1.5 hidden text-center text-[11px] text-ink-faint lg:block">

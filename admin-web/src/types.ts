@@ -191,6 +191,8 @@ export type RecordEvent =
       icon: string;
       content: string;
       usage?: UsageRecord;
+      /** P3-A runs：多轮运行序号（从 1 开始）；旧 JSONL 无该字段 */
+      run?: number;
     }
   /** 新版 vote 事件（按轮聚合，P1-A）：每轮一条，结构化选票数组 */
   | {
@@ -202,6 +204,8 @@ export type RecordEvent =
         votedForAlias: string;
         reason: string;
       }[];
+      /** P3-A runs：多轮运行序号（从 1 开始）；旧 JSONL 无该字段 */
+      run?: number;
     }
   /** 旧版 vote 事件（逐专家一行，仅存在于旧 JSONL）：读侧容错保留 */
   | {
@@ -213,8 +217,8 @@ export type RecordEvent =
       content: string;
       usage?: UsageRecord;
     }
-  | { type: "round_end"; ts?: string; round: number; total: number }
-  | { type: "summary"; ts?: string; content: string }
+  | { type: "round_end"; ts?: string; round: number; total: number; /** P3-A runs */ run?: number }
+  | { type: "summary"; ts?: string; content: string; /** P3-A runs */ run?: number }
   | {
       type: "done";
       ts?: string;

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Check, MessageCircle, Rocket, TriangleAlert } from "lucide-react";
 import type { CardConfig } from "../types";
 import { api } from "../api";
 import { Card, SectionLabel } from "../components/ui";
@@ -144,7 +145,10 @@ es.addEventListener("error", (ev) => {
     <div className="h-full overflow-y-auto">
       <div className="mx-auto w-full max-w-4xl px-4 py-5">
         <div className="mb-1">
-          <h1 className="text-[20px] font-bold tracking-tight text-ink">💬 发起群聊</h1>
+          <h1 className="flex items-center gap-2 text-[20px] font-bold tracking-tight text-ink">
+            <MessageCircle size={20} aria-hidden="true" />
+            发起群聊
+          </h1>
           <p className="mt-0.5 text-[13px] text-ink-dim">
             填一个话题，选角色卡，让多位专家开会讨论并收敛总结
           </p>
@@ -181,7 +185,7 @@ es.addEventListener("error", (ev) => {
         {status === "error" && error && (
           <div className="mt-4 mb-4 rounded-xl border border-bad bg-bad-bg px-4 py-3">
             <div className="flex items-center gap-2 text-[14px] font-medium text-bad-text">
-              <span>⚠️</span> 群聊出错
+              <TriangleAlert size={16} aria-hidden="true" /> 群聊出错
             </div>
             <p className="mt-1 text-[13px] leading-relaxed text-bad-text">{error}</p>
           </div>
@@ -294,7 +298,9 @@ es.addEventListener("error", (ev) => {
                             background: checked ? "var(--accent-blue)" : "var(--surface-island-strong)",
                           }}
                         >
-                          {checked && <span className="text-[11px] leading-none text-on-solid">✓</span>}
+                          {checked && (
+                            <Check size={12} className="leading-none text-on-solid" aria-hidden="true" />
+                          )}
                         </span>
                         <span className="min-w-0">
                           <span className="block truncate text-[14px] font-medium text-ink">
@@ -317,7 +323,12 @@ es.addEventListener("error", (ev) => {
               disabled={busy || status === "running" || selected.size === 0}
               className="mt-5 w-full rounded-xl py-3 text-[14px] font-semibold"
             >
-              {status === "running" ? "群聊进行中…" : busy ? "正在发起…" : "🚀 发起群聊"}
+              {status === "running" ? "群聊进行中…" : busy ? "正在发起…" : (
+                <span className="inline-flex items-center gap-1.5">
+                  <Rocket size={16} aria-hidden="true" />
+                  发起群聊
+                </span>
+              )}
             </Button>
           </Card>
         </div>

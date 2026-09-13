@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Brain, ChevronRight } from "lucide-react";
 import type { ModelConfig, ProviderConfig, ThinkingLevel } from "../types";
 import { sortByTierDesc } from "../types";
 import {
@@ -147,7 +148,7 @@ export function ModelsPage({ models, providers, onUpsert, onDelete, onDeleteMany
 {/* Grouped list */}
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         {models.length === 0 ? (
-          <EmptyState icon="🧠" title="还没有模型" subtitle="点右上角 ＋ 新建你的第一个模型" />
+          <EmptyState icon={<Brain size={40} />} title="还没有模型" subtitle="点右上角 ＋ 新建你的第一个模型" />
         ) : (
 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
             {grouped.map(([providerId, list]) => (
@@ -220,8 +221,8 @@ function ModelRow({
         className="flex w-full items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-island-strong"
         style={{ borderBottom: isLast ? "none" : undefined }}
       >
-        <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-hover text-lg">
-          🧠
+        <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-hover text-ink-mid">
+          <Brain size={20} aria-hidden="true" />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -240,7 +241,7 @@ function ModelRow({
             </p>
           )}
         </div>
-        <span className="shrink-0 text-[18px] leading-none text-ink-faint">›</span>
+        <ChevronRight size={16} className="shrink-0 text-ink-faint" aria-hidden="true" />
       </button>
       <div className="flex shrink-0 items-center gap-2 px-2">
         <span

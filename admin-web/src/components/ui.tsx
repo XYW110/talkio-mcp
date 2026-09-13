@@ -1,4 +1,5 @@
 import { Fragment, type ReactNode } from "react";
+import { Check, ChevronLeft, ChevronRight } from "lucide-react";
 
 // ── 顶栏（snow-app 岛内顶栏：透明底 + hairline 下边线）──
 
@@ -17,7 +18,7 @@ export function NavBar({
         onClick={onBack}
         className="flex min-h-[40px] min-w-[64px] items-center gap-0.5 rounded-md px-1 py-2 text-[13px] font-medium text-info-text active:bg-pressed"
       >
-        <span className="text-[16px] leading-none">‹</span>
+        <ChevronLeft size={16} className="shrink-0 leading-none" aria-hidden="true" />
         <span>返回</span>
       </button>
       <span className="flex-1 text-center text-[15px] font-semibold text-ink">{title}</span>
@@ -80,7 +81,7 @@ export function ChevronRow({
           <p className="mt-0.5 truncate text-[12px] leading-relaxed text-ink-dim">{subtitle}</p>
         )}
       </div>
-      <span className="shrink-0 text-[16px] leading-none text-ink-faint">›</span>
+      <ChevronRight size={16} className="shrink-0 text-ink-faint" aria-hidden="true" />
     </button>
   );
 }
@@ -92,13 +93,14 @@ export function EmptyState({
   title,
   subtitle,
 }: {
-  icon: string;
+  /** Lucide 图标节点（颜色继承文字色，尺寸由调用方传 size，一般 40） */
+  icon: ReactNode;
   title: string;
   subtitle?: string;
 }) {
   return (
     <div className="flex flex-col items-center px-6 py-16 text-center">
-      <span className="mb-3 text-4xl opacity-40">{icon}</span>
+      <span className="mb-3 opacity-40">{icon}</span>
       <p className="text-[14px] font-medium text-ink-dim">{title}</p>
       {subtitle && <p className="mt-1 text-[12px] text-ink-faint">{subtitle}</p>}
     </div>
@@ -148,7 +150,7 @@ export function SelectCheckbox({
         checked ? "border-info bg-info" : "border-line bg-island-strong"
       }`}
     >
-      {checked && <span className="text-[11px] leading-none text-on-solid">✓</span>}
+      {checked && <Check size={12} className="leading-none text-on-solid" aria-hidden="true" />}
     </button>
   );
 }
@@ -192,7 +194,9 @@ export function MultiSelectToolbar({
             allSelected ? "border-info bg-info" : "border-line bg-island-strong"
           }`}
         >
-          {allSelected && <span className="text-[10px] leading-none text-on-solid">✓</span>}
+          {allSelected && (
+            <Check size={10} className="leading-none text-on-solid" aria-hidden="true" />
+          )}
         </span>
         全选
       </button>
@@ -277,13 +281,13 @@ export function SettingsRow({
   );
 }
 
-// ── BreadcrumbStrip：面包屑条（Home › Current，分隔符 text-faint）──
+// ── BreadcrumbStrip：面包屑条（Home > Current，分隔符 text-faint）──
 
 export function BreadcrumbStrip({ home, current }: { home: string; current: string }) {
   return (
     <div className="flex items-center gap-1.5 px-4 py-2 text-[12px]">
       <span className="text-ink-faint">{home}</span>
-      <span className="text-ink-faint">›</span>
+      <ChevronRight size={12} className="text-ink-faint" aria-hidden="true" />
       <span className="font-medium text-ink-dim">{current}</span>
     </div>
   );

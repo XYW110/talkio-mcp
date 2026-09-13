@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { ChevronRight, IdCard } from "lucide-react";
 import type { CardConfig, Expert, ModelConfig, ProviderConfig, SignalId } from "../types";
 import { SIGNAL_GROUPS, SIGNAL_GROUP_LABELS } from "../types";
 import {
@@ -143,7 +144,7 @@ export function CardsPage({
 {/* 手机端：iOS 分组列表 */}
       <div className="flex-1 overflow-y-auto pb-6 md:hidden">
         {cards.length === 0 ? (
-          <EmptyState icon="🎴" title="还没有角色卡" subtitle="点右上角 ＋ 新建第一张角色卡" />
+          <EmptyState icon={<IdCard size={40} />} title="还没有角色卡" subtitle="点右上角 ＋ 新建第一张角色卡" />
         ) : (
           <Card>
             {cards.map((c, i) => {
@@ -172,7 +173,7 @@ export function CardsPage({
       {/* 桌面端（md+）：卡片网格 */}
       <div className="hidden flex-1 overflow-y-auto px-4 pb-6 md:block">
         {cards.length === 0 ? (
-          <EmptyState icon="🎴" title="还没有角色卡" subtitle="点右上角 ＋ 新建第一张角色卡" />
+          <EmptyState icon={<IdCard size={40} />} title="还没有角色卡" subtitle="点右上角 ＋ 新建第一张角色卡" />
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {cards.map((c) => {
@@ -188,8 +189,8 @@ export function CardsPage({
                       onClick={() => toggleSelect(c.id)}
                     />
                     <button onClick={() => setEditing({ initial: c, isNew: false })} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-                      <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-hover text-lg">
-                        🎴
+                      <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-hover text-ink-mid">
+                        <IdCard size={20} aria-hidden="true" />
                       </span>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
@@ -278,8 +279,8 @@ function CardRow({
           isLast ? "" : "border-b border-line"
         }`}
       >
-        <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-hover text-lg">
-          🎴
+        <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-hover text-ink-mid">
+          <IdCard size={20} aria-hidden="true" />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -292,7 +293,7 @@ function CardRow({
           </p>
         </div>
         <span className="shrink-0 font-mono text-[11px] text-ink-faint">`{card.id}`</span>
-        <span className="shrink-0 text-[18px] leading-none text-ink-faint">›</span>
+        <ChevronRight size={16} className="shrink-0 text-ink-faint" aria-hidden="true" />
       </button>
       <div className="flex shrink-0 items-center gap-2 px-2">
         <span title={card.enabled ? "禁用" : "启用"}>

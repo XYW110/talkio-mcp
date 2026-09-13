@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Bot, ChevronRight, Search, X } from "lucide-react";
 import type { Expert } from "../types";
 import { EmptyState, MultiSelectToolbar, SelectCheckbox } from "../components/ui";
 import { Button, Pill, TextInput } from "../components/controls";
@@ -93,7 +94,7 @@ const filtered = useMemo(() => {
               aria-label="搜索"
               title="搜索"
             >
-              🔍
+              <Search size={16} aria-hidden="true" />
             </Button>
             <Button variant="icon" onClick={onAdd} aria-label="新建专家" title="新建专家">
               ＋
@@ -126,12 +127,12 @@ const filtered = useMemo(() => {
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="🔍 搜索名称 / id / 人设…"
+            placeholder="搜索名称 / id / 人设…"
             aria-label="搜索专家"
           />
           {query && (
             <Button variant="ghost" onClick={() => setQuery("")} aria-label="清除搜索" className="px-2">
-              ✕
+              <X size={14} aria-hidden="true" />
             </Button>
           )}
         </div>
@@ -141,9 +142,9 @@ const filtered = useMemo(() => {
       <div className="flex-1 overflow-y-auto pb-6 md:hidden">
         {filtered.length === 0 ? (
           query ? (
-            <EmptyState icon="🔍" title="没有匹配的专家" />
+            <EmptyState icon={<Search size={40} />} title="没有匹配的专家" />
           ) : (
-            <EmptyState icon="🤖" title="还没有专家" subtitle="点右上角 ＋ 新建你的第一位专家" />
+            <EmptyState icon={<Bot size={40} />} title="还没有专家" subtitle="点右上角 ＋ 新建你的第一位专家" />
           )
         ) : (
           <div className="pb-4">
@@ -168,9 +169,9 @@ const filtered = useMemo(() => {
       <div className="hidden flex-1 overflow-y-auto px-4 pb-6 md:block">
         {filtered.length === 0 ? (
           query ? (
-            <EmptyState icon="🔍" title="没有匹配的专家" />
+            <EmptyState icon={<Search size={40} />} title="没有匹配的专家" />
           ) : (
-            <EmptyState icon="🤖" title="还没有专家" subtitle="点右上角 ＋ 新建你的第一位专家" />
+            <EmptyState icon={<Bot size={40} />} title="还没有专家" subtitle="点右上角 ＋ 新建你的第一位专家" />
           )
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -264,7 +265,7 @@ function ExpertRow({
             {expert.enabled === false ? "已禁用" : "启用中"} · temperature={expert.temperature}
           </p>
         </div>
-        <span className="shrink-0 text-[16px] leading-none text-ink-faint">›</span>
+        <ChevronRight size={16} className="shrink-0 text-ink-faint" aria-hidden="true" />
       </button>
 {!expert.builtin && (
         <Button

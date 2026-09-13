@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { Check } from "lucide-react";
 import { api } from "../api";
 import { sortByTierDesc } from "../types";
 import type { ProbeModel, ProviderConfig } from "../types";
@@ -116,7 +117,7 @@ export function ModelPicker({
             <TextInput
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="🔍 搜索模型…"
+              placeholder="搜索模型…"
               autoFocus
               className="mb-2"
             />
@@ -150,7 +151,7 @@ export function ModelPicker({
                         <p className="truncate text-[11px] text-ink-faint">{m.ownedBy}</p>
                       )}
                     </div>
-                    {isSelected && <span className="text-info-text">✓</span>}
+                    {isSelected && <Check size={14} className="text-info-text" aria-hidden="true" />}
                   </button>
                 );
               })}
