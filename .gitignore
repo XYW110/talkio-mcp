@@ -12,3 +12,5 @@ admin-web/tsconfig.tsbuildinfo
 .codegraph/
 .zcode/
 temp/
+.mimosa/
+experts.json.bak*
