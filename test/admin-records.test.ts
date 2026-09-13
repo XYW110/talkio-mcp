@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -86,6 +86,46 @@ afterEach(async () => {
 });
 
 describe("admin API /api/records", () => {
+
+  it("带 run 字段的事件可正常读取；旧 JSONL（无 run 字段）回归不变", async () => {
+    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, config: stubConfig, logger });
+
+    // 新版（P3-A runs=2）：turn/round_end/vote/summary 事件带 run 字段
+    const sess = (await startSession({ tool: "brainstorm", prompt: "多轮" }, dir))!;
+    sess.append({ type: "turn", round: 1, expertId: "e1", expertName: "A", icon: "🤖", content: "c1", run: 1 });
+    sess.append({ type: "round_end", round: 1, total: 1, run: 1 });
+    sess.append({ type: "vote", round: 1, votes: [{ voterCardId: "c1", votedForAlias: "专家B", reason: "r" }], run: 1 });
+    sess.append({ type: "summary", content: "s1", run: 1 });
+    sess.append({ type: "turn", round: 1, expertId: "e1", expertName: "A", icon: "🤖", content: "c2", run: 2 });
+    sess.append({ type: "round_end", round: 1, total: 1, run: 2 });
+    sess.append({ type: "summary", content: "s2", run: 2 });
+    sess.finish({ status: "ok" });
+    await sess.flush();
+
+    const detRes = makeReqRes("GET", `/api/records/${sess.id}`);
+    expect(await handle(detRes.req, detRes.res)).toBe(true);
+    expect(detRes.status()).toBe(200);
+    const det = JSON.parse(detRes.body()) as { events: Array<Record<string, unknown>> };
+    const runEvents = det.events.filter((e) => typeof e.run === "number");
+    expect(runEvents.map((e) => e.run)).toEqual([1, 1, 1, 1, 2, 2, 2]);
+
+    // 旧版 JSONL：事件无 run 字段，原样透传（不报错、不新增键）
+    const legacyId = "20260101-000000-abcd";
+    const legacyLines = [
+      JSON.stringify({ type: "meta", id: legacyId, tool: "brainstorm", startedAt: "2026-01-01T00:00:00.000Z", prompt: "旧会话" }),
+      JSON.stringify({ type: "turn", round: 1, expertId: "e1", expertName: "A", icon: "🤖", content: "old" }),
+      JSON.stringify({ type: "round_end", round: 1, total: 1 }),
+      JSON.stringify({ type: "summary", content: "old-sum" }),
+      JSON.stringify({ type: "done", status: "ok" }),
+    ].join("\n") + "\n";
+    await writeFile(path.join(dir, `${legacyId}.jsonl`), legacyLines, "utf-8");
+    const legacyRes = makeReqRes("GET", `/api/records/${legacyId}`);
+    expect(await handle(legacyRes.req, legacyRes.res)).toBe(true);
+    expect(legacyRes.status()).toBe(200);
+    const legacy = JSON.parse(legacyRes.body()) as { events: Array<Record<string, unknown>> };
+    expect(legacy.events.map((e) => e.type)).toEqual(["meta", "turn", "round_end", "summary", "done"]);
+    for (const e of legacy.events) expect(e).not.toHaveProperty("run");
+  });
   it("GET /api/records 返回会话列表；GET /api/records/:id 返回事件流", async () => {
     const sess = (await startSession(
       { tool: "brainstorm", prompt: "主题A" },

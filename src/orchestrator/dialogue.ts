@@ -70,6 +70,11 @@ export interface DialogueOptions {
   judge?: ResolvedCard;
   /** judgeCard 提供但无效（不存在/禁用/缺 key）时的回退标注信息。 */
   judgeFallbackInfo?: { cardId: string; cardName: string };
+  /**
+   * 别名轮换偏移（P3-A runs）：把「卡 ↔ 匿名别名」映射整体旋转该偏移位，
+   * 使多次运行之间映射不同。缺省/0 = 恒等（与现状逐字节一致）。
+   */
+  aliasRotation?: number;
 }
 
 /** 匿名化代号映射（R2）：按 targets 顺序分配 专家A/B/…。 */
@@ -77,6 +82,22 @@ export interface DialogueAlias {
   alias: string;
   expertId: string;
   expertName: string;
+}
+
+/**
+ * 确定性别名轮换（P3-A runs）：把别名「代号」按专家顺序整体旋转 offset 位，
+ * 使多次运行之间「卡 ↔ 匿名别名」映射不同（run k 用 offset=k-1）。
+ * 只轮换代号字符串、保持 expertId 对位，确保映射真的变化；offset=0 或单卡时
+ * 返回原引用，保证 run=1 路径与现状逐字节一致。
+ */
+export function rotateAliases(
+  aliases: DialogueAlias[],
+  offset: number
+): DialogueAlias[] {
+  const n = aliases.length;
+  const k = ((Math.trunc(offset) % n) + n) % n;
+  if (n <= 1 || k === 0) return aliases;
+  return aliases.map((a, i) => ({ ...a, alias: aliases[(i + k) % n]!.alias }));
 }
 
 /** Result of runDialogue: ordered turns + optional summary. */
@@ -134,6 +155,16 @@ export const SUMMARIZER_SYSTEM =
  * 匿名制下自投等于无效票，票文过长会让投票段退化成第三轮发言。 */
 export const VOTE_INSTRUCTION =
   "以上是本次讨论的完整实录（已匿名，标注【你的发言】的行是你本人的观点）。请投票：选出你最认同的一位其他专家（代号），不得投给你自己。150 字以内，直接给出专家代号与核心理由，并一句话说明你是否修正了自己的立场；不要展开论述，不要使用标题。";
+
+/** 多轮 runs 合并调用系统提示（P3-A）：对 N 次运行的结论去重合并。 */
+export const RUNS_MERGE_SYSTEM =
+  "你是多轮议事合并器。你会收到同一主题的多次独立运行结论。请去重合并：语义相同的结论只保留一条，并在其前缀标注 [K/N RUNS]（K=该结论被提及的运行次数，N=总运行数）；仅出现一次的结论同样保留并标注。直接输出 Markdown 结论列表，不要额外解释。";
+
+/** 一次运行的结论（P3-A 合并调用输入项）。 */
+export interface RunSummaryEntry {
+  run: number;
+  summary: string;
+}
 
 // --- Token budget constants ---------------------------------------------
 
@@ -351,6 +382,51 @@ export async function askExpert(
 // --- Main engine ---------------------------------------------------------
 
 /**
+ * 多轮 runs 的合并调用（P3-A）：把 N 次运行的结论交给合并者（judge 优先，
+ * 否则第一张议事卡——与 summarize 路径总结者同规则）去重合并。失败时抛错，
+ * 由调用方回退为逐运行并列展示（不翻转 isError）。
+ */
+export async function mergeRunSummaries(
+  topic: string,
+  runSummaries: RunSummaryEntry[],
+  totalRuns: number,
+  merger: ResolvedCard,
+  config: AppConfig
+): Promise<AskExpertResult> {
+  const resolved = resolveProvider(merger.providerName, config);
+  if (!resolved) {
+    throw new Error(`未找到 provider 配置: "${merger.providerName}"`);
+  }
+  const { adapter, creds } = resolved;
+  const runBlocks = runSummaries
+    .map((s) => `--- 第 ${s.run} 次运行结论 ---\n${s.summary.trim()}`)
+    .join("\n\n");
+  const messages: ChatMessage[] = [
+    { role: "system", content: RUNS_MERGE_SYSTEM },
+    {
+      role: "user",
+      // Privacy: mask rule-based PII in the merge prompt too.
+      content: redactPII(
+        `讨论主题: ${topic}\n\n以下是对同一主题的 ${totalRuns} 次独立运行结论（共 ${runSummaries.length} 份）。请输出去重合并后的结论列表，每条结论前缀标注 [K/${totalRuns} RUNS]。\n\n${runBlocks}`
+      ),
+    },
+  ];
+  const params: ChatParams = {
+    model: merger.modelId,
+    messages,
+    temperature: merger.expert.temperature,
+    maxTokens: merger.expert.maxTokens,
+    timeoutMs: merger.expert.timeoutMs,
+    thinkingLevel: merger.thinkingLevel,
+  };
+  const result = await adapter.chat(params, creds);
+  if (!result || typeof result.content !== "string" || result.content.trim() === "") {
+    throw new Error("provider 返回了无效的合并结论");
+  }
+  return { content: result.content, usage: result.usage };
+}
+
+/**
  * Run a multi-round dialogue. See module docstring and design §6.
  *
  * rounds is clamped to [1, 5]. targets is used as-is (the tool layer enforces
@@ -374,7 +450,8 @@ export async function runDialogue(
   let summarizerFailed = false; // session-level: never retry after first fail
 
   // 匿名代号映射（R2）：按 targets 顺序分配 专家A/B/…；debate 轮间注入与投票轮共用。
-  const aliases = buildAliases(targets);
+  // P3-A runs：aliasRotation>0 时整体轮换映射，使多次运行之间映射不同（确定性）。
+  const aliases = rotateAliases(buildAliases(targets), opts.aliasRotation ?? 0);
 
   if (targets.length === 0 || rounds === 0) {
     return { turns };

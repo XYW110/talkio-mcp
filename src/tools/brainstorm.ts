@@ -11,10 +11,13 @@ import type { AppConfig } from "../types.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   runDialogue,
+  mergeRunSummaries,
   type DialogueOptions,
   type DialogueTurn,
 } from "../orchestrator/dialogue.js";
-import { formatBrainstormReport } from "../utils/format.js";
+import { formatBrainstormReport, formatRunsSection } from "../utils/format.js";
+import { defaultLogger } from "../utils/log.js";
+import { redactPII } from "../utils/redact.js";
 import type { RecordSession } from "../records/store.js";
 import { sumUsage } from "../records/store.js";
 import {
@@ -73,6 +76,12 @@ export const brainstormSchema = {
     .describe(
       "选卡策略：auto=按主题内容信号路由自动选卡；缺省按 cards/默认卡逻辑",
     ),
+  runs: z
+    .union([z.literal(1), z.literal(2), z.literal(3)])
+    .optional()
+    .describe(
+      "多轮运行次数:对同一主题完整重跑 N 次对话(每次轮换匿名别名)并去重合并结论,每条结论标注稳定性 [K/N RUNS];>1 时成本按倍数增长,建议配合 vote+debate 使用(默认 1)",
+    ),
 };
 
 /** Inferred argument type for the handler. */
@@ -85,6 +94,7 @@ export type BrainstormArgs = {
   vote?: boolean;
   judgeCard?: string;
   select?: "auto";
+  runs?: 1 | 2 | 3;
 };
 
 /**
@@ -155,41 +165,111 @@ export async function handleBrainstorm(
   const record = deps?.record;
   record?.append({ type: "cards", cards: toCardRefs(selection.selected) });
 
-  const { turns, summary, votes, aliases, roundVotes, judgeInfo } =
-    await runDialogue(opts, config);
-
-  // 按轮次分组实录：turn 行 + 轮边界 round_end 行 + 可选 summary 行。
-  recordTurns(record, turns, rounds);
-  // 投票轮（P1-A/D2）：按轮聚合一条 vote 事件（round + 结构化选票数组）；
-  // 投票者用 voterCardId 内部映射，展示层一律走匿名别名。不开 vote 无 vote 行。
-  if (roundVotes && roundVotes.ballots.length > 0) {
-    record?.append({
-      type: "vote",
-      round: roundVotes.round,
-      votes: roundVotes.ballots.map((b) => ({
-        voterCardId: b.voterCardId,
-        votedForAlias: b.votedForAlias,
-        reason: b.reason,
-      })),
-    });
+  // P3-A runs：多轮执行。runsTotal=1 时循环退化为单次、别名恒等、事件不带
+  // run 键、无合并调用——报告与事件流与现状逐字节一致（AC1 红线）。
+  const runsTotal = args.runs ?? 1;
+  interface RunOutcome {
+    run: number;
+    result: Awaited<ReturnType<typeof runDialogue>>;
   }
-  if (summary !== undefined) {
-    record?.append({ type: "summary", content: summary });
+  const runResults: RunOutcome[] = [];
+  for (let run = 1; run <= runsTotal; run++) {
+    // run=1 恒等映射；run k 轮换偏移 k-1（确定性 rotate，可测）。
+    const runOpts: DialogueOptions =
+      run === 1 ? opts : { ...opts, aliasRotation: run - 1 };
+    const result = await runDialogue(runOpts, config);
+    runResults.push({ run, result });
+
+    // 事件落盘：runsTotal>1 时四类事件带 run 字段（缺省不写键，对齐惯例）。
+    const runField = runsTotal > 1 ? run : undefined;
+    recordTurns(record, result.turns, rounds, runField);
+    if (result.roundVotes && result.roundVotes.ballots.length > 0) {
+      record?.append({
+        type: "vote",
+        round: result.roundVotes.round,
+        votes: result.roundVotes.ballots.map((b) => ({
+          voterCardId: b.voterCardId,
+          votedForAlias: b.votedForAlias,
+          reason: b.reason,
+        })),
+        ...(runField !== undefined ? { run: runField } : {}),
+      });
+    }
+    if (result.summary !== undefined) {
+      record?.append({
+        type: "summary",
+        content: result.summary,
+        ...(runField !== undefined ? { run: runField } : {}),
+      });
+    }
+  }
+
+  // 合并调用（仅 runsTotal>1 且存在 ≥1 份结论）：judge 优先，否则第一张
+  // 议事卡（与 summarize 路径总结者同规则）。失败回退并列展示，不翻转 isError。
+  const first = runResults[0]!.result;
+  const reportTurns = runResults.flatMap((r) => r.result.turns);
+  const reportVotes = runResults.flatMap((r) => r.result.votes ?? []);
+  let mergedSummary: string | undefined;
+  let mergeFailed = false;
+  let mergeUsage: { promptTokens?: number; completionTokens?: number } | undefined;
+  if (runsTotal > 1) {
+    const summaries = runResults
+      .map((r) => ({ run: r.run, summary: r.result.summary }))
+      .filter(
+        (s): s is { run: number; summary: string } =>
+          typeof s.summary === "string" && s.summary.trim() !== ""
+      );
+    const merger = judge ?? debateTargets[0];
+    if (summaries.length > 0 && merger) {
+      try {
+        const merged = await mergeRunSummaries(
+          args.topic,
+          summaries,
+          runsTotal,
+          merger,
+          config
+        );
+        mergedSummary = merged.content;
+        mergeUsage = merged.usage;
+      } catch (err) {
+        mergeFailed = true;
+        const msg = err instanceof Error ? err.message : String(err);
+        defaultLogger.warn(
+          `[runs] 合并调用失败，回退为逐运行结论并列展示: ${redactPII(msg)}`
+        );
+      }
+    } else {
+      mergeFailed = true;
+    }
   }
 
   const report =
-    formatBrainstormReport(args.topic, mode, rounds, turns, summary, {
-      votes,
-      aliases,
-      roundVotes,
-      judgeInfo,
-    }) + formatSelectionNotes(selection, DEFAULT_CARD_LIMIT);
+    formatBrainstormReport(args.topic, mode, rounds, first.turns, first.summary, {
+      votes: first.votes,
+      aliases: first.aliases,
+      roundVotes: first.roundVotes,
+      judgeInfo: first.judgeInfo,
+      ...(runsTotal > 1 ? { runsTotal } : {}),
+    }) +
+    (runsTotal > 1
+      ? formatRunsSection(
+          runsTotal,
+          runResults.map((r) => ({ run: r.run, summary: r.result.summary })),
+          mergedSummary,
+          mergeFailed
+        )
+      : "") +
+    formatSelectionNotes(selection, DEFAULT_CARD_LIMIT);
 
-  const isError = turns.length === 0;
+  const isError = first.turns.length === 0;
   record?.finish({
     status: isError ? "all_failed" : "ok",
     report,
-    usage: sumTurnsUsage([...turns, ...(votes ?? [])]),
+    usage: sumTurnsUsage([
+      ...reportTurns,
+      ...reportVotes,
+      ...(mergeUsage ? [{ usage: mergeUsage }] : []),
+    ]),
   });
 
   return {
@@ -207,13 +287,18 @@ function sumTurnsUsage(
   return acc;
 }
 
-/** 逐轮写 turn 行 + round_end 行（对齐 notifier 的轮粒度）。 */
+/**
+ * 逐轮写 turn 行 + round_end 行（对齐 notifier 的轮粒度）。
+ * run 传入时（P3-A runs>1）四类事件追加 run 字段；缺省不写键（AC1 红线）。
+ */
 function recordTurns(
   record: RecordSession | undefined,
   turns: DialogueTurn[],
-  rounds: number
+  rounds: number,
+  run?: number
 ): void {
   if (!record) return;
+  const runField = run !== undefined ? { run } : {};
   const byRound = new Map<number, DialogueTurn[]>();
   for (const t of turns) {
     const arr = byRound.get(t.round) ?? [];
@@ -231,8 +316,9 @@ function recordTurns(
         icon: t.icon,
         content: t.content,
         usage: t.usage,
+        ...runField,
       });
     }
-    record.append({ type: "round_end", round: r, total: rounds });
+    record.append({ type: "round_end", round: r, total: rounds, ...runField });
   }
 }

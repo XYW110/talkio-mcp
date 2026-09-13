@@ -104,6 +104,8 @@ export interface BrainstormReportExtras {
   roundVotes?: RoundVotes;
   /** 裁决者标注：综合段标题注明裁决卡或回退。 */
   judgeInfo?: { cardId: string; cardName: string; fallback?: boolean };
+  /** P3-A runs：多轮运行总数（>1 时报告头主题行追加 (runs=N)）。 */
+  runsTotal?: number;
 }
 
 /**
@@ -121,7 +123,9 @@ export function formatBrainstormReport(
   const lines: string[] = [];
   lines.push("## 专家头脑风暴实录");
   lines.push("");
-  lines.push(`**主题:** ${topic}`);
+  lines.push(
+    `**主题:** ${topic}${extras?.runsTotal ? `（runs=${extras.runsTotal}）` : ""}`
+  );
   lines.push(`**模式:** ${mode === "debate" ? "辩论" : "接龙"}`);
   lines.push(`**轮数:** ${rounds}`);
   lines.push("");
@@ -175,5 +179,58 @@ export function formatBrainstormReport(
     lines.push(summary.trim());
     lines.push("");
   }
+  return lines.join("\n");
+}
+
+/** formatRunsSection 的单次运行输入（P3-A）。 */
+export interface RunSectionEntry {
+  run: number;
+  summary?: string;
+}
+
+/** 「多轮稳定性」小节的每运行一行摘要截断长度。 */
+const RUN_LINE_TRUNCATE_CHARS = 80;
+
+/**
+ * 「多轮稳定性」小节（P3-A runs，仅 N>1 时由调用方拼入报告）：
+ * 每运行一行摘要 + 合并结论全文；合并失败时回退为逐运行结论并列展示。
+ */
+export function formatRunsSection(
+  runsTotal: number,
+  runs: RunSectionEntry[],
+  merged?: string,
+  mergeFailed?: boolean
+): string {
+  const lines: string[] = [];
+  lines.push(`### 多轮稳定性（runs=${runsTotal}）`);
+  lines.push("");
+  for (const r of runs) {
+    const firstLine = (r.summary ?? "（无总结）").trim().split("\n", 1)[0] ?? "";
+    const truncated =
+      firstLine.length > RUN_LINE_TRUNCATE_CHARS
+        ? firstLine.slice(0, RUN_LINE_TRUNCATE_CHARS) + "…"
+        : firstLine;
+    lines.push(`- Run ${r.run}：${truncated}`);
+  }
+  lines.push("");
+  if (merged !== undefined && merged.trim().length > 0) {
+    lines.push(merged.trim());
+  } else {
+    lines.push(
+      mergeFailed
+        ? "> ⚠️ 合并调用失败，以下为各次运行结论并列展示："
+        : "> ⚠️ 无可用结论可合并，以下为各次运行结论并列展示："
+    );
+    lines.push("");
+    for (const r of runs) {
+      if (r.summary !== undefined && r.summary.trim().length > 0) {
+        lines.push(`**Run ${r.run}**：`);
+        lines.push("");
+        lines.push(r.summary.trim());
+        lines.push("");
+      }
+    }
+  }
+  lines.push("");
   return lines.join("\n");
 }

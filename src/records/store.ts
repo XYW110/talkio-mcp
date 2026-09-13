@@ -53,6 +53,8 @@ export type RecordEvent =
       icon: string;
       content: string;
       usage?: UsageRecord;
+      /** P3-A runs：多轮运行的序号（从 1 开始）；单轮路径缺省不写键。 */
+      run?: number;
     }
   | {
       type: "vote";
@@ -62,9 +64,17 @@ export type RecordEvent =
         votedForAlias: string;
         reason: string;
       }[];
+      /** P3-A runs：多轮运行的序号（从 1 开始）；单轮路径缺省不写键。 */
+      run?: number;
     }
-  | { type: "round_end"; round: number; total: number }
-  | { type: "summary"; content: string };
+  | {
+      type: "round_end";
+      round: number;
+      total: number;
+      /** P3-A runs：多轮运行的序号（从 1 开始）；单轮路径缺省不写键。 */
+      run?: number;
+    }
+  | { type: "summary"; content: string; /** P3-A runs：同上。 */ run?: number };
 
 /** Terminal event payload. */
 export interface RecordFinish {
