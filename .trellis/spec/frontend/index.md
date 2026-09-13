@@ -20,6 +20,8 @@
    - 杜绝 `any` 的强依赖类型体系及接口边界防护。
 6. [代码质量与测试 (Quality & Testing)](./quality-guidelines.md)
    - 第三规则、错误处理红线及提交流程。
+7. [主题与设计 Token (Theming & Tokens)](./theming-tokens.md)
+   - snowapp 24 套主题的 token 单一真源管道（快照 + 生成脚本）与主题运行时契约（data-preset/data-theme）。
 
 ## 使用须知 (How to use)
 

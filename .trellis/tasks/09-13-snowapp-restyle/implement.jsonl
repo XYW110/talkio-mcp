@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端规范入口与开发前检查单"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "新增 10+ 组件须遵守组件规范"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "ThemeProvider/新组件 props 类型安全"}
+{"file": ".trellis/tasks/09-13-snowapp-restyle/research/components-inventory.md", "reason": "18 组件规格与 admin-web 映射决策"}
+{"file": ".trellis/tasks/09-13-snowapp-restyle/research/tokens-light.txt", "reason": "light 12 套 token 原始行（完整不截断）"}
+{"file": ".trellis/tasks/09-13-snowapp-restyle/research/tokens-dark.txt", "reason": "dark 12 套 token 原始行（完整不截断）"}
+{"file": ".trellis/tasks/09-13-snowapp-restyle/research/tokens-mapping.md", "reason": "变量映射规则与 FALLBACKS"}

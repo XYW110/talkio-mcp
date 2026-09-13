@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端质量检查入口"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "质检标准"}
+{"file": ".trellis/tasks/09-13-snowapp-restyle/research/tokens-mapping.md", "reason": "核对映射与回退规则"}
+{"file": ".trellis/tasks/09-13-snowapp-restyle/research/tokens-light.txt", "reason": "抽查 snow-light 生成值"}
