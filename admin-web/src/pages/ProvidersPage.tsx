@@ -9,6 +9,7 @@ import {
   MultiSelectToolbar,
   SelectCheckbox,
 } from "../components/ui";
+import { Button, SelectInput } from "../components/controls";
 
 interface Props {
   providers: [string, ProviderConfig][];
@@ -94,7 +95,8 @@ export function ProvidersPage({
             Provider
             <span className="ml-2 text-sm font-normal text-ink-faint">{providers.length} 个</span>
           </h1>
-          <button
+          <Button
+            variant="icon"
             onClick={() =>
               setEditing({
                 name: "",
@@ -106,11 +108,11 @@ export function ProvidersPage({
                 isNew: true,
               })
             }
-            className="flex h-8 w-8 items-center justify-center rounded-md text-info-text hover:bg-info-bg active:bg-pressed"
+            aria-label="新建 provider"
             title="新建 provider"
           >
             ＋
-          </button>
+          </Button>
         </div>
 <p className="text-[13px] text-ink-dim">
           配置 API 端点（自定义 URL + key 环境变量名）。真实 key 写在项目根目录 .env。
@@ -152,17 +154,19 @@ export function ProvidersPage({
                     isLast={i === providers.length - 1}
                   />
                 </div>
-                <button
+                <Button
+                  variant="danger-text"
+                  className="!h-auto shrink-0 px-2 py-0"
                   onClick={() => {
                     if (window.confirm(`删除 provider「${name}」？其下模型与引用它们的角色卡会一并删除。`)) {
                       onDelete(name);
                     }
                   }}
-                  className="flex shrink-0 items-center px-2 text-[13px] text-bad hover:opacity-80"
+                  aria-label="删除"
                   title="删除"
                 >
                   删除
-                </button>
+                </Button>
               </div>
             ))}
           </Card>
@@ -202,16 +206,17 @@ export function ProvidersPage({
                   <p className="truncate font-mono text-[11px] text-ink-faint">
                     环境变量 {p.apiKeyEnv}
                   </p>
-                  <button
+                  <Button
+                    variant="danger-text"
+                    className="!h-auto px-2 py-0"
                     onClick={() => {
                       if (window.confirm(`删除 provider「${name}」？其下模型与引用它们的角色卡会一并删除。`)) {
                         onDelete(name);
                       }
                     }}
-                    className="text-[13px] font-medium text-bad hover:opacity-80"
                   >
                     删除
-                  </button>
+                  </Button>
                 </div>
               </div>
             ))}
@@ -289,19 +294,13 @@ function ProviderEditOverlay({
           right={
             <div className="flex items-center gap-3">
               {!initial.isNew && (
-                <button
-                  onClick={onDelete}
-                  className="text-[13px] text-bad hover:opacity-80"
-                >
+                <Button variant="danger-text" className="!h-auto !px-0 py-0" onClick={onDelete}>
                   删除
-                </button>
+                </Button>
               )}
-              <button
-                onClick={handleSave}
-                className="rounded-md bg-ink px-3 py-1 text-[13px] font-semibold text-on-solid hover:bg-ink-mid"
-              >
+              <Button variant="primary" className="!h-8 !px-3 rounded-md" onClick={handleSave}>
                 保存
-              </button>
+              </Button>
             </div>
           }
         />
@@ -347,22 +346,18 @@ function ProviderEditOverlay({
               {/* type */}
               <div className="flex items-center border-b border-line px-4 py-3">
                 <span className="w-24 shrink-0 text-[13px] text-ink-dim">类型</span>
-                <div className="relative flex-1">
-                  <select
-                    value={value.type}
-                    onChange={(e) =>
-                      setValue({ ...value, type: e.target.value as ProviderConfig["type"] })
-                    }
-                    className="w-full appearance-none bg-transparent text-[13px] text-ink outline-none"
-                  >
-                    <option value="openai">openai</option>
-                    <option value="anthropic">anthropic</option>
-                    <option value="openai-compatible">openai-compatible</option>
-                  </select>
-                  <span className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 text-ink-faint">
-                    ▾
-                  </span>
-                </div>
+                <SelectInput
+                  className="flex-1"
+                  value={value.type}
+                  onChange={(e) =>
+                    setValue({ ...value, type: e.target.value as ProviderConfig["type"] })
+                  }
+                  aria-label="Provider 类型"
+                >
+                  <option value="openai">openai</option>
+                  <option value="anthropic">anthropic</option>
+                  <option value="openai-compatible">openai-compatible</option>
+                </SelectInput>
               </div>
 
               {/* baseUrl */}

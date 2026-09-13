@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 
 // ── 顶栏（snow-app 岛内顶栏：透明底 + hairline 下边线）──
 
@@ -15,7 +15,7 @@ export function NavBar({
     <div className="flex flex-shrink-0 items-center border-b border-line px-3 py-2.5">
       <button
         onClick={onBack}
-        className="flex min-w-[64px] items-center gap-0.5 rounded-md px-1 py-0.5 text-[13px] font-medium text-info-text active:bg-pressed"
+        className="flex min-h-[40px] min-w-[64px] items-center gap-0.5 rounded-md px-1 py-2 text-[13px] font-medium text-info-text active:bg-pressed"
       >
         <span className="text-[16px] leading-none">‹</span>
         <span>返回</span>
@@ -219,6 +219,152 @@ export function MultiSelectToolbar({
           清空全部
         </button>
       </div>
+    </div>
+  );
+}
+
+// ══════════ 以下为 snowapp 改造新增组件（旧组件 API 保持不变）══════════
+
+// ── IslandHeader：岛头部（标题 + 副标题 + hairline 分隔线）──
+
+export function IslandHeader({
+  title,
+  subtitle,
+  right,
+}: {
+  title: ReactNode;
+  subtitle?: ReactNode;
+  right?: ReactNode;
+}) {
+  return (
+    <div className="flex-shrink-0 border-b border-line px-4 py-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate text-[14px] font-semibold text-ink">{title}</p>
+          {subtitle && <p className="mt-0.5 truncate text-[12px] text-ink-dim">{subtitle}</p>}
+        </div>
+        {right && <div className="flex flex-shrink-0 items-center gap-1">{right}</div>}
+      </div>
+    </div>
+  );
+}
+
+// ── SettingsRow：56px 设置行（label 左 / 控件右，行间 hairline 分隔）──
+
+export function SettingsRow({
+  label,
+  description,
+  children,
+  isLast = false,
+}: {
+  label: ReactNode;
+  description?: ReactNode;
+  children: ReactNode;
+  isLast?: boolean;
+}) {
+  return (
+    <div
+      className={`flex min-h-[56px] items-center justify-between gap-4 px-4 py-2.5 ${
+        isLast ? "" : "border-b border-line"
+      }`}
+    >
+      <div className="min-w-0">
+        <p className="text-[13px] text-ink">{label}</p>
+        {description && <p className="mt-0.5 text-[12px] text-ink-faint">{description}</p>}
+      </div>
+      <div className="flex flex-shrink-0 items-center gap-2">{children}</div>
+    </div>
+  );
+}
+
+// ── BreadcrumbStrip：面包屑条（Home › Current，分隔符 text-faint）──
+
+export function BreadcrumbStrip({ home, current }: { home: string; current: string }) {
+  return (
+    <div className="flex items-center gap-1.5 px-4 py-2 text-[12px]">
+      <span className="text-ink-faint">{home}</span>
+      <span className="text-ink-faint">›</span>
+      <span className="font-medium text-ink-dim">{current}</span>
+    </div>
+  );
+}
+
+// ── Timeline：横向状态时间线（dots + labels，pending→active→done）──
+
+export type TimelineStepState = "pending" | "active" | "done";
+
+export interface TimelineStep {
+  label: string;
+  state: TimelineStepState;
+}
+
+const TIMELINE_DOT: Record<TimelineStepState, string> = {
+  done: "bg-ok",
+  active: "bg-info",
+  pending: "bg-pressed",
+};
+
+export function Timeline({ steps }: { steps: TimelineStep[] }) {
+  return (
+    <div className="flex w-full items-start px-4 py-3">
+      {steps.map((step, i) => (
+        <Fragment key={`${step.label}-${i}`}>
+          {i > 0 && (
+            <div
+              className={`mt-[4px] h-0.5 flex-1 ${
+                steps[i - 1].state === "pending" ? "bg-pressed" : "bg-info"
+              }`}
+            />
+          )}
+          <div className="flex flex-col items-center gap-1">
+            <span
+              className={`h-2.5 w-2.5 rounded-full ${TIMELINE_DOT[step.state]}`}
+              aria-current={step.state === "active" ? "step" : undefined}
+            />
+            <span
+              className={`whitespace-nowrap text-[11px] ${
+                step.state === "pending" ? "text-ink-faint" : "text-ink-dim"
+              }`}
+            >
+              {step.label}
+            </span>
+          </div>
+        </Fragment>
+      ))}
+    </div>
+  );
+}
+
+// ── DiffLines：diff 着色行（ctx 默认 / del=danger / add=success）──
+
+export type DiffLineType = "ctx" | "del" | "add";
+
+export interface DiffLine {
+  type: DiffLineType;
+  text: string;
+}
+
+const DIFF_LINE_STYLE: Record<DiffLineType, string> = {
+  ctx: "text-ink-dim",
+  del: "bg-bad-bg text-bad-text",
+  add: "bg-ok-bg text-ok-text",
+};
+
+const DIFF_LINE_PREFIX: Record<DiffLineType, string> = {
+  ctx: " ",
+  del: "-",
+  add: "+",
+};
+
+export function DiffLines({ lines }: { lines: DiffLine[] }) {
+  return (
+    <div className="overflow-hidden rounded-lg border border-line font-mono text-[12px] leading-relaxed">
+      {lines.map((line, i) => (
+        <div key={i} className={`whitespace-pre-wrap break-words px-3 py-1 ${DIFF_LINE_STYLE[line.type]}`}>
+          <span className="mr-1.5 select-none opacity-60">{DIFF_LINE_PREFIX[line.type]}</span>
+          {line.text}
+        </div>
+      ))}
     </div>
   );
 }

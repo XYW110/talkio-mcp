@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Expert } from "../types";
-import { Card, NavBar, SectionLabel, Toggle } from "../components/ui";
+import { Card, NavBar, SectionLabel, SettingsRow, Toggle } from "../components/ui";
+import { Button, SelectInput, TextInput } from "../components/controls";
 
 interface Props {
   initial?: Expert;
@@ -70,13 +71,14 @@ export function ExpertEditPage({ initial, onSave, onClose }: Props) {
         title={isNew ? "新建专家" : "编辑专家"}
         onBack={onClose}
         right={
-          <button
+          <Button
+            variant="primary"
+            className="!h-8 !px-3 rounded-md"
             onClick={handleSave}
             disabled={!name.trim() || !systemPrompt.trim()}
-            className="rounded-md bg-ink px-3 py-1 text-[13px] font-semibold text-on-solid hover:bg-ink-mid disabled:opacity-30"
           >
             保存
-          </button>
+          </Button>
         }
       />
 
@@ -86,20 +88,20 @@ export function ExpertEditPage({ initial, onSave, onClose }: Props) {
           <SectionLabel>基本信息</SectionLabel>
           <Card>
             <div className="flex items-center px-4 py-0">
-              <input
+              <TextInput
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="专家名称，例如：情感顾问"
-                className="bg-transparent py-2.5 text-[14px] text-ink outline-none placeholder:text-ink-faint"
+                className="!h-auto flex-1 !border-0 bg-transparent py-2.5 text-[14px] !px-0"
               />
             </div>
             {isNew && (
               <div className="flex items-center border-t border-line px-4 py-0">
-                <input
+                <TextInput
                   value={id}
                   onChange={(e) => setId(e.target.value)}
                   placeholder={`ID（英文唯一）: ${slugify(name) || "emotion"}`}
-                  className="bg-transparent py-2.5 font-mono text-[13px] text-ink outline-none placeholder:text-ink-faint"
+                  className="!h-auto flex-1 !border-0 bg-transparent py-2.5 font-mono text-[13px] !px-0"
                 />
               </div>
             )}
@@ -109,7 +111,7 @@ export function ExpertEditPage({ initial, onSave, onClose }: Props) {
                 <button
                   key={ic}
                   onClick={() => setIcon(ic)}
-                  className={`flex h-9 w-9 items-center justify-center rounded-lg text-lg ${
+                  className={`flex h-10 w-10 items-center justify-center rounded-lg text-lg ${
                     icon === ic ? "bg-info-bg ring-2 ring-info" : "hover:bg-hover"
                   }`}
                 >
@@ -164,56 +166,51 @@ export function ExpertEditPage({ initial, onSave, onClose }: Props) {
               </div>
             </div>
 
-            {/* maxTokens / timeoutMs */}
-            <div className="grid grid-cols-2">
-              <div className="border-r border-line px-4 py-3">
-                <p className="mb-1 text-[12px] text-ink-faint">maxTokens</p>
-                <input
-                  type="number"
-                  min={1}
-                  value={maxTokens}
-                  onChange={(e) => setMaxTokens(Number(e.target.value) || 2048)}
-                  className="w-full bg-transparent font-mono text-[13px] text-ink outline-none"
-                />
-              </div>
-              <div className="px-4 py-3">
-                <p className="mb-1 text-[12px] text-ink-faint">timeoutMs</p>
-                <input
-                  type="number"
-                  min={1000}
-                  value={timeoutMs}
-                  onChange={(e) => setTimeoutMs(Number(e.target.value) || 120000)}
-                  className="w-full bg-transparent font-mono text-[13px] text-ink outline-none"
-                />
-              </div>
-            </div>
+            {/* maxTokens / timeoutMs（SettingsRow：label 左 / 控件右） */}
+            <SettingsRow label="maxTokens">
+              <TextInput
+                type="number"
+                min={1}
+                value={maxTokens}
+                onChange={(e) => setMaxTokens(Number(e.target.value) || 2048)}
+                className="!h-9 w-28 text-right font-mono"
+              />
+            </SettingsRow>
+            <SettingsRow label="timeoutMs">
+              <TextInput
+                type="number"
+                min={1000}
+                value={timeoutMs}
+                onChange={(e) => setTimeoutMs(Number(e.target.value) || 120000)}
+                className="!h-9 w-32 text-right font-mono"
+              />
+            </SettingsRow>
 
-            {/* 推理策略（P1-B） */}
-            <div className="border-t border-line px-4 py-3">
-              <p className="mb-1 text-[12px] text-ink-faint">推理策略</p>
-              <select
+            {/* 推理策略（P1-B，SettingsRow） */}
+            <SettingsRow label="推理策略" description="留空则不指定（落盘时删除该字段）" isLast>
+              <SelectInput
+                className="w-52"
                 value={strategy}
                 onChange={(e) =>
                   setStrategy(e.target.value as "" | NonNullable<Expert["reasoningStrategy"]>)
                 }
-                className="w-full rounded-lg border border-line bg-island-strong px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-info"
+                aria-label="推理策略"
               >
                 {STRATEGY_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>
                     {opt.label}
                   </option>
                 ))}
-              </select>
-            </div>
+              </SelectInput>
+            </SettingsRow>
           </Card>
 
           {/* ── 启用 ── */}
           <SectionLabel>状态</SectionLabel>
           <Card>
-            <div className="flex items-center justify-between px-4 py-3">
-              <span className="text-[13px] text-ink">启用此专家</span>
+            <SettingsRow label="启用此专家" isLast>
               <Toggle checked={enabled} onChange={setEnabled} />
-            </div>
+            </SettingsRow>
           </Card>
         </div>
       </div>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import type { UsageAggregate, UsageRecord } from "../types";
 import { Card, EmptyState, NavBar, SectionLabel } from "../components/ui";
+import { Button, SelectInput } from "../components/controls";
 
 // ── 本地价格表（localStorage）：modelId → { input, output }，单位 元 / 百万 token ──
 
@@ -147,20 +148,17 @@ export function UsagePage({ onBack }: { onBack: () => void }) {
         onBack={onBack}
         right={
           <div className="flex items-center gap-1">
-            <button
+            <Button
+              variant="icon"
               onClick={openPriceEditor}
-              className="flex h-9 w-9 items-center justify-center rounded-full text-[14px] font-medium text-info-text hover:bg-info-bg active:opacity-60"
+              aria-label="价格表（成本估算）"
               title="价格表（成本估算）"
             >
               ¥
-            </button>
-            <button
-              onClick={load}
-              className="flex h-9 w-9 items-center justify-center rounded-full text-info-text hover:bg-info-bg active:opacity-60"
-              title="刷新"
-            >
+            </Button>
+            <Button variant="icon" onClick={load} aria-label="刷新" title="刷新">
               ⟳
-            </button>
+            </Button>
           </div>
         }
       />
@@ -193,15 +191,16 @@ export function UsagePage({ onBack }: { onBack: () => void }) {
               </div>
               <div className="col-span-2 rounded-xl border border-line bg-island-strong p-4 md:col-span-1">
                 <p className="text-[12px] text-ink-faint">统计时间窗</p>
-                <select
+                <SelectInput
+                  className="mt-2"
                   value={days}
                   onChange={(e) => setDays(Number(e.target.value))}
-                  className="mt-2 w-full rounded-lg border border-line bg-island px-2.5 py-1.5 text-[14px] text-ink outline-none focus:border-info"
+                  aria-label="统计时间窗"
                 >
                   <option value={7}>近 7 天</option>
                   <option value={30}>近 30 天</option>
                   <option value={90}>近 90 天</option>
-                </select>
+                </SelectInput>
                 {data.skipped > 0 && (
                   <p className="mt-1.5 text-[12px] text-warn-text">
                     {data.skipped} 个记录文件解析失败已跳过
@@ -369,18 +368,12 @@ export function UsagePage({ onBack }: { onBack: () => void }) {
               className="mt-2 w-full rounded-lg border border-line bg-island px-3 py-2 font-mono text-[12px] leading-relaxed text-ink outline-none focus:border-info"
             />
             <div className="mt-3 flex justify-end gap-2">
-              <button
-                onClick={() => setPriceOpen(false)}
-                className="rounded-lg bg-hover px-4 py-2 text-[13px] font-medium text-ink-mid hover:bg-pressed"
-              >
+              <Button variant="ghost" onClick={() => setPriceOpen(false)}>
                 取消
-              </button>
-              <button
-                onClick={savePriceTable}
-                className="rounded-lg bg-ink px-4 py-2 text-[13px] font-semibold text-on-solid transition hover:bg-ink-mid"
-              >
+              </Button>
+              <Button variant="primary" onClick={savePriceTable}>
                 保存
-              </button>
+              </Button>
             </div>
           </div>
         </div>

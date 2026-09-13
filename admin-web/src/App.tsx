@@ -10,6 +10,9 @@ import { RecordsPage } from "./pages/RecordsPage";
 import { UsagePage } from "./pages/UsagePage";
 import { ChatPage } from "./pages/ChatPage";
 import { ChevronRow, SectionLabel, Card } from "./components/ui";
+import { Button } from "./components/controls";
+import { DrawerSheet } from "./components/overlays";
+import { ThemeSwitcher } from "./theme/ThemeSwitcher";
 
 const EMPTY: ConfigFile = {
   providers: {},
@@ -46,6 +49,7 @@ export default function App() {
   const [dirty, setDirty] = useState(false);
   const [page, setPage] = useState<Page>({ name: "settings" });
   const [editing, setEditing] = useState<Expert | "new" | null>(null);
+  const [themeOpen, setThemeOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -432,13 +436,14 @@ const editOverlay = editing && (
               有未保存的修改
             </span>
           )}
-          <button
+          <Button
+            variant="primary"
             onClick={save}
             disabled={!dirty}
-            className="flex-1 rounded-xl bg-ink px-4 py-2.5 text-[14px] font-semibold text-on-solid transition active:bg-ink-mid disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex-1 rounded-xl py-2.5 text-[14px] font-semibold"
           >
             保存配置
-          </button>
+          </Button>
         </div>
         <p className="mt-2 text-center text-[11px] text-ink-faint">
           保存后需重启 MCP server，新配置才生效
@@ -468,7 +473,7 @@ const editOverlay = editing && (
           <div className="island island-strong flex flex-shrink-0 items-center px-3 py-2.5 md:hidden">
             <button
               onClick={() => setPage({ name: "settings" })}
-              className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[13px] font-medium text-info-text active:bg-pressed"
+              className="flex min-h-[40px] items-center gap-1 rounded-md px-1.5 py-2 text-[13px] font-medium text-info-text active:bg-pressed"
             >
               <span className="text-[16px] leading-none">‹</span>
               <span>返回总览</span>
@@ -488,11 +493,27 @@ const editOverlay = editing && (
         </div>
       </div>
       {editOverlay}
+
+      {/* 移动端/平板档主题入口（桌面档走侧栏切换器）：⚙ → DrawerSheet 内同款切换控件 */}
+      <button
+        type="button"
+        onClick={() => setThemeOpen(true)}
+        aria-label="主题设置"
+        className="fixed bottom-4 right-4 z-30 flex h-11 w-11 items-center justify-center rounded-full border border-line bg-island-strong text-[17px] shadow-island transition-colors hover:bg-hover lg:hidden"
+      >
+        ⚙️
+      </button>
+      <div className="lg:hidden">
+        <DrawerSheet open={themeOpen} onClose={() => setThemeOpen(false)} title="主题">
+          <ThemeSwitcher />
+        </DrawerSheet>
+      </div>
     </div>
   );
 }
 
-// ── PC 独立版布局：左侧固定侧边栏（md+ 显示，手机端完全隐藏）──
+// ── PC 独立版布局：左侧固定侧边栏（md+ 显示）。
+// 三档：≥1024（lg）248px 完整栏；768~1023（md）64px 图标栏；<768 不渲染（顶栏岛 + 浮动 ⚙）──
 
 function PcSidebar({
   page,
@@ -519,14 +540,17 @@ function PcSidebar({
     ...menuItems,
   ];
   return (
-    <aside className="island island-muted hidden w-[248px] flex-shrink-0 flex-col md:flex">
-      {/* 品牌区 */}
-      <div className="border-b border-line px-5 py-4">
-        <p className="text-[15px] font-bold tracking-tight text-ink">💬 Talkio 管理</p>
-        <p className="mt-0.5 text-[12px] text-ink-faint">AI 专家 · 模型 · 角色卡</p>
+    <aside className="island island-muted hidden w-16 flex-shrink-0 flex-col md:flex lg:w-[248px]">
+      {/* 品牌区（平板档只留 emoji 图标） */}
+      <div className="border-b border-line px-2 py-4 text-center lg:px-5 lg:text-left">
+        <p className="text-[15px] font-bold tracking-tight text-ink">
+          <span className="text-[18px]">💬</span>
+          <span className="hidden lg:inline"> Talkio 管理</span>
+        </p>
+        <p className="mt-0.5 hidden text-[12px] text-ink-faint lg:block">AI 专家 · 模型 · 角色卡</p>
       </div>
 
-      {/* 导航项 */}
+      {/* 导航项（平板档居中只显示图标，title 走 aria-label/tooltip） */}
       <nav className="flex-1 overflow-y-auto px-2.5 py-3">
         {navItems.map((item) => {
           const active = page.name === item.page.name;
@@ -534,17 +558,19 @@ function PcSidebar({
             <button
               key={item.title}
               onClick={() => onNavigate(item.page)}
-              className={`mb-0.5 flex w-full items-center gap-3 rounded-md px-3 py-2 text-left transition-colors ${
+              title={item.title}
+              aria-label={item.title}
+              className={`mb-0.5 flex w-full items-center justify-center gap-3 rounded-md px-3 py-2.5 text-left transition-colors lg:justify-start ${
                 active
                   ? "nav-item-active bg-info-bg font-medium text-ink"
                   : "text-ink-mid hover:bg-hover"
               }`}
             >
               <span className="text-base leading-none">{item.icon}</span>
-              <span className="flex-1 text-[13px]">{item.title}</span>
+              <span className="hidden flex-1 text-[13px] lg:inline">{item.title}</span>
               {item.unit !== "" && (
                 <span
-                  className={`rounded px-1.5 py-0.5 text-[11px] ${
+                  className={`hidden rounded px-1.5 py-0.5 text-[11px] lg:inline ${
                     active ? "bg-info-bg text-info-text" : "bg-hover text-ink-dim"
                   }`}
                 >
@@ -556,16 +582,29 @@ function PcSidebar({
         })}
       </nav>
 
-      {/* 底部保存区 */}
-      <div className="border-t border-line px-4 py-3">
-        <button
+      {/* 主题切换（平板图标栏放不下，仅桌面档显示；移动端走浮动 ⚙ 抽屉） */}
+      <div className="hidden border-t border-line px-4 py-3 lg:block">
+        <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-ink-faint">
+          主题
+        </p>
+        <ThemeSwitcher />
+      </div>
+
+      {/* 底部保存区（平板档缩为图标按钮） */}
+      <div className="border-t border-line px-3 py-3 lg:px-4">
+        <Button
+          variant="primary"
           onClick={onSave}
           disabled={!dirty}
-          className="w-full rounded-lg bg-ink px-4 py-2 text-[13px] font-semibold text-on-solid transition hover:bg-ink-mid disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label="保存配置"
+          className="h-11 w-full lg:h-10"
         >
-          {dirty ? "保存配置 ●" : "保存配置"}
-        </button>
-        <p className="mt-1.5 text-center text-[11px] text-ink-faint">
+          <span className="hidden lg:inline">{dirty ? "保存配置 ●" : "保存配置"}</span>
+          <span className="lg:hidden" aria-hidden="true">
+            💾
+          </span>
+        </Button>
+        <p className="mt-1.5 hidden text-center text-[11px] text-ink-faint lg:block">
           {dirty ? "有未保存的修改" : "保存后需重启 MCP server 生效"}
         </p>
       </div>

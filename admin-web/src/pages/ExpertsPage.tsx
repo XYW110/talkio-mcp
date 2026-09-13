@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { Expert } from "../types";
 import { EmptyState, MultiSelectToolbar, SelectCheckbox } from "../components/ui";
+import { Button, Pill, TextInput } from "../components/controls";
 
 interface Props {
   experts: Expert[];
@@ -86,20 +87,17 @@ const filtered = useMemo(() => {
             <span className="ml-2 text-sm font-normal text-ink-faint">{experts.length} 位</span>
           </h1>
           <div className="flex items-center gap-1">
-            <button
+            <Button
+              variant="icon"
               onClick={() => setShowSearch((v) => !v)}
-              className="flex h-8 w-8 items-center justify-center rounded-md text-info-text hover:bg-info-bg active:bg-pressed"
+              aria-label="搜索"
               title="搜索"
             >
               🔍
-            </button>
-            <button
-              onClick={onAdd}
-              className="flex h-8 w-8 items-center justify-center rounded-md text-info-text hover:bg-info-bg active:bg-pressed"
-              title="新建专家"
-            >
+            </Button>
+            <Button variant="icon" onClick={onAdd} aria-label="新建专家" title="新建专家">
               ＋
-            </button>
+            </Button>
           </div>
         </div>
 <p className="text-[13px] text-ink-dim">
@@ -123,22 +121,19 @@ const filtered = useMemo(() => {
 
       {/* Search Bar */}
       {showSearch && (
-        <div className="px-4 pb-1">
-          <div className="flex items-center rounded-md border border-line bg-island-strong px-3 py-2">
-            <span className="text-ink-faint">🔍</span>
-            <input
-              autoFocus
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="搜索名称 / id / 人设…"
-              className="ml-2 flex-1 bg-transparent text-[13px] text-ink outline-none placeholder:text-ink-faint"
-            />
-            {query && (
-              <button onClick={() => setQuery("")} className="text-ink-faint">
-                ✕
-              </button>
-            )}
-          </div>
+        <div className="flex items-center gap-2 px-4 pb-1">
+          <TextInput
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="🔍 搜索名称 / id / 人设…"
+            aria-label="搜索专家"
+          />
+          {query && (
+            <Button variant="ghost" onClick={() => setQuery("")} aria-label="清除搜索" className="px-2">
+              ✕
+            </Button>
+          )}
         </div>
       )}
 
@@ -198,16 +193,8 @@ const filtered = useMemo(() => {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <p className="truncate text-[14px] font-medium text-ink">{e.name}</p>
-                        {e.builtin && (
-                          <span className="rounded bg-info-bg px-1.5 py-0.5 text-[10px] text-info-text">
-                            内置
-                          </span>
-                        )}
-                        {!e.enabled && (
-                          <span className="rounded bg-hover px-1.5 py-0.5 text-[10px] text-ink-dim">
-                            已禁用
-                          </span>
-                        )}
+                        {e.builtin && <Pill tone="info">内置</Pill>}
+                        {!e.enabled && <Pill tone="neutral">已禁用</Pill>}
                       </div>
                       <p className="mt-1 truncate font-mono text-[12px] text-ink-faint">{e.id}</p>
                     </div>
@@ -218,14 +205,15 @@ const filtered = useMemo(() => {
                     {e.enabled === false ? "已禁用" : "启用中"} · temperature={e.temperature}
                   </span>
                   {!e.builtin && (
-                    <button
+                    <Button
+                      variant="danger-text"
+                      className="!h-auto px-2 py-0"
                       onClick={() => {
                         if (window.confirm(`确定删除专家「${e.name}」？`)) onDelete(e.id);
                       }}
-                      className="text-[13px] font-medium text-bad hover:opacity-80"
                     >
                       删除
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>
@@ -269,16 +257,8 @@ function ExpertRow({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <p className="truncate text-[14px] font-medium text-ink">{expert.name}</p>
-            {expert.builtin && (
-              <span className="rounded bg-info-bg px-1.5 py-0.5 text-[10px] text-info-text">
-                内置
-              </span>
-            )}
-            {!expert.enabled && (
-              <span className="rounded bg-hover px-1.5 py-0.5 text-[10px] text-ink-dim">
-                已禁用
-              </span>
-            )}
+            {expert.builtin && <Pill tone="info">内置</Pill>}
+            {!expert.enabled && <Pill tone="neutral">已禁用</Pill>}
           </div>
           <p className="mt-0.5 truncate text-[12px] leading-relaxed text-ink-dim">
             {expert.enabled === false ? "已禁用" : "启用中"} · temperature={expert.temperature}
@@ -287,16 +267,18 @@ function ExpertRow({
         <span className="shrink-0 text-[16px] leading-none text-ink-faint">›</span>
       </button>
 {!expert.builtin && (
-        <button
+        <Button
+          variant="danger-text"
+          className="!h-auto shrink-0 px-2 py-0"
           onClick={(ev) => {
             ev.stopPropagation();
             onDelete();
           }}
-          className="flex shrink-0 items-center px-2 text-[13px] text-bad hover:opacity-80"
+          aria-label="删除"
           title="删除"
         >
           删除
-        </button>
+        </Button>
       )}
     </div>
   );

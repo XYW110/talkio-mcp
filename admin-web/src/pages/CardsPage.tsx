@@ -10,6 +10,7 @@ import {
   SelectCheckbox,
   Toggle,
 } from "../components/ui";
+import { Button, Pill, SelectInput, TextInput } from "../components/controls";
 
 interface Props {
   cards: CardConfig[];
@@ -111,13 +112,14 @@ export function CardsPage({
             角色卡
             <span className="ml-2 text-sm font-normal text-ink-faint">{cards.length} 张</span>
           </h1>
-          <button
+          <Button
+            variant="icon"
             onClick={() => setEditing({ isNew: true })}
-            className="flex h-9 w-9 items-center justify-center rounded-full text-info-text hover:bg-info-bg active:opacity-60"
+            aria-label="新建角色卡"
             title="新建角色卡"
           >
             ＋
-          </button>
+          </Button>
         </div>
 <p className="text-[13px] text-ink-dim">
           一张角色卡 = 一位专家 + 一个模型。MCP 调用时只传卡片 id。
@@ -192,16 +194,8 @@ export function CardsPage({
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <p className="truncate text-[16px] font-medium text-ink">{c.name}</p>
-                          {c.isDefault && (
-                            <span className="rounded bg-info-bg px-1.5 py-0.5 text-[10px] text-info-text">
-                              默认
-                            </span>
-                          )}
-                          {!c.enabled && (
-                            <span className="rounded bg-pressed px-1.5 py-0.5 text-[10px] text-ink-dim">
-                              已禁用
-                            </span>
-                          )}
+                          {c.isDefault && <Pill tone="info">默认</Pill>}
+                          {!c.enabled && <Pill tone="neutral">已禁用</Pill>}
                         </div>
                       </div>
                     </button>
@@ -215,15 +209,16 @@ export function CardsPage({
                       <span title={c.enabled ? "禁用" : "启用"}>
                         <Toggle checked={c.enabled !== false} onChange={() => onToggle(c.id)} />
                       </span>
-                      <button
+                      <Button
+                        variant="danger-text"
+                        className="!h-auto px-2 py-0"
                         onClick={(ev) => {
                           ev.stopPropagation();
                           if (window.confirm(`确定删除角色卡「${c.name}」？`)) onDelete(c.id);
                         }}
-                        className="text-[13px] font-medium text-bad hover:opacity-80 active:opacity-60"
                       >
                         删除
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 </div>
@@ -289,16 +284,8 @@ function CardRow({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <p className="truncate text-[16px] font-medium text-ink">{card.name}</p>
-            {card.isDefault && (
-              <span className="rounded bg-info-bg px-1.5 py-0.5 text-[10px] text-info-text">
-                默认
-              </span>
-            )}
-            {!card.enabled && (
-              <span className="rounded bg-pressed px-1.5 py-0.5 text-[10px] text-ink-dim">
-                已禁用
-              </span>
-            )}
+            {card.isDefault && <Pill tone="info">默认</Pill>}
+            {!card.enabled && <Pill tone="neutral">已禁用</Pill>}
           </div>
           <p className="mt-0.5 truncate text-[13px] leading-relaxed text-ink-dim">
             {expertName} → {modelText}
@@ -311,16 +298,18 @@ function CardRow({
         <span title={card.enabled ? "禁用" : "启用"}>
           <Toggle checked={card.enabled !== false} onChange={() => onToggle()} />
         </span>
-<button
+        <Button
+          variant="danger-text"
+          className="!h-auto shrink-0 px-2 py-0"
           onClick={(ev) => {
             ev.stopPropagation();
             onDelete();
           }}
-          className="flex shrink-0 items-center px-2 text-[13px] text-bad hover:opacity-80 active:opacity-60"
+          aria-label="删除"
           title="删除"
         >
           删除
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -396,12 +385,9 @@ function CardEditOverlay({
           title={isNew ? "新建角色卡" : "编辑角色卡"}
           onBack={onClose}
           right={
-            <button
-              onClick={handleSave}
-              className="text-[17px] font-semibold text-info-text active:opacity-60"
-            >
+            <Button variant="primary" className="!h-8 !px-3 rounded-md" onClick={handleSave}>
               保存
-            </button>
+            </Button>
           }
         />
 
@@ -412,65 +398,57 @@ function CardEditOverlay({
               {/* expert */}
               <div className="flex items-center border-b border-line px-4 py-3">
                 <span className="w-20 shrink-0 text-[15px] text-ink-dim">专家</span>
-                <div className="relative flex-1">
-                  <select
-                    value={expertId}
-                    onChange={(e) => setExpertId(e.target.value)}
-                    className="w-full appearance-none bg-transparent text-[15px] text-ink outline-none"
-                  >
-                    {enabledExperts.length === 0 && <option value="">（请先添加专家）</option>}
-                    {enabledExperts.map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {e.icon} {e.name} · {e.id}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 text-ink-faint">
-                    ▾
-                  </span>
-                </div>
+                <SelectInput
+                  className="flex-1"
+                  value={expertId}
+                  onChange={(e) => setExpertId(e.target.value)}
+                  aria-label="专家"
+                >
+                  {enabledExperts.length === 0 && <option value="">（请先添加专家）</option>}
+                  {enabledExperts.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.icon} {e.name} · {e.id}
+                    </option>
+                  ))}
+                </SelectInput>
               </div>
 
               {/* model */}
               <div className="flex items-center px-4 py-3">
                 <span className="w-20 shrink-0 text-[15px] text-ink-dim">模型</span>
-                <div className="relative flex-1">
-                  <select
-                    value={modelId}
-                    onChange={(e) => setModelId(e.target.value)}
-                    className="w-full appearance-none bg-transparent text-[15px] text-ink outline-none"
-                  >
-                    {enabledModels.length === 0 && <option value="">（请先添加模型）</option>}
-                    {enabledModels.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.displayName || m.modelId} · {m.id}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 text-ink-faint">
-                    ▾
-                  </span>
-                </div>
+                <SelectInput
+                  className="flex-1"
+                  value={modelId}
+                  onChange={(e) => setModelId(e.target.value)}
+                  aria-label="模型"
+                >
+                  {enabledModels.length === 0 && <option value="">（请先添加模型）</option>}
+                  {enabledModels.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.displayName || m.modelId} · {m.id}
+                    </option>
+                  ))}
+                </SelectInput>
               </div>
             </Card>
 
             <SectionLabel>命名</SectionLabel>
             <Card>
               <div className="flex items-center px-4 py-0">
-                <input
+                <TextInput
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder={isNew && previewId ? `卡片名称，默认 ${previewId}` : "卡片名称（例如：架构师 · GPT-4o）"}
-                  className="bg-transparent py-[11px] text-[17px] text-ink outline-none placeholder:text-ink-faint"
+                  className="!h-auto flex-1 !border-0 bg-transparent py-[11px] text-[17px] !px-0"
                 />
               </div>
               {isNew && (
                 <div className="flex items-center border-t border-line px-4 py-0">
-                  <input
+                  <TextInput
                     value={id}
                     onChange={(e) => setId(e.target.value)}
                     placeholder={`ID（英文唯一）: ${slugify(name) || "my-card"}`}
-                    className="bg-transparent py-[11px] font-mono text-[14px] text-ink outline-none placeholder:text-ink-faint"
+                    className="!h-auto flex-1 !border-0 bg-transparent py-[11px] font-mono text-[14px] !px-0"
                   />
                 </div>
               )}

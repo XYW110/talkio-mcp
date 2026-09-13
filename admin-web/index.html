@@ -1,9 +1,29 @@
 <!doctype html>
-<html lang="zh-CN" data-theme="light">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Talkio 专家管理</title>
+    <script>
+      // 防 FOUC：首帧前按 localStorage 落 data-preset / data-theme（非法值回退 snow/light）
+      (function () {
+        try {
+          var preset = "snow";
+          var mode = "light";
+          var raw = localStorage.getItem("snowapp.theme");
+          if (raw) {
+            var t = JSON.parse(raw);
+            var PRESETS = ["snow","cream","dracula","forest-green","github","google","gruvbox","midnight-blue","nord","rose-pink","solarized","tokyo-night"];
+            if (t && PRESETS.indexOf(t.preset) >= 0) preset = t.preset;
+            if (t && (t.mode === "light" || t.mode === "dark")) mode = t.mode;
+          }
+          document.documentElement.dataset.preset = preset;
+          document.documentElement.dataset.theme = mode;
+        } catch (e) {
+          // localStorage/JSON 解析失败（隐私模式等）：保持默认 snow/light，不阻塞首帧
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

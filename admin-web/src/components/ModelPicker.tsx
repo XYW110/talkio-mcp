@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { api } from "../api";
 import { sortByTierDesc } from "../types";
 import type { ProbeModel, ProviderConfig } from "../types";
+import { Button, TextInput } from "./controls";
 
 interface Props {
   open: boolean;
@@ -94,21 +95,17 @@ export function ModelPicker({
                 experts.json。
               </p>
               <div className="mb-2 flex gap-2">
-                <input
+                <TextInput
                   type="password"
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && probe()}
                   placeholder={`${provider?.[1].apiKeyEnv ?? "API_KEY"} 的值`}
-                  className="flex-1 rounded-xl border border-line bg-island-strong px-3 py-2 text-[14px] outline-none "
+                  className="flex-1"
                 />
-                <button
-                  onClick={probe}
-                  disabled={probing}
-                  className="rounded-xl bg-ink px-4 py-2 text-[13px] font-medium text-on-solid disabled:opacity-50"
-                >
+                <Button variant="primary" onClick={probe} disabled={probing}>
                   {probing ? "拉取中…" : "拉取模型"}
-                </button>
+                </Button>
               </div>
             </>
           )}
@@ -116,12 +113,12 @@ export function ModelPicker({
           {error && <p className="mb-2 text-[12px] text-bad">{error}</p>}
 
           {loaded && models.length > 0 && (
-            <input
+            <TextInput
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="搜索模型…"
+              placeholder="🔍 搜索模型…"
               autoFocus
-              className="mb-2 w-full rounded-xl bg-hover px-3 py-2 text-sm outline-none "
+              className="mb-2"
             />
           )}
 

@@ -10,6 +10,7 @@ import {
   SelectCheckbox,
   Toggle,
 } from "../components/ui";
+import { Button, Pill, SelectInput, TextInput } from "../components/controls";
 
 interface Props {
   models: ModelConfig[];
@@ -115,13 +116,14 @@ export function ModelsPage({ models, providers, onUpsert, onDelete, onDeleteMany
             模型
             <span className="ml-2 text-sm font-normal text-ink-faint">{models.length} 个</span>
           </h1>
-          <button
+          <Button
+            variant="icon"
             onClick={() => setEditing({ isNew: true })}
-            className="flex h-9 w-9 items-center justify-center rounded-full text-info-text hover:bg-info-bg active:opacity-60"
+            aria-label="新建模型"
             title="新建模型"
           >
             ＋
-          </button>
+          </Button>
         </div>
 <p className="text-[13px] text-ink-dim">
           管理 API 提供方下的模型引擎。绑定专家请到「角色卡」。
@@ -226,16 +228,8 @@ function ModelRow({
             <p className="truncate text-[16px] font-medium text-ink">
               {model.displayName || model.modelId}
             </p>
-            {!model.enabled && (
-              <span className="rounded bg-pressed px-1.5 py-0.5 text-[10px] text-ink-dim">
-                已禁用
-              </span>
-            )}
-            {model.tier !== undefined && (
-              <span className="rounded bg-info-bg px-1.5 py-0.5 text-[10px] text-info-text">
-                T{model.tier}
-              </span>
-            )}
+            {!model.enabled && <Pill tone="neutral">已禁用</Pill>}
+            {model.tier !== undefined && <Pill tone="info">T{model.tier}</Pill>}
           </div>
           <p className="mt-0.5 truncate font-mono text-[12px] leading-relaxed text-ink-dim">
             {model.modelId}
@@ -259,16 +253,18 @@ function ModelRow({
         >
           <Toggle checked={model.enabled !== false} onChange={() => onToggle()} />
         </span>
-<button
+        <Button
+          variant="danger-text"
+          className="!h-auto shrink-0 px-2 py-0"
           onClick={(ev) => {
             ev.stopPropagation();
             onDelete();
           }}
-          className="flex shrink-0 items-center px-2 text-[13px] text-bad hover:opacity-80 active:opacity-60"
+          aria-label="删除"
           title="删除"
         >
           删除
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -341,12 +337,9 @@ function ModelEditOverlay({
           title={isNew ? "新建模型" : "编辑模型"}
           onBack={onClose}
           right={
-            <button
-              onClick={handleSave}
-              className="text-[17px] font-semibold text-info-text active:opacity-60"
-            >
+            <Button variant="primary" className="!h-8 !px-3 rounded-md" onClick={handleSave}>
               保存
-            </button>
+            </Button>
           }
         />
 
@@ -357,78 +350,70 @@ function ModelEditOverlay({
               {/* provider */}
               <div className="flex items-center border-b border-line px-4 py-3">
                 <span className="w-20 shrink-0 text-[15px] text-ink-dim">Provider</span>
-                <div className="relative flex-1">
-                  <select
-                    value={providerId}
-                    onChange={(e) => setProviderId(e.target.value)}
-                    className="w-full appearance-none bg-transparent text-[15px] text-ink outline-none"
-                  >
-                    {providers.length === 0 && <option value="">（请先添加 provider）</option>}
-                    {providers.map(([n, p]) => (
-                      <option key={n} value={n}>
-                        {n} · {p.baseUrl}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 text-ink-faint">
-                    ▾
-                  </span>
-                </div>
+                <SelectInput
+                  className="flex-1"
+                  value={providerId}
+                  onChange={(e) => setProviderId(e.target.value)}
+                  aria-label="Provider"
+                >
+                  {providers.length === 0 && <option value="">（请先添加 provider）</option>}
+                  {providers.map(([n, p]) => (
+                    <option key={n} value={n}>
+                      {n} · {p.baseUrl}
+                    </option>
+                  ))}
+                </SelectInput>
               </div>
 
               {/* modelId */}
               <div className="flex items-center border-b border-line px-4 py-3">
                 <span className="w-20 shrink-0 text-[15px] text-ink-dim">modelId</span>
-                <input
+                <TextInput
                   value={modelId}
                   onChange={(e) => setModelId(e.target.value)}
                   placeholder="例如 gpt-4o / claude-sonnet-4"
-                  className="flex-1 bg-transparent font-mono text-[14px] text-ink outline-none placeholder:text-ink-faint"
+                  className="flex-1 !border-0 bg-transparent !px-0 font-mono text-[14px]"
                 />
               </div>
 
               {/* displayName */}
               <div className="flex items-center border-b border-line px-4 py-3">
                 <span className="w-20 shrink-0 text-[15px] text-ink-dim">显示名</span>
-                <input
+                <TextInput
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
                   placeholder="可选，例如 GPT-4o"
-                  className="flex-1 bg-transparent text-[15px] text-ink outline-none placeholder:text-ink-faint"
+                  className="flex-1 !border-0 bg-transparent !px-0"
                 />
               </div>
 
               {/* tier（P3-B：仅展示排序用，不参与选卡） */}
               <div className="flex items-center border-b border-line px-4 py-3">
                 <span className="w-20 shrink-0 text-[15px] text-ink-dim">分级 tier</span>
-                <input
+                <TextInput
                   value={tier}
                   onChange={(e) => setTier(e.target.value.replace(/[^\d]/g, ""))}
                   inputMode="numeric"
                   placeholder="可选，1-100，越大越靠前"
-                  className="flex-1 bg-transparent text-[15px] text-ink outline-none placeholder:text-ink-faint"
+                  className="flex-1 !border-0 bg-transparent !px-0"
                 />
               </div>
 
               {/* thinkingLevel */}
               <div className="flex items-center px-4 py-3">
                 <span className="w-20 shrink-0 text-[15px] text-ink-dim">思考强度</span>
-                <div className="relative flex-1">
-                  <select
-                    value={thinkingLevel}
-                    onChange={(e) => setThinkingLevel(e.target.value as ThinkingLevel | "")}
-                    className="w-full appearance-none bg-transparent text-[15px] text-ink outline-none"
-                  >
-                    <option value="">默认（模型自带）</option>
-                    <option value="high">高（深度推理）</option>
-                    <option value="medium">中（标准推理）</option>
-                    <option value="low">低（轻量推理）</option>
-                    <option value="disabled">关闭（不思考，最快）</option>
-                  </select>
-                  <span className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 text-ink-faint">
-                    ▾
-                  </span>
-                </div>
+                <SelectInput
+                  className="flex-1"
+                  value={thinkingLevel}
+                  onChange={(e) => setThinkingLevel(e.target.value as ThinkingLevel | "")}
+                  aria-label="思考强度"
+                >
+                  <option value="">默认（模型自带）</option>
+                  <option value="high">高（深度推理）</option>
+                  <option value="medium">中（标准推理）</option>
+                  <option value="low">低（轻量推理）</option>
+                  <option value="disabled">关闭（不思考，最快）</option>
+                </SelectInput>
               </div>
             </Card>
 

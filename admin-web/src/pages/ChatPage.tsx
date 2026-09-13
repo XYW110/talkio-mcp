@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { CardConfig } from "../types";
 import { api } from "../api";
 import { Card, SectionLabel } from "../components/ui";
+import { Button, SelectInput } from "../components/controls";
 
 interface Props {
   cards: CardConfig[];
@@ -223,7 +224,7 @@ es.addEventListener("error", (ev) => {
                     type="button"
                     onClick={() => setRounds((r) => Math.max(1, r - 1))}
                     disabled={status === "running"}
-                    className="h-9 w-9 rounded-[8px] border border-line bg-island-strong text-[18px] text-ink-mid hover:bg-hover disabled:opacity-40"
+                    className="h-10 w-10 rounded-[8px] border border-line bg-island-strong text-[18px] text-ink-mid hover:bg-hover disabled:opacity-40"
                   >
                     −
                   </button>
@@ -234,7 +235,7 @@ es.addEventListener("error", (ev) => {
                     type="button"
                     onClick={() => setRounds((r) => Math.min(5, r + 1))}
                     disabled={status === "running"}
-                    className="h-9 w-9 rounded-[8px] border border-line bg-island-strong text-[18px] text-ink-mid hover:bg-hover disabled:opacity-40"
+                    className="h-10 w-10 rounded-[8px] border border-line bg-island-strong text-[18px] text-ink-mid hover:bg-hover disabled:opacity-40"
                   >
                     +
                   </button>
@@ -244,18 +245,18 @@ es.addEventListener("error", (ev) => {
                 <label className="mb-1 block text-[13px] font-medium text-ink-mid">
                   讨论模式
                 </label>
-                <select
+                <SelectInput
                   value={mode}
                   onChange={(e) => setMode(e.target.value as "debate" | "relay")}
                   disabled={status === "running"}
-                  className="w-full rounded-[10px] border border-line bg-island-strong px-3 py-2 text-[15px] text-ink outline-none  disabled:opacity-50"
+                  aria-label="讨论模式"
                 >
-{MODES.map((m) => (
+                  {MODES.map((m) => (
                     <option key={m.value} value={m.value}>
                       {m.label}
                     </option>
                   ))}
-                </select>
+                </SelectInput>
                 <p className="mt-1 text-[12px] text-ink-faint">
                   {MODES.find((m) => m.value === mode)?.desc}
                 </p>
@@ -310,13 +311,14 @@ es.addEventListener("error", (ev) => {
               )}
             </div>
 
-            <button
+            <Button
+              variant="primary"
               onClick={start}
               disabled={busy || status === "running" || selected.size === 0}
-              className="mt-5 w-full rounded-xl bg-ink px-4 py-3 text-[14px] font-semibold text-on-solid transition hover:bg-ink-mid disabled:cursor-not-allowed disabled:opacity-40"
+              className="mt-5 w-full rounded-xl py-3 text-[14px] font-semibold"
             >
               {status === "running" ? "群聊进行中…" : busy ? "正在发起…" : "🚀 发起群聊"}
-            </button>
+            </Button>
           </Card>
         </div>
       </div>

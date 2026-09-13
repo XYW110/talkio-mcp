@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import type { RecordEvent, SessionMeta, UsageRecord } from "../types";
 import { Card, EmptyState, NavBar, SectionLabel } from "../components/ui";
+import { Button, Pill, TextInput, type PillTone } from "../components/controls";
 
 const TOOL_LABEL: Record<string, string> = {
   consult_experts: "专家会诊",
@@ -23,12 +24,12 @@ const STATUS_LABEL: Record<string, string> = {
   error: "出错",
 };
 
-const STATUS_STYLE: Record<string, string> = {
-  ok: "bg-ok-bg text-ok-text",
-  partial: "bg-warn-bg text-warn-text",
-  all_failed: "bg-bad-bg text-bad-text",
-  no_cards: "bg-pressed text-ink-mid",
-  error: "bg-bad-bg text-bad-text",
+const STATUS_TONE: Record<string, PillTone> = {
+  ok: "ok",
+  partial: "warn",
+  all_failed: "bad",
+  no_cards: "neutral",
+  error: "bad",
 };
 
 function fmtBytes(n?: number): string {
@@ -187,13 +188,9 @@ export function RecordsPage({ onBack }: { onBack: () => void }) {
         title="会话记录"
         onBack={onBack}
         right={
-          <button
-            onClick={load}
-            className="flex h-9 w-9 items-center justify-center rounded-full text-info-text hover:bg-info-bg active:opacity-60"
-            title="刷新"
-          >
+          <Button variant="icon" onClick={load} aria-label="刷新" title="刷新">
             ⟳
-          </button>
+          </Button>
         }
       />
 
@@ -204,51 +201,49 @@ export function RecordsPage({ onBack }: { onBack: () => void }) {
       </div>
 
       {/* Search */}
-      <div className="px-4 pb-1">
-        <div className="flex items-center rounded-xl bg-hover px-3 py-2">
-          <span className="text-ink-faint">🔍</span>
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="搜索提问 / 工具 / 会话 id…"
-            className="ml-2 flex-1 bg-transparent text-[15px] outline-none"
-          />
-          {query && (
-            <button onClick={() => setQuery("")} className="text-ink-faint">
-              ✕
-            </button>
-          )}
-        </div>
+      <div className="flex items-center gap-2 px-4 pb-1">
+        <TextInput
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="🔍 搜索提问 / 工具 / 会话 id…"
+          aria-label="搜索会话记录"
+        />
+        {query && (
+          <Button variant="ghost" onClick={() => setQuery("")} aria-label="清除搜索" className="px-2">
+            ✕
+          </Button>
+        )}
       </div>
 
       {/* 时间区间筛选 */}
       <div className="flex items-center gap-2 px-4 py-1.5">
         <span className="shrink-0 text-[13px] text-ink-faint">时间</span>
-        <input
+        <TextInput
           type="date"
           value={startDate}
           max={endDate || undefined}
           onChange={(e) => setStartDate(e.target.value)}
-          className="min-w-0 flex-1 rounded-lg border border-line bg-island-strong px-2.5 py-1.5 text-[13px] text-ink-mid outline-none focus:border-info"
+          aria-label="开始日期"
         />
         <span className="text-ink-faint">—</span>
-        <input
+        <TextInput
           type="date"
           value={endDate}
           min={startDate || undefined}
           onChange={(e) => setEndDate(e.target.value)}
-          className="min-w-0 flex-1 rounded-lg border border-line bg-island-strong px-2.5 py-1.5 text-[13px] text-ink-mid outline-none focus:border-info"
+          aria-label="结束日期"
         />
         {(startDate || endDate) && (
-          <button
+          <Button
+            variant="ghost"
             onClick={() => {
               setStartDate("");
               setEndDate("");
             }}
-            className="shrink-0 rounded-full bg-hover px-2 py-1 text-[12px] text-ink-dim hover:bg-pressed"
+            className="rounded-full !px-2"
           >
             清除
-          </button>
+          </Button>
         )}
       </div>
 
@@ -395,7 +390,7 @@ function SessionDetailView({ id, onBack }: { id: string; onBack: () => void }) {
       <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-ink-dim">
         <span className="text-4xl opacity-40">⚠️</span>
         <p>{error}</p>
-        <button onClick={onBack} className="rounded-lg bg-pressed px-4 py-1.5 text-ink-mid">
+        <button onClick={onBack} className="rounded-lg bg-hover px-4 py-2 text-[13px] text-ink-mid hover:bg-pressed">
           返回列表
         </button>
       </div>
@@ -438,9 +433,9 @@ function SessionDetailView({ id, onBack }: { id: string; onBack: () => void }) {
             label="结束状态"
             value={
               done && "status" in done ? (
-                <span className={`rounded px-1.5 py-0.5 text-[12px] ${STATUS_STYLE[done.status] ?? "bg-hover text-ink-mid"}`}>
+                <Pill tone={STATUS_TONE[done.status] ?? "neutral"}>
                   {STATUS_LABEL[done.status] ?? done.status}
-                </span>
+                </Pill>
               ) : (
                 <span className="text-ink-faint">未完成</span>
               )
@@ -541,9 +536,7 @@ function EventItem({
       <Card>
         <button onClick={onToggle} className="w-full px-4 py-2.5 text-left">
           <div className="flex items-center gap-2">
-            <span className={`rounded px-1.5 py-0.5 text-[11px] ${event.ok ? "bg-ok-bg text-ok-text" : "bg-bad-bg text-bad-text"}`}>
-              {event.ok ? "成功" : "失败"}
-            </span>
+            <Pill tone={event.ok ? "ok" : "bad"}>{event.ok ? "成功" : "失败"}</Pill>
             <span className="truncate font-mono text-[12px] text-ink-dim">{event.cardId}</span>
             {event.usage && (
               <span className="ml-auto shrink-0 text-[11px] text-ink-faint">{fmtUsage(event.usage)}</span>
@@ -627,9 +620,7 @@ function EventItem({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="text-[14px] font-medium text-ink">{event.expertName}</span>
-            <span className="rounded bg-info-bg px-1.5 py-0.5 text-[10px] text-info-text">
-              互评投票
-            </span>
+            <Pill tone="info">互评投票</Pill>
             {event.usage && (
               <span className="ml-auto text-[11px] text-ink-faint">{fmtUsage(event.usage)}</span>
             )}

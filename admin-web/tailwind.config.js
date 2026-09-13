@@ -4,15 +4,20 @@ export default {
   theme: {
     extend: {
       colors: {
-        // 语义色板：映射到 index.css 中的 snow-app design tokens（亮/暗自动切换）
+        // 语义色板：映射到 tokens.generated.css 中的 snowapp design tokens（24 preset × mode 切换）
         canvas: "var(--canvas)",
         island: "var(--surface-island)",
         "island-strong": "var(--surface-island-strong)",
         "island-muted": "var(--surface-island-muted)",
+        "surface-2": "var(--surface-2)",
+        "surface-3": "var(--surface-3)",
+        "surface-chrome": "var(--surface-chrome)",
         hover: "var(--bg-hover)",
         pressed: "var(--bg-active)",
         line: "var(--border-color)",
+        "border-strong": "var(--border-strong)",
         "on-solid": "var(--on-solid)",
+        "accent-ink": "var(--accent-ink)",
         ink: {
           DEFAULT: "var(--text-primary)",
           mid: "var(--text-secondary)",
@@ -40,8 +45,18 @@ export default {
           text: "var(--accent-amber-text)",
         },
       },
+      borderRadius: {
+        sm: "var(--radius-sm)",
+        md: "var(--radius-md)",
+        lg: "var(--radius-lg)",
+        xl: "var(--radius-xl)",
+      },
+      spacing: {
+        island: "var(--gap-island)",
+      },
       boxShadow: {
         island: "var(--island-shadow)",
+        soft: "var(--island-shadow-soft)",
       },
     },
   },
