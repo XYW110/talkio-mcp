@@ -32,6 +32,11 @@ export interface ModelConfig {
   enabled: boolean;
   /** 思考强度（reasoning 模型专用） */
   thinkingLevel?: ThinkingLevel;
+  /**
+   * 可选模型分级（正整数）：仅 admin 展示排序（tier 降序在前，无 tier 在后保持原序）；
+   * 不参与任何选卡/prompt 逻辑。与后端 src/config.ts modelSchema.tier 对应。
+   */
+  tier?: number;
 }
 
 export interface CardConfig {
@@ -41,6 +46,63 @@ export interface CardConfig {
   modelId: string;
   enabled: boolean;
   isDefault?: boolean;
+  /**
+   * 可选信号标签：select:"auto" 信号路由选卡的候选依据；
+   * 值域 = SIGNAL_GROUPS（下方常量副本）。空数组视为未声明。
+   */
+  signals?: string[];
+}
+
+// ── 信号组常量（P2-A）──
+// 注意：这是后端 src/tools/signal-routing.ts 中 SIGNAL_GROUPS 的前端副本，
+// 两处值域需人工保持同步（改动任一侧时务必同步另一侧）。
+
+/** 内置信号组 id 列表（副本，来源：src/tools/signal-routing.ts 的 SIGNAL_GROUPS） */
+export const SIGNAL_GROUPS = [
+  "sql-data",
+  "security",
+  "infra",
+  "ml",
+  "api",
+  "frontend",
+  "cost",
+  "pipeline",
+  "writing",
+  "general",
+] as const;
+
+export type SignalId = (typeof SIGNAL_GROUPS)[number];
+
+/** 信号组 → 中文显示名（仅 admin 展示用） */
+export const SIGNAL_GROUP_LABELS: Record<SignalId, string> = {
+  "sql-data": "数据/SQL",
+  security: "安全",
+  infra: "基础设施",
+  ml: "AI/机器学习",
+  api: "API/集成",
+  frontend: "前端",
+  cost: "成本",
+  pipeline: "流水线",
+  writing: "写作/文档",
+  general: "通用兜底",
+};
+
+/**
+ * tier 稳定排序（P3-B）：有 tier 的按 tier 降序在前（同 tier 保持原序），
+ * 无 tier 的在后保持原序。仅展示排序，不影响任何数据流。
+ */
+export function sortByTierDesc<T extends { tier?: number }>(list: T[]): T[] {
+  return list
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => {
+      const ta = a.item.tier;
+      const tb = b.item.tier;
+      if (ta !== undefined && tb !== undefined && ta !== tb) return tb - ta;
+      if (ta !== undefined && tb === undefined) return -1;
+      if (ta === undefined && tb !== undefined) return 1;
+      return a.index - b.index;
+    })
+    .map(({ item }) => item);
 }
 
 export interface ConfigFile {
@@ -48,6 +110,8 @@ export interface ConfigFile {
   experts: Expert[];
   models: ModelConfig[];
   cards: CardConfig[];
+  /** 工具开关（admin 暂不编辑；加载/保存时原样透传避免被清掉） */
+  disabledTools?: string[];
 }
 
 export interface ProbeRequest {
@@ -58,6 +122,8 @@ export interface ProbeRequest {
 export interface ProbeModel {
   id: string;
   ownedBy?: string;
+  /** 可选分级（探测端点通常不返回；存在时 ModelPicker 按 tier 降序稳定排序） */
+  tier?: number;
 }
 
 export interface SaveResult {

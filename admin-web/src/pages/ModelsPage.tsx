@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ModelConfig, ProviderConfig, ThinkingLevel } from "../types";
+import { sortByTierDesc } from "../types";
 import {
   Card,
   EmptyState,
@@ -87,7 +88,7 @@ export function ModelsPage({ models, providers, onUpsert, onDelete, onDeleteMany
     setSelected(new Set());
   };
 
-  // 按 provider 分组
+  // 按 provider 分组；组内按 tier 稳定排序（P3-B：tier 降序在前，无 tier 在后保持原序）
   const grouped = useMemo(() => {
     const map = new Map<string, ModelConfig[]>();
     for (const m of models) {
@@ -95,7 +96,9 @@ export function ModelsPage({ models, providers, onUpsert, onDelete, onDeleteMany
       list.push(m);
       map.set(m.providerId, list);
     }
-    return [...map.entries()];
+    return [...map.entries()].map(
+      ([providerId, list]) => [providerId, sortByTierDesc(list)] as const,
+    );
   }, [models]);
 
   const providerName = (id: string) => {
@@ -228,6 +231,11 @@ function ModelRow({
                 已禁用
               </span>
             )}
+            {model.tier !== undefined && (
+              <span className="rounded bg-info-bg px-1.5 py-0.5 text-[10px] text-info-text">
+                T{model.tier}
+              </span>
+            )}
           </div>
           <p className="mt-0.5 truncate font-mono text-[12px] leading-relaxed text-ink-dim">
             {model.modelId}
@@ -289,6 +297,9 @@ function ModelEditOverlay({
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel | "">(
     initial?.thinkingLevel ?? "",
   );
+  const [tier, setTier] = useState(
+    initial?.tier !== undefined ? String(initial.tier) : "",
+  );
 
   // provider 变化时自动拼 id 预览（仅新建时）
   const previewId = useMemo(() => {
@@ -303,6 +314,14 @@ function ModelEditOverlay({
     if (isNew && existingIds.includes(previewId)) {
       return window.alert(`模型 id「${previewId}」已存在`);
     }
+    // tier：空 = 不设分级（落盘删键）；填写则须为 1-100 的正整数（与后端 zod 一致）
+    const tierValue = tier.trim() === "" ? undefined : Number(tier);
+    if (
+      tierValue !== undefined &&
+      (!Number.isInteger(tierValue) || tierValue <= 0 || tierValue > 100)
+    ) {
+      return window.alert("分级 tier 需为 1-100 的正整数，或留空不设分级");
+    }
     onSave({
       id: isNew ? previewId : id,
       providerId,
@@ -310,6 +329,7 @@ function ModelEditOverlay({
       ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
       enabled,
       ...(thinkingLevel ? { thinkingLevel } : {}),
+      ...(tierValue !== undefined ? { tier: tierValue } : {}),
     });
     onClose();
   };
@@ -374,6 +394,18 @@ function ModelEditOverlay({
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
                   placeholder="可选，例如 GPT-4o"
+                  className="flex-1 bg-transparent text-[15px] text-ink outline-none placeholder:text-ink-faint"
+                />
+              </div>
+
+              {/* tier（P3-B：仅展示排序用，不参与选卡） */}
+              <div className="flex items-center border-b border-line px-4 py-3">
+                <span className="w-20 shrink-0 text-[15px] text-ink-dim">分级 tier</span>
+                <input
+                  value={tier}
+                  onChange={(e) => setTier(e.target.value.replace(/[^\d]/g, ""))}
+                  inputMode="numeric"
+                  placeholder="可选，1-100，越大越靠前"
                   className="flex-1 bg-transparent text-[15px] text-ink outline-none placeholder:text-ink-faint"
                 />
               </div>

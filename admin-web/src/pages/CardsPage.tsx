@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import type { CardConfig, Expert, ModelConfig, ProviderConfig } from "../types";
+import type { CardConfig, Expert, ModelConfig, ProviderConfig, SignalId } from "../types";
+import { SIGNAL_GROUPS, SIGNAL_GROUP_LABELS } from "../types";
 import {
   Card,
   EmptyState,
@@ -350,6 +351,18 @@ function CardEditOverlay({
   const [expertId, setExpertId] = useState(initial?.expertId ?? enabledExperts[0]?.id ?? "");
   const [modelId, setModelId] = useState(initial?.modelId ?? enabledModels[0]?.id ?? "");
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
+  const [signals, setSignals] = useState<Set<SignalId>>(
+    () => new Set((initial?.signals ?? []) as SignalId[]),
+  );
+
+  const toggleSignal = (id: SignalId) => {
+    setSignals((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const previewId = useMemo(() => {
     if (!isNew) return id;
@@ -370,6 +383,8 @@ function CardEditOverlay({
       modelId,
       enabled,
       ...(initial?.isDefault ? { isDefault: true } : {}),
+      // 信号标签：全部取消 = 不出键（落盘删键，红线「缺省字段不写入」）
+      ...(signals.size > 0 ? { signals: [...signals] } : {}),
     });
     onClose();
   };
@@ -472,6 +487,36 @@ function CardEditOverlay({
               <div className="flex items-center justify-between px-4 py-3">
                 <span className="text-[15px] text-ink">启用此角色卡</span>
                 <Toggle checked={enabled} onChange={setEnabled} />
+              </div>
+            </Card>
+
+            <SectionLabel>信号标签</SectionLabel>
+            <Card>
+              <div className="px-4 py-3">
+                <p className="mb-2 text-[12px] leading-relaxed text-ink-faint">
+                  可不选。consult_experts / brainstorm 传 select:"auto" 时，按问题文本
+                  命中的信号组挑选候选卡；「通用兜底」表示任意话题都可参与。
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {SIGNAL_GROUPS.map((g) => {
+                    const active = signals.has(g);
+                    return (
+                      <button
+                        key={g}
+                        type="button"
+                        onClick={() => toggleSignal(g)}
+                        className={`rounded-full border px-2.5 py-1 text-[12px] transition-colors ${
+                          active
+                            ? "border-info-text bg-info-bg text-info-text"
+                            : "border-line bg-island-strong text-ink-dim hover:bg-hover"
+                        }`}
+                        title={g}
+                      >
+                        {SIGNAL_GROUP_LABELS[g]}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </Card>
           </div>

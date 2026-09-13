@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { api } from "../api";
+import { sortByTierDesc } from "../types";
 import type { ProbeModel, ProviderConfig } from "../types";
 
 interface Props {
@@ -53,13 +54,15 @@ export function ModelPicker({
 
   if (!open) return null;
 
-  const filtered = search.trim()
-    ? models.filter(
-        (m) =>
-          m.id.toLowerCase().includes(search.toLowerCase()) ||
-          (m.ownedBy ?? "").toLowerCase().includes(search.toLowerCase()),
-      )
-    : models;
+  const filtered = sortByTierDesc(
+    search.trim()
+      ? models.filter(
+          (m) =>
+            m.id.toLowerCase().includes(search.toLowerCase()) ||
+            (m.ownedBy ?? "").toLowerCase().includes(search.toLowerCase()),
+        )
+      : models,
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 sm:items-center sm:p-4">

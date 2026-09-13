@@ -55,6 +55,8 @@ export default function App() {
         experts: cfg.experts ?? [],
         models: cfg.models ?? [],
         cards: cfg.cards ?? [],
+        // 工具开关 admin 暂不编辑：原样透传，保存时不丢失该字段
+        disabledTools: cfg.disabledTools,
       });
       setError(null);
     } catch (e) {
