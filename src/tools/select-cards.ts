@@ -14,6 +14,7 @@ import type {
   ModelConfig,
   ThinkingLevel,
 } from "../types.js";
+import { selectCardsBySignals } from "./signal-routing.js";
 
 /** Default cap for unattended consult / brainstorm. */
 export const DEFAULT_CARD_LIMIT = 3;
@@ -59,10 +60,20 @@ export interface CardSelection {
   ignored: string[];
   skippedMissingKey: SkippedMissingKey[];
   truncated: ResolvedCard[];
+  /**
+   * 信号路由（P2-A）附加说明：命中信号组 / 回退默认 / 显式卡优先忽略 auto。
+   * 仅 select:"auto" 路径产生；默认路径与显式路径（不带 auto）保持 undefined，
+   * 报告输出与现状逐字节一致。
+   */
+  autoNotes?: string[];
 }
 
 export interface SelectCardsOptions {
   defaultLimit: number;
+  /** 选卡策略：auto = 按问题文本信号路由自动选卡（缺省/undefined 走默认卡逻辑） */
+  select?: "auto";
+  /** 信号匹配用的文本（consult=question，brainstorm=topic）；select:"auto" 时必传 */
+  text?: string;
 }
 
 /** True when mock mode is on, or the provider's env var is non-empty. */
@@ -172,8 +183,60 @@ function selectDefault(
 }
 
 /**
+ * 信号路径（P2-A，select:"auto" 专用）：按 SIGNAL_KEYWORDS 命中信号组 →
+ * 取「signals 有交集或声明 general」的 enabled 卡 → key 过滤 → 文件序截断。
+ * 零命中（无信号组命中或无候选卡）→ 回退默认卡逻辑，notes 注明。
+ */
+function selectBySignals(
+  config: AppConfig,
+  text: string,
+  defaultLimit: number
+): CardSelection {
+  const autoNotes: string[] = [];
+  const match = selectCardsBySignals(config, text);
+  if (!match) {
+    autoNotes.push("信号未命中，已回退默认卡");
+    return {
+      ...selectDefault(config, enabledCards(config), defaultLimit),
+      autoNotes,
+    };
+  }
+
+  const withKey: ResolvedCard[] = [];
+  const skippedMissingKey: SkippedMissingKey[] = [];
+  for (const card of match.cards) {
+    const resolved = resolveCard(card, config);
+    if (!resolved) continue;
+    if (hasProviderKey(config, resolved.providerName)) {
+      withKey.push(resolved);
+    } else {
+      skippedMissingKey.push({
+        card,
+        apiKeyEnv: missingKeyEnv(config, resolved.providerName),
+      });
+    }
+  }
+  const limit = Math.max(0, defaultLimit);
+  const groups = match.matched.join("、");
+  autoNotes.push(
+    groups
+      ? `信号路由命中: ${groups}（候选 ${match.cards.length} 张卡）`
+      : `信号路由: 命中 general 兜底卡（候选 ${match.cards.length} 张卡）`
+  );
+  return {
+    selected: withKey.slice(0, limit),
+    ignored: [],
+    skippedMissingKey,
+    truncated: withKey.slice(limit),
+    autoNotes,
+  };
+}
+
+/**
  * Resolve which cards a tool should call.
- * Empty / omitted ids → default path. Non-empty ids → explicit path.
+ * - 显式非空 ids → 显式路径（select:"auto" 被忽略并在 notes 注明，保持宽容）；
+ * - 空/省略 ids + select:"auto" → 信号路由路径（零命中回退默认卡）；
+ * - 其余 → 默认路径（与历史行为完全一致，autoNotes 缺省）。
  */
 export function selectCardsForTool(
   config: AppConfig,
@@ -182,7 +245,21 @@ export function selectCardsForTool(
 ): CardSelection {
   const enabled = enabledCards(config);
   if (ids && ids.length > 0) {
-    return selectExplicit(config, ids, enabled);
+    const selection = selectExplicit(config, ids, enabled);
+    if (options.select === "auto") {
+      return {
+        ...selection,
+        autoNotes: ["已显式指定角色卡列表，忽略 select:auto"],
+      };
+    }
+    return selection;
+  }
+  if (options.select === "auto") {
+    return selectBySignals(
+      config,
+      options.text ?? "",
+      options.defaultLimit
+    );
   }
   return selectDefault(config, enabled, options.defaultLimit);
 }
@@ -206,6 +283,12 @@ export function formatSelectionNotes(
   defaultLimit: number
 ): string {
   const parts: string[] = [];
+  // 信号路由注记（P2-A）排在最前；默认/显式路径为 undefined，不影响现状输出。
+  if (selection.autoNotes && selection.autoNotes.length > 0) {
+    for (const note of selection.autoNotes) {
+      parts.push(`> ${note}`);
+    }
+  }
   if (selection.skippedMissingKey.length > 0) {
     const items = selection.skippedMissingKey
       .map((s) => `${s.card.name}（缺 ${s.apiKeyEnv}）`)

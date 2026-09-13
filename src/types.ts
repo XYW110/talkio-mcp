@@ -8,6 +8,7 @@
  */
 
 import type { ChatMessage, ChatParams, ChatResult, ProviderAdapter, ThinkingLevel } from "./providers/adapter.js";
+import type { SignalId } from "./tools/signal-routing.js";
 
 export type { ChatMessage, ChatParams, ChatResult, ProviderAdapter, ThinkingLevel };
 
@@ -65,6 +66,11 @@ export interface ModelConfig {
   enabled: boolean;
   /** 思考强度（reasoning 模型专用；undefined = 不传额外参数，使用模型默认行为） */
   thinkingLevel?: ThinkingLevel;
+  /**
+   * 可选模型分级（P3-B，council-enhancement）：正整数，仅用于 admin 展示排序
+   * （tier 降序在前，无 tier 在后保持原序）；不参与任何选卡/prompt 逻辑。
+   */
+  tier?: number;
 }
 
 /** 角色卡 —— 专家 × 模型的绑定实体（第三个独立概念） */
@@ -81,6 +87,12 @@ export interface CardConfig {
   enabled: boolean;
   /** 是否默认卡（决定不指定 cards 时优先选哪张） */
   isDefault?: boolean;
+  /**
+   * 可选信号标签（P2-A，council-enhancement）：值为 SIGNAL_GROUPS 内置信号组枚举，
+   * select:"auto" 时按问题文本命中的信号组筛选候选卡；声明 general 的卡任意话题可参与。
+   * 空数组视为未声明。
+   */
+  signals?: SignalId[];
 }
 
 /**
@@ -92,6 +104,12 @@ export interface AppConfig {
   experts: ExpertConfig[];
   models: ModelConfig[];
   cards: CardConfig[];
+  /**
+   * 可选工具开关（P2-B，council-enhancement）：disabledTools 中列出的工具不注册
+   * （tools/list 不可见）。核心保护名单（list_cards/consult_experts/brainstorm）
+   * 在 loadConfig 校验拒绝；缺省 = 全部工具可用。
+   */
+  disabledTools?: string[];
 }
 
 /** experts.json 文件的整体形态（校验前为 unknown，校验后见 config.ts 的 zod 推断） */

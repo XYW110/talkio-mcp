@@ -243,6 +243,80 @@ describe("loadConfig", () => {
     });
   });
 
+  describe("signals / tier / disabledTools（task 09-13-council-enhancement-p2）", () => {
+    it("卡 signals 合法值加载通过；缺省不出键（旧文件直接加载）", async () => {
+      const raw = JSON.parse(makeValidExpertsJson()) as {
+        cards: Array<{ id: string; signals?: string[] }>;
+      };
+      raw.cards[0]!.signals = ["sql-data", "general"];
+      const config = await loadConfig(writeFixture(JSON.stringify(raw)));
+
+      expect(config.cards[0]!.signals).toEqual(["sql-data", "general"]);
+      expect(config.cards[1]).not.toHaveProperty("signals");
+    });
+
+    it("卡 signals 含非法信号组时报校验错误", async () => {
+      const raw = JSON.parse(makeValidExpertsJson()) as {
+        cards: Array<{ id: string; signals?: string[] }>;
+      };
+      raw.cards[0]!.signals = ["not-a-signal"];
+      await expect(loadConfig(writeFixture(JSON.stringify(raw)))).rejects.toThrow();
+    });
+
+    it("模型 tier 合法正整数加载通过；非法值拒绝；缺省不出键", async () => {
+      const raw = JSON.parse(makeValidExpertsJson()) as {
+        models: Array<{ id: string; tier?: number }>;
+      };
+      raw.models[0]!.tier = 3;
+      const config = await loadConfig(writeFixture(JSON.stringify(raw)));
+
+      expect(config.models[0]!.tier).toBe(3);
+      expect(config.models[1]).not.toHaveProperty("tier");
+
+      for (const bad of [0, -1, 1.5, 101]) {
+        const broken = JSON.parse(makeValidExpertsJson()) as {
+          models: Array<{ id: string; tier?: number }>;
+        };
+        broken.models[0]!.tier = bad;
+        await expect(
+          loadConfig(writeFixture(JSON.stringify(broken)))
+        ).rejects.toThrow();
+      }
+    });
+
+    it("disabledTools 缺省不出键；禁用 brainstorm_followup 合法", async () => {
+      const baseline = await loadConfig(writeFixture(makeValidExpertsJson()));
+      expect(baseline).not.toHaveProperty("disabledTools");
+
+      const raw = JSON.parse(makeValidExpertsJson()) as {
+        disabledTools?: string[];
+      };
+      raw.disabledTools = ["brainstorm_followup"];
+      const config = await loadConfig(writeFixture(JSON.stringify(raw)));
+      expect(config.disabledTools).toEqual(["brainstorm_followup"]);
+    });
+
+    it("disabledTools 禁用核心工具时 loadConfig 报错（保护名单）", async () => {
+      for (const name of ["list_cards", "consult_experts", "brainstorm"]) {
+        const raw = JSON.parse(makeValidExpertsJson()) as {
+          disabledTools?: string[];
+        };
+        raw.disabledTools = [name];
+        await expect(
+          loadConfig(writeFixture(JSON.stringify(raw)))
+        ).rejects.toThrow();
+      }
+    });
+
+    it("disabledTools 含未知工具名时 loadConfig 报错", async () => {
+      const raw = JSON.parse(makeValidExpertsJson()) as {
+        disabledTools?: string[];
+      };
+      raw.disabledTools = ["no_such_tool"];
+      await expect(loadConfig(writeFixture(JSON.stringify(raw)))).rejects.toThrow();
+    });
+  });
+
   describe("旧格式迁移", () => {
     it("检测到旧格式自动迁移并写回，生成 .bak 备份", async () => {
       const filePath = writeFixture(makeLegacyExpertsJson());

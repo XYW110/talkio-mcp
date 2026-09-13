@@ -537,6 +537,105 @@ describe("互评投票与裁决者（task 09-13-peer-review-judge）", () => {
   });
 });
 
+describe("信号路由选卡（task 09-13-council-enhancement-p2）", () => {
+  /** 给 councilConfig 的卡挂信号标签 */
+  function configWithSignals(adapter: ProviderAdapter): AppConfig {
+    const config = councilConfig(adapter);
+    config.cards[0] = { ...config.cards[0]!, signals: ["sql-data"] };
+    config.cards[1] = { ...config.cards[1]!, signals: ["security"] };
+    return config;
+  }
+
+  it("consult select:auto：问题命中 sql-data 时只调用对应信号卡，notes 注明命中", async () => {
+    clearKeys();
+    process.env.OPENAI_API_KEY = "sk-o";
+    process.env.ANTHROPIC_API_KEY = "sk-a";
+    process.env.DEEPSEEK_API_KEY = "sk-d";
+    const adapter = makeEchoAdapter();
+    const result = await handleConsultExperts(
+      { question: "这个 SQL 查询优化怎么做？", select: "auto" },
+      configWithSignals(adapter)
+    );
+    expect(result.isError).not.toBe(true);
+    // 候选只有 c-architect（sql-data），其余卡无 signals 不参与
+    expect(adapter.calls).toHaveLength(1);
+    const text = textOf(result);
+    expect(text).toContain("信号路由命中: sql-data");
+    expect(text).toContain("c-architect");
+    expect(text).not.toContain("已显式指定角色卡列表");
+  });
+
+  it("consult select:auto：零命中回退默认卡并在 notes 注明", async () => {
+    clearKeys();
+    process.env.OPENAI_API_KEY = "sk-o";
+    process.env.ANTHROPIC_API_KEY = "sk-a";
+    process.env.DEEPSEEK_API_KEY = "sk-d";
+    const adapter = makeEchoAdapter();
+    const result = await handleConsultExperts(
+      { question: "今天天气怎么样", select: "auto" },
+      configWithSignals(adapter)
+    );
+    expect(result.isError).not.toBe(true);
+    // 回退默认卡逻辑：三把 key 齐时默认前 3 卡
+    expect(adapter.calls).toHaveLength(3);
+    expect(textOf(result)).toContain("信号未命中，已回退默认卡");
+  });
+
+  it("显式 cards + select:auto：auto 被忽略并在 notes 注明", async () => {
+    clearKeys();
+    process.env.OPENAI_API_KEY = "sk-o";
+    process.env.ANTHROPIC_API_KEY = "sk-a";
+    const adapter = makeEchoAdapter();
+    const result = await handleConsultExperts(
+      {
+        question: "这个 SQL 查询优化怎么做？",
+        cards: ["c-architect", "c-reviewer"],
+        select: "auto",
+      },
+      configWithSignals(adapter)
+    );
+    expect(result.isError).not.toBe(true);
+    // 显式卡优先：2 张卡都被调用，不走信号路径
+    expect(adapter.calls).toHaveLength(2);
+    const text = textOf(result);
+    expect(text).toContain("已显式指定角色卡列表，忽略 select:auto");
+    expect(text).not.toContain("信号路由命中");
+  });
+
+  it("红线 AC1 回归：不传 select 时信号标签不参与选卡，报告无 auto 注记", async () => {
+    clearKeys();
+    process.env.OPENAI_API_KEY = "sk-o";
+    process.env.ANTHROPIC_API_KEY = "sk-a";
+    process.env.DEEPSEEK_API_KEY = "sk-d";
+    const adapter = makeEchoAdapter();
+    const result = await handleConsultExperts(
+      { question: "这个 SQL 查询优化怎么做？" },
+      configWithSignals(adapter)
+    );
+    expect(result.isError).not.toBe(true);
+    // 默认路径：与现状一致（前 3 张卡），与是否命中信号无关
+    expect(adapter.calls).toHaveLength(3);
+    const text = textOf(result);
+    expect(text).not.toContain("信号路由");
+    expect(text).not.toContain("信号未命中");
+  });
+
+  it("brainstorm select:auto：主题命中 security 时只调用对应信号卡", async () => {
+    clearKeys();
+    process.env.OPENAI_API_KEY = "sk-o";
+    process.env.ANTHROPIC_API_KEY = "sk-a";
+    const adapter = makeEchoAdapter();
+    const result = await handleBrainstorm(
+      { topic: "安全鉴权方案评审", select: "auto" },
+      configWithSignals(adapter)
+    );
+    expect(result.isError).not.toBe(true);
+    // 1 张信号卡（c-security）× 1 轮 + 1 总结
+    expect(adapter.calls).toHaveLength(2);
+    expect(textOf(result)).toContain("信号路由命中: security");
+  });
+});
+
 // 小工具：便捷创建会话（meta 由 startSession 写入，done 由 finish 写入）
 async function createSession(
   tool: "consult_experts" | "brainstorm" | "brainstorm_followup",

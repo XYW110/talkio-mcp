@@ -67,6 +67,12 @@ export const brainstormSchema = {
     .describe(
       "裁决者角色卡 id:由该卡(而非第一张卡)执行最终综合;该卡若同时参与议事会被剔除;无效时回退第一张卡并在报告注明",
     ),
+  select: z
+    .enum(["auto"])
+    .optional()
+    .describe(
+      "选卡策略：auto=按主题内容信号路由自动选卡；缺省按 cards/默认卡逻辑",
+    ),
 };
 
 /** Inferred argument type for the handler. */
@@ -78,6 +84,7 @@ export type BrainstormArgs = {
   summarize?: boolean;
   vote?: boolean;
   judgeCard?: string;
+  select?: "auto";
 };
 
 /**
@@ -98,6 +105,8 @@ export async function handleBrainstorm(
 
   const selection = selectCardsForTool(config, args.cards, {
     defaultLimit: DEFAULT_CARD_LIMIT,
+    select: args.select,
+    text: args.topic,
   });
 
   if (selection.selected.length === 0) {

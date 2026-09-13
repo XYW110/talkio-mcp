@@ -28,7 +28,17 @@ import type {
   ProviderConfig,
   ProviderCredentials,
 } from "./types.js";
+import { SIGNAL_GROUPS } from "./tools/signal-routing.js";
 import { defaultLogger, type Logger } from "./utils/log.js";
+
+/**
+ * 工具开关（P2-B）保护名单与已知工具表：
+ * - PROTECTED_TOOLS：核心工具，disabledTools 中出现即 loadConfig 失败；
+ * - KNOWN_TOOLS：全部可注册的工具名，disabledTools 含未知名字 → loadConfig 失败。
+ * server.ts 新增/删除工具时必须同步维护 KNOWN_TOOLS。
+ */
+export const PROTECTED_TOOLS = ["list_cards", "consult_experts", "brainstorm"] as const;
+export const KNOWN_TOOLS = [...PROTECTED_TOOLS, "brainstorm_followup"] as const;
 
 // ---------------------------------------------------------------------------
 // zod schemas（描述 experts.json 的新三段结构）
@@ -77,6 +87,9 @@ const modelSchema = z.object({
   displayName: z.string().min(1),
   enabled: z.boolean().default(true),
   thinkingLevel: z.enum(["high", "medium", "low", "disabled"]).optional(),
+  // 可选模型分级（P3-B）：正整数（上限 100 防手滑），仅 admin 展示排序用。
+  // 普通 optional 保证缺省时 zod 产物不新增该键。
+  tier: z.number().int().positive().max(100).optional(),
 });
 
 const cardSchema = z.object({
@@ -89,6 +102,9 @@ const cardSchema = z.object({
   modelId: z.string().min(1),
   enabled: z.boolean().default(true),
   isDefault: z.boolean().optional(),
+  // 可选信号标签（P2-A）：值域 = src/tools/signal-routing.ts 的 SIGNAL_GROUPS 枚举；
+  // 旧 experts.json 无此字段照常加载；空数组视为未声明。
+  signals: z.array(z.enum(SIGNAL_GROUPS)).optional(),
 });
 
 const expertsFileSchema = z.object({
@@ -97,6 +113,9 @@ const expertsFileSchema = z.object({
   experts: z.array(expertSchema),
   models: z.array(modelSchema).default([]),
   cards: z.array(cardSchema).default([]),
+  // 可选工具开关（P2-B）：缺省 = 全部工具可用；内容合法性在 loadConfig 专项校验
+  // （禁用核心工具 / 未知工具名 → fail fast）。
+  disabledTools: z.array(z.string()).optional(),
 });
 
 type ExpertsFileParsed = z.infer<typeof expertsFileSchema>;
@@ -294,6 +313,31 @@ function checkUniqueIds(
   }
 }
 
+/**
+ * disabledTools 内容校验（P2-B）：禁用核心保护名单内的工具、或出现未知工具名
+ * （不在 KNOWN_TOOLS 表内，常见于拼写错误）都是配置错误，启动即失败。
+ */
+function validateDisabledTools(
+  disabledTools: string[] | undefined,
+  fatalErrors: string[]
+): void {
+  if (!disabledTools || disabledTools.length === 0) return;
+  const seen = new Set<string>();
+  for (const name of disabledTools) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+    if ((PROTECTED_TOOLS as readonly string[]).includes(name)) {
+      fatalErrors.push(
+        `disabledTools 不允许禁用核心工具 "${name}"（保护名单: ${PROTECTED_TOOLS.join(", ")}）`
+      );
+    } else if (!(KNOWN_TOOLS as readonly string[]).includes(name)) {
+      fatalErrors.push(
+        `disabledTools 含未知工具名 "${name}"（已知工具: ${KNOWN_TOOLS.join(", ")}）`
+      );
+    }
+  }
+}
+
 /** 引用完整性：cards→experts/models，models→providers。 */
 function validateReferences(
   file: ExpertsFileParsed,
@@ -410,6 +454,9 @@ export async function loadConfig(
   // ---- 引用完整性 ----
   validateReferences(file, fatalErrors);
 
+  // ---- 工具开关内容校验（核心保护名单 / 未知工具名，fail fast） ----
+  validateDisabledTools(file.disabledTools, fatalErrors);
+
   if (fatalErrors.length > 0) {
     logger.error(
       `[config] 配置文件存在 ${fatalErrors.length} 处致命问题 ${resolvedPath}：`
@@ -428,6 +475,8 @@ export async function loadConfig(
     experts: file.experts,
     models: file.models,
     cards: file.cards,
+    // 缺省不出键（红线：旧 experts.json 直接加载，不写入新字段）
+    ...(file.disabledTools ? { disabledTools: file.disabledTools } : {}),
   };
 }
 

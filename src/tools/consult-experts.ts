@@ -39,6 +39,12 @@ export const consultExpertsSchema = {
     .boolean()
     .optional()
     .describe("是否并行调用专家(默认 true),false 时按顺序逐个调用"),
+  select: z
+    .enum(["auto"])
+    .optional()
+    .describe(
+      "选卡策略：auto=按问题内容信号路由自动选卡；缺省按 cards/默认卡逻辑",
+    ),
 };
 
 /** Inferred argument type for the handler. */
@@ -47,6 +53,7 @@ export type ConsultExpertsArgs = {
   context?: string;
   cards?: string[];
   parallel?: boolean;
+  select?: "auto";
 };
 
 /**
@@ -65,6 +72,8 @@ export async function handleConsultExperts(
 
   const selection = selectCardsForTool(config, args.cards, {
     defaultLimit: DEFAULT_CARD_LIMIT,
+    select: args.select,
+    text: args.question,
   });
 
   if (selection.selected.length === 0) {

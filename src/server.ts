@@ -42,8 +42,15 @@ export function createServer(
   // 流式增量通知（design §1）：logging notifications 统一由闭包内注入。
   const notifier = createMcpNotifier(server);
 
-// list_cards: discover configured role-card ids before consulting.
-  server.registerTool(
+  // 工具开关（P2-B）：disabledTools 列出的工具不注册（tools/list 不可见、调用
+  // 返回未知工具）。核心保护名单在 loadConfig 校验（禁用核心/未知工具启动即报错），
+  // 这里逐个工具注册前再兜底检查一次。
+  const isToolDisabled = (name: string): boolean =>
+    config.disabledTools?.includes(name) ?? false;
+
+  // list_cards: discover configured role-card ids before consulting.
+  if (!isToolDisabled("list_cards")) {
+    server.registerTool(
     "list_cards",
     {
       title: "列出角色卡",
@@ -55,10 +62,12 @@ export function createServer(
       const result = await handleListCards(args, config);
       return result;
     }
-  );
+    );
+  }
 
   // consult_experts: single-round parallel consultation.
-  server.registerTool(
+  if (!isToolDisabled("consult_experts")) {
+    server.registerTool(
     "consult_experts",
     {
       title: "专家团咨询",
@@ -80,10 +89,12 @@ export function createServer(
       finishOnError(record, result);
       return result;
     }
-  );
+    );
+  }
 
 // brainstorm: multi-round debate / relay dialogue.
-  server.registerTool(
+  if (!isToolDisabled("brainstorm")) {
+    server.registerTool(
     "brainstorm",
     {
       title: "角色卡头脑风暴",
@@ -106,10 +117,12 @@ export function createServer(
       finishOnError(record, result);
       return result;
     }
-  );
+    );
+  }
 
   // brainstorm_followup: deepen a prior brainstorm with a follow-up question.
-  server.registerTool(
+  if (!isToolDisabled("brainstorm_followup")) {
+    server.registerTool(
     "brainstorm_followup",
     {
       title: "追问深化",
@@ -133,7 +146,8 @@ export function createServer(
       finishOnError(record, result);
       return result;
     },
-  );
+    );
+  }
 
   return server;
 }
