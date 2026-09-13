@@ -376,6 +376,16 @@ function SessionDetailView({ id, onBack }: { id: string; onBack: () => void }) {
     () => (detail?.events ?? []).filter((e) => e.type !== "meta" && e.type !== "done"),
     [detail],
   );
+  // cardId → 专家展示名（来自 cards 事件快照）：vote 事件的 voterCardId 反查用。
+  const cardNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const ev of detail?.events ?? []) {
+      if (ev.type === "cards") {
+        for (const c of ev.cards) m.set(c.cardId, c.expertName);
+      }
+    }
+    return m;
+  }, [detail]);
 
   if (loading) {
     return <div className="flex h-full items-center justify-center text-sm text-ink-dim">加载中…</div>;
@@ -449,6 +459,7 @@ function SessionDetailView({ id, onBack }: { id: string; onBack: () => void }) {
               <EventItem
                 key={i}
                 event={ev}
+                cardNameById={cardNameById}
                 expanded={expanded[String(i)] ?? false}
                 onToggle={() => setExpanded((prev) => ({ ...prev, [String(i)]: !prev[String(i)] }))}
               />
@@ -495,10 +506,12 @@ function InfoRow({ label, value, isLast }: { label: string; value: React.ReactNo
 
 function EventItem({
   event,
+  cardNameById,
   expanded,
   onToggle,
 }: {
   event: RecordEvent;
+  cardNameById: Map<string, string>;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -579,7 +592,33 @@ function EventItem({
   }
 
   if (event.type === "vote") {
-    // 互评投票（R1）：与 turn 同构的简单展示。
+    // 新版（按轮聚合，P1-A）：轮次标题 + 每票一行。
+    if ("votes" in event) {
+      return (
+        <Card>
+          <div className="px-4 py-2.5">
+            <p className="text-[13px] text-ink-faint">
+              互评投票（第 {event.round} 轮后 · {event.votes.length} 票）
+            </p>
+            <div className="mt-2 space-y-1.5">
+              {event.votes.map((v, i) => (
+                <div key={i} className="rounded-xl bg-island-strong px-3 py-2">
+                  <p className="text-[13px] font-medium text-ink">
+                    {cardNameById.get(v.voterCardId) ?? v.voterCardId}
+                    {" → "}
+                    <span className="text-info-text">{v.votedForAlias || "（未识别代号）"}</span>
+                  </p>
+                  <pre className="mt-1 whitespace-pre-wrap break-words font-sans text-[13px] leading-relaxed text-ink-mid">
+                    {v.reason}
+                  </pre>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Card>
+      );
+    }
+    // 旧版逐专家一行（仅旧 JSONL 存在）：与 turn 同构的简单展示。
     return (
       <div className="flex gap-2.5">
         <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-hover text-base">

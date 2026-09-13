@@ -18,6 +18,8 @@ export interface Expert {
   timeoutMs?: number;
   enabled: boolean;
   builtin?: boolean;
+  /** 可选推理策略（缺省/default 均为默认行为；清空 = 落盘时删除该字段） */
+  reasoningStrategy?: "systematic" | "adversarial" | "backward" | "default";
 }
 
 export type ThinkingLevel = "high" | "medium" | "low" | "disabled";
@@ -124,6 +126,18 @@ export type RecordEvent =
       content: string;
       usage?: UsageRecord;
     }
+  /** 新版 vote 事件（按轮聚合，P1-A）：每轮一条，结构化选票数组 */
+  | {
+      type: "vote";
+      ts?: string;
+      round: number;
+      votes: {
+        voterCardId: string;
+        votedForAlias: string;
+        reason: string;
+      }[];
+    }
+  /** 旧版 vote 事件（逐专家一行，仅存在于旧 JSONL）：读侧容错保留 */
   | {
       type: "vote";
       ts?: string;

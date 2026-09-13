@@ -10,6 +10,15 @@ interface Props {
 
 const ICONS = ["🏛️", "🔒", "⚡", "🔍", "💡", "💗", "🤝", "🧠", "❤️", "✍️", "📊", "🎨", "🔬", "💻", "🌐", "💰", "🌟", "🩺", "🤖"];
 
+/** 推理策略下拉选项（P1-B）：空值 = 不指定（落盘时删除该字段）。 */
+const STRATEGY_OPTIONS: Array<{ value: "" | NonNullable<Expert["reasoningStrategy"]>; label: string }> = [
+  { value: "", label: "不指定" },
+  { value: "default", label: "default（默认行为）" },
+  { value: "systematic", label: "systematic（系统化枚举）" },
+  { value: "adversarial", label: "adversarial（对抗式）" },
+  { value: "backward", label: "backward（反向推理）" },
+];
+
 function slugify(name: string): string {
   return (
     name
@@ -31,6 +40,9 @@ export function ExpertEditPage({ initial, onSave, onClose }: Props) {
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
   const [maxTokens, setMaxTokens] = useState(initial?.maxTokens ?? 2048);
   const [timeoutMs, setTimeoutMs] = useState(initial?.timeoutMs ?? 120000);
+  const [strategy, setStrategy] = useState<"" | NonNullable<Expert["reasoningStrategy"]>>(
+    initial?.reasoningStrategy ?? "",
+  );
 
   const handleSave = () => {
     const finalId = (isNew ? slugify(id || name) : initial!.id).trim();
@@ -46,6 +58,8 @@ export function ExpertEditPage({ initial, onSave, onClose }: Props) {
       timeoutMs,
       enabled,
       builtin: initial?.builtin ?? false,
+      // 清空策略 = undefined（JSON.stringify 落盘时自动删除该字段）
+      reasoningStrategy: strategy === "" ? undefined : strategy,
     });
     onClose();
   };
@@ -172,6 +186,24 @@ export function ExpertEditPage({ initial, onSave, onClose }: Props) {
                   className="w-full bg-transparent font-mono text-[13px] text-ink outline-none"
                 />
               </div>
+            </div>
+
+            {/* 推理策略（P1-B） */}
+            <div className="border-t border-line px-4 py-3">
+              <p className="mb-1 text-[12px] text-ink-faint">推理策略</p>
+              <select
+                value={strategy}
+                onChange={(e) =>
+                  setStrategy(e.target.value as "" | NonNullable<Expert["reasoningStrategy"]>)
+                }
+                className="w-full rounded-lg border border-line bg-island-strong px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-info"
+              >
+                {STRATEGY_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
             </div>
           </Card>
 
