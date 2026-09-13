@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 6
-- **Last Active**: 2026-09-04
+- **Total Sessions**: 10
+- **Last Active**: 2026-09-13
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~192 | Active |
+| `journal-1.md` | ~324 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 10 | 2026-09-13 | snowapp 主题全量改造 + P3 runs 并集 + Provider 预设 + lucide 图标 | `4b6fd71`, `affd0c2`, `dc75086`, `c618652`, `e74addd` | `master` |
 | 6 | 2026-09-04 | 会话记录落盘（session-records） | `7d480e5`, `a57f266` | `master` |
 | 5 | 2026-08-27 | list_experts 标注缺 key | `0d5147d`, `f4f1cc7` | `master` |
 | 4 | 2026-08-27 | 默认专家筛选与首次调用成本 | `4c9afb0`, `653c705`, `d60fb65` | `master` |

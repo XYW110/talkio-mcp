@@ -296,3 +296,29 @@ Completed the 00-bootstrap-guidelines task by filling 12 backend and frontend sp
 
 - P3 小改进：votedForAlias 解析放宽接受裸代号（A/B/C）
 - P3-A runs 并集立项时可直接引用本次验证的投票质量基线
+
+
+## Session 10: snowapp 主题全量改造 + P3 runs 并集 + Provider 预设 + lucide 图标
+<!-- trellis-session: v=2 fp=689042297596adbf -->
+
+**Date**: 2026-09-13
+**Task**: snowapp 主题全量改造 + P3 runs 并集 + Provider 预设 + lucide 图标
+**Branch**: `master`
+
+### Summary
+
+三任务全链路：①snowapp-restyle——OpenDesign 弃用转 Penpot，24 套 token 快照+生成脚本、主题运行时（12 preset×light/dark、防 FOUC、localStorage）、13 新组件、三档 shell，实机双主题截图验收；②council-enhancement-p3——brainstorm runs?:1|2|3 多轮并集（别名列轮换/合并调用/[K/N RUNS] 稳定性）、records run 字段、Provider 7 预设、真实 LLM 冒烟，兼容红线 runs=1 逐字节等价有测试锚定；③lucide-icons——chrome emoji 全量换 lucide-react，gzip +4.35KB，experts.json 用户数据 icon 保留。坑：ZCode hook cwd 相对路径两次踩（stub 恢复）、子代理并发限制需重试、RecordsPage/ProvidersPage 双任务同文件改提交合并为一笔
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4b6fd71` | feat(admin-web): snowapp 主题体系全量改造——24 套 token 管道 + 主题运行时 + 组件库补齐 + 三档响应式 |
+| `affd0c2` | chore(task): snowapp-restyle 规划与研究产物（Penpot token 快照/组件清单/spec 契约） |
+| `dc75086` | feat(p3): brainstorm runs 多轮并集——zod 参数/别名列轮换/合并调用/records run 字段/稳定性报告 + 测试 |
+| `c618652` | feat(admin-web): P3 前端配套 + lucide 图标切换——R{n} 徽标、Provider 7 预设、chrome emoji→lucide-react |
+| `e74addd` | docs(trellis): P3/lucide 任务产物 + records runs 契约 spec |
+
+### Status
+
+[OK] **Completed**
