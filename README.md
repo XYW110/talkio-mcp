@@ -412,14 +412,14 @@ Dockerfile 采用多阶段构建，镜像内同时包含**后端（`dist`）**�
 CI 已把镜像发布到 Docker Hub（`latest` 跟随 `master`，版本号来自 `v*` tag）：
 
 ```bash
-docker pull xyw/talkio-mcp:latest
-docker run --env-file .env -p 3100:3100 xyw/talkio-mcp
+docker pull dockercom110/talkio-mcp:latest
+docker run --env-file .env -p 3100:3100 dockercom110/talkio-mcp
 ```
 
 需固定版本部署（便于回滚）时用版本号标签：
 
 ```bash
-docker pull xyw/talkio-mcp:0.1.0
+docker pull dockercom110/talkio-mcp:0.1.0
 ```
 
 ### 构建镜像
@@ -493,7 +493,7 @@ docker compose restart
 `.github/workflows/docker-publish.yml` 负责自动化：
 
 1. **质量门禁** — `npm ci` → `npm run typecheck` → `npm test`，任一失败即终止，绝不发布坏镜像；
-2. **构建推送** — 用多阶段 `Dockerfile` 构建 `linux/amd64` 镜像并推送到 `xyw/talkio-mcp`。
+2. **构建推送** — 用多阶段 `Dockerfile` 构建 `linux/amd64` 镜像并推送到 `dockercom110/talkio-mcp`。
 
 触发规则与产出标签：
 

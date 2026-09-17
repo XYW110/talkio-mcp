@@ -6,7 +6,7 @@
 #   - workflow_dispatch  → 手动触发
 #
 # 前置配置（仓库 Settings → Secrets and variables → Actions → New repository secret）：
-#   DOCKERHUB_USERNAME  Docker Hub 用户名
+#   DOCKERHUB_USERNAME  Docker Hub 的 Docker ID（登录用户名，不是 Display Name）
 #   DOCKERHUB_TOKEN     Docker Hub Access Token（权限选 Read & Write）
 name: Docker Publish
 
@@ -21,8 +21,10 @@ concurrency:
   group: docker-publish-${{ github.ref }}
   cancel-in-progress: false
 
+# 仅镜像仓库名，不含命名空间；完整镜像名为 <DOCKERHUB_USERNAME>/<IMAGE_NAME>。
+# 命名空间取自 secret，避免硬编码后在用户名不符时静默推错位置。
 env:
-  IMAGE_NAME: xyw/talkio-mcp
+  IMAGE_NAME: talkio-mcp
 
 jobs:
   quality:
@@ -68,7 +70,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE_NAME }}
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
