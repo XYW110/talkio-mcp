@@ -25,8 +25,11 @@ ENV NODE_ENV=production
 WORKDIR /app
 
 # 生产依赖 + 默认专家配置
-COPY package*.json experts.json ./
-RUN npm ci --omit=dev
+# experts.default.json 是入库的脱敏模板（无真实密钥/内网地址），构建时复制为
+# /app/experts.json，保证镜像开箱可用；运行时可用 -v 挂载真实配置覆盖。
+COPY package*.json experts.default.json ./
+RUN npm ci --omit=dev \
+  && cp experts.default.json experts.json
 
 # 后端编译产物 + 前端静态产物
 # （SSE 模式的 /api 静态服务通过 <config目录>/admin-web/dist 托管管理界面）

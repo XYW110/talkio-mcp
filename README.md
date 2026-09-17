@@ -407,6 +407,21 @@ Dockerfile 采用多阶段构建，镜像内同时包含**后端（`dist`）**�
 - MCP SSE 端点：`http://<服务器IP>:3100/sse`
 - 管理 API：`http://<服务器IP>:3100/api/*`
 
+### 从 Docker Hub 拉取
+
+CI 已把镜像发布到 Docker Hub（`latest` 跟随 `master`，版本号来自 `v*` tag）：
+
+```bash
+docker pull xyw/talkio-mcp:latest
+docker run --env-file .env -p 3100:3100 xyw/talkio-mcp
+```
+
+需固定版本部署（便于回滚）时用版本号标签：
+
+```bash
+docker pull xyw/talkio-mcp:0.1.0
+```
+
 ### 构建镜像
 
 ```bash
@@ -464,6 +479,45 @@ docker compose restart
 ```
 
 > 管理界面已打进镜像，部署时无需再构建或单独托管前端。
+
+### 镜像内置的默认专家配置
+
+镜像内的 `/app/experts.json` 由仓库中脱敏的 `experts.default.json` 在构建时生成（保留全部内置专家人设，provider 指向 OpenAI 官方端点）。因此：
+
+- 只注入 `OPENAI_API_KEY` 即可开箱运行，或用 `TALKIO_MOCK_PROVIDER=1` 跑 mock；
+- 想使用自己的专家 / 模型 / 角色卡，把本地 `experts.json` 挂载进容器覆盖即可（见上一节）；
+- 仓库只跟踪脱敏模板，本地真实 `experts.json` 继续被 `.gitignore` 忽略，既不会被提交，也不会进入镜像构建上下文。
+
+### 自动发布到 Docker Hub
+
+`.github/workflows/docker-publish.yml` 负责自动化：
+
+1. **质量门禁** — `npm ci` → `npm run typecheck` → `npm test`，任一失败即终止，绝不发布坏镜像；
+2. **构建推送** — 用多阶段 `Dockerfile` 构建 `linux/amd64` 镜像并推送到 `xyw/talkio-mcp`。
+
+触发规则与产出标签：
+
+| 触发方式 | 产出标签 |
+| --- | --- |
+| push 到 `master` | `latest` |
+| push tag `v0.2.0` | `0.2.0`、`0.2` |
+| 手动 workflow_dispatch | 按当前 ref 规则同上 |
+
+首次使用需在 GitHub 仓库 **Settings → Secrets and variables → Actions** 添加两个 secret：
+
+| Secret | 内容 |
+| --- | --- |
+| `DOCKERHUB_USERNAME` | Docker Hub 用户名 |
+| `DOCKERHUB_TOKEN` | Docker Hub Access Token（Account Settings → Personal access tokens，权限选 **Read & Write**） |
+
+发布版本：
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0   # 推送 tag 后自动跑门禁、构建并发布版本号标签
+```
+
+> workflow 依赖仓库 secrets，fork 仓库不会自动发布，需在 fork 中自行配置同名 secret。
 
 ## 开发说明
 

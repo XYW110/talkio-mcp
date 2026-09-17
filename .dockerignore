@@ -1,8 +1,13 @@
 node_modules
 .env
+.env.*
 temp/
 dist/
 .git
 .trellis
 .snow
 *.tsbuildinfo
+# 真实专家配置（含内网地址）绝不进入构建上下文；镜像内配置来自 experts.default.json
+experts.json
+experts.json.bak*
+records/
