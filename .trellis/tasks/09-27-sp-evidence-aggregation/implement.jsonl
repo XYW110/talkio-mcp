@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端质量要求（测试覆盖/编译器门禁）"}
+{"file": ".trellis/spec/backend/dialogue-prompts.md", "reason": "既有 prompt 契约（claim-0 三语义/注入矩阵/魔鬼代言人/票文解析）——证据库与 SP 须作为新条目并入且不破坏既有矩阵"}
+{"file": ".trellis/tasks/09-27-sp-evidence-aggregation/research.md", "reason": "SP/证据锚定的文献依据与落选路线（置信度加权）"}

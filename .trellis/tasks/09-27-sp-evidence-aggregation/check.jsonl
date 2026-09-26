@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查后端改动是否符合质量规范"}
+{"file": ".trellis/spec/backend/dialogue-prompts.md", "reason": "检查注入矩阵/JSONL additive/红线是否被证据库与 SP 破坏"}
