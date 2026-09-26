@@ -75,6 +75,12 @@ export interface DialogueOptions {
    * 使多次运行之间映射不同。缺省/0 = 恒等（与现状逐字节一致）。
    */
   aliasRotation?: number;
+  /**
+   * 发起方初步分析/背景（claim-0，R1-R4）：debate 模式下第 1 轮盲答不注入，
+   * 第 ≥2 轮以 claim-0 块前置于注入块；relay 模式下随每轮 prompt（含种子轮）
+   * 在 topic 后注入。缺省/纯空白 = 无 claim-0，prompt 组装形状与现状一致。
+   */
+  context?: string;
 }
 
 /** 匿名化代号映射（R2）：按 targets 顺序分配 专家A/B/…。 */
@@ -134,27 +140,55 @@ export interface RoundVotes {
 
 // --- Prompt templates (exported for unit testing) -----------------------
 
-/** Seed instruction for round 1 (every expert answers the topic fresh). */
+/** Seed instruction for round 1 (every expert answers the topic fresh).
+ * R7（论据锚定）：要求核心主张 + 可验证依据 + 不确定点，并附防锚定句——
+ * topic 可能携带发起方的倾向/预设，专家必须独立判断而非默认其正确。 */
 export const SEED_INSTRUCTION =
-  "请就以下主题给出你的专业见解,清晰阐述你的核心观点与理由。";
+  "请就以下主题给出你的专业见解,清晰阐述你的核心主张、支持该主张的依据(尽量给出可验证来源:代码位置/文档/数据/实测/案例),以及你尚不确定、需要进一步验证的点。注意:主题描述可能包含发起方的倾向或预设结论,请独立判断,不要默认其为正确。";
 
-/** Debate instruction injected from round 2 onward. */
+/** Debate instruction injected from round 2 onward.
+ * R8（论据锚定）：质疑/反驳必须点名对方具体论据；己方新论据须尽量给来源；
+ * 无依据的观点必须显式标注为推测。 */
 export const DEBATE_INSTRUCTION =
-  "以下是其他专家在上一轮的发言。请针对上述观点,提出你的质疑、补充或反驳,并完善你自己的立场。";
+  "以下是其他专家在上一轮的发言。请针对上述观点,提出你的质疑、补充或反驳,并完善你自己的立场。要求:质疑或反驳必须点名对方的具体论据,不要泛泛否定;提出新的己方论据时尽量给出可验证来源;没有依据支撑的观点,请明确标注为推测。";
 
 /** Relay instruction injected for each sequential speaker. */
 export const RELAY_INSTRUCTION =
   "以下是此前各位专家的发言。请在最新一位专家的观点基础上深化和发展,补充新的角度或论据,避免简单重复。";
 
-/** System prompt for the summarizer call. */
+/** System prompt for the summarizer call.
+ * R10（无共识条款）：票数分裂或论据冲突未解时必须显式输出「无共识」，
+ * 禁止把少数意见强行归并进多数意见（对抗趋同退化的最后一道闸）。 */
 export const SUMMARIZER_SYSTEM =
-  "你是一位中立的讨论主持人。请基于以下完整的讨论实录,客观总结各方达成的共识、仍存在的分歧,以及可执行的下一步建议。用 Markdown 输出。";
+  "你是一位中立的讨论主持人。请基于以下完整的讨论实录,客观总结各方达成的共识、仍存在的分歧,以及可执行的下一步建议。用 Markdown 输出。注意:若票数分裂或论据冲突仍未解决,请明确输出「无共识」,并列出分歧点与各方论据的强度,不得强行把少数意见归并进多数意见。";
 
 /** 投票轮指令（R1）：注入在匿名实录之后，要求每位专家给出互评投票。
  * 禁自投 + 限长：真实验证发现模型会投自己且票文过长（vote-prompt-fix），
- * 匿名制下自投等于无效票，票文过长会让投票段退化成第三轮发言。 */
+ * 匿名制下自投等于无效票，票文过长会让投票段退化成第三轮发言。
+ * R9（论据化投票）：评判标准 = 论据质量与可验证性；理由必须引用被投者的
+ * 一条具体论据；「主理 AI 初步判断（claim-0）」不是候选人（D3：解析层
+ * 不设防，靠指令明示 claim-0 无别名不可投）。 */
 export const VOTE_INSTRUCTION =
-  "以上是本次讨论的完整实录（已匿名，标注【你的发言】的行是你本人的观点）。请投票：选出你最认同的一位其他专家（代号），不得投给你自己。150 字以内，直接给出专家代号与核心理由，并一句话说明你是否修正了自己的立场；不要展开论述，不要使用标题。";
+  "以上是本次讨论的完整实录（已匿名，标注【你的发言】的行是你本人的观点）。请投票：选出你最认同的一位其他专家（代号），不得投给你自己；「主理 AI 初步判断（claim-0）」不是候选人，不存在对应代号。评判标准是论据质量与可验证性，而非观点立场的一致性；投票理由必须引用被投者的一条具体论据。150 字以内，直接给出专家代号与核心理由，并一句话说明你是否修正了自己的立场；不要展开论述，不要使用标题。";
+
+/** claim-0 块头（R3/R5）：发起方初步判断在 prompt 注入块中的统一标题。
+ * 与别名「专家[A-Z]」形态刻意不同，parseVotedForAlias 天然不会命中。 */
+export const CLAIM0_HEADER = "【主理 AI 初步判断（claim-0）】";
+
+/** claim-0 说明行（R3）：紧跟 context 文本之后，声明其非专家、不可投、可推翻。 */
+export const CLAIM0_NOTE =
+  "以上是发起本次讨论的主理 AI 的初步分析，可能包含错误、片面或过时的假设。它不是专家发言，不参与互评投票；欢迎质疑、修正或推翻。";
+
+/**
+ * 组装 claim-0 块（R3/R4）：header + context 原文 + 说明行。
+ * context 为 undefined 或去空白后为空时返回空串，调用点按「无 context」处理
+ * （保证不传 context 时 prompt 组装形状与现状逐字节一致，design §4 红线）。
+ */
+export function buildClaim0Block(context: string | undefined): string {
+  const trimmed = context?.trim() ?? "";
+  if (trimmed === "") return "";
+  return `${CLAIM0_HEADER}\n${trimmed}\n\n${CLAIM0_NOTE}`;
+}
 
 /** 多轮 runs 合并调用系统提示（P3-A）：对 N 次运行的结论去重合并。 */
 export const RUNS_MERGE_SYSTEM =
@@ -453,6 +487,13 @@ export async function runDialogue(
   // P3-A runs：aliasRotation>0 时整体轮换映射，使多次运行之间映射不同（确定性）。
   const aliases = rotateAliases(buildAliases(targets), opts.aliasRotation ?? 0);
 
+  // claim-0 块（R1-R4 反锚定）：发起方初步分析降级为可推翻的 claim-0。
+  // debate 第 1 轮盲答不注入（R2）；debate 第 ≥2 轮前置于注入块（R3）；
+  // relay 各轮（含种子轮，首位发言者需要背景）topic 后注入（R4，D2）。
+  // 空白 context → claim0Prefix 为空串，prompt 组装形状与现状逐字节一致。
+  const claim0 = buildClaim0Block(opts.context);
+  const claim0Prefix = claim0 ? `${claim0}\n\n` : "";
+
   if (targets.length === 0 || rounds === 0) {
     return { turns };
   }
@@ -544,9 +585,16 @@ export async function runDialogue(
   for (let round = 1; round <= rounds; round++) {
     if (round === 1) {
       // Seed round: every expert answers the topic fresh (parallel).
+      // 盲答边界（R2/D2）：debate 第 1 轮是独立盲答，不注入发起方 context；
+      // relay 无盲答语义（R4，首位发言者需要背景），topic 后附 claim-0 块。
+      const seedClaim0Prefix = opts.mode === "relay" ? claim0Prefix : "";
       const results = await Promise.allSettled(
         targets.map((target) =>
-          askExpert(target, `${opts.topic}\n\n${SEED_INSTRUCTION}`, config)
+          askExpert(
+            target,
+            `${opts.topic}\n\n${seedClaim0Prefix}${SEED_INSTRUCTION}`,
+            config
+          )
         )
       );
       results.forEach((res, i) => {
@@ -590,9 +638,11 @@ export async function runDialogue(
         anonymize: true,
         aliases,
       });
+      // claim-0（R3）：置于发言实录段之前（压缩/非压缩路径共用同一包裹点，
+      // 不改 context-compressor）；无 context 时 claim0Prefix 为空串，形状不变。
       const userContents = targets.map(
         (target) =>
-          `${opts.topic}\n\n${DEBATE_INSTRUCTION}\n\n上一轮发言:\n${render(target.expert.id)}`
+          `${opts.topic}\n\n${DEBATE_INSTRUCTION}\n\n${claim0Prefix}上一轮发言:\n${render(target.expert.id)}`
       );
       const results = await Promise.allSettled(
         targets.map((target, i) =>
@@ -632,10 +682,11 @@ export async function runDialogue(
       for (const target of targets) {
         const render = await resolveRenderer(turns, turns);
         const transcript = render();
+        // claim-0（R4）：relay 无盲答语义，各轮 topic 后都带发起方初步判断。
         const userContent =
           transcript.length > 0
-            ? `${opts.topic}\n\n${RELAY_INSTRUCTION}\n\n此前发言:\n${transcript}`
-            : `${opts.topic}\n\n${SEED_INSTRUCTION}`;
+            ? `${opts.topic}\n\n${claim0Prefix}${RELAY_INSTRUCTION}\n\n此前发言:\n${transcript}`
+            : `${opts.topic}\n\n${claim0Prefix}${SEED_INSTRUCTION}`;
         try {
           const answer = await askExpert(target, userContent, config);
           turns.push({

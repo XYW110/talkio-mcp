@@ -56,9 +56,11 @@ export function buildTargetMessages(
   if (systemPrompt) {
     messages.push({ role: "system", content: systemPrompt });
   }
+  // claim-0 框架（R5）：发起方 context 不再以「背景信息」权威背书呈现，
+  // 明示其可能有误、需独立判断；拼接结构与现状一致（仅标签文案变化）。
   const userContent =
     context && context.trim().length > 0
-      ? `背景信息:\n${context.trim()}\n\n问题:\n${question}`
+      ? `主理 AI 提供的初步分析（可能有误，请独立判断，欢迎质疑）:\n${context.trim()}\n\n问题:\n${question}`
       : question;
   messages.push({ role: "user", content: redactPII(userContent) });
   return messages;

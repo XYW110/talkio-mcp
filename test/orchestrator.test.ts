@@ -25,7 +25,13 @@ vi.mock("../src/providers/registry.js", () => ({
 import { runConsultation } from "../src/orchestrator/parallel.js";
 import {
   runDialogue,
+  SEED_INSTRUCTION,
+  DEBATE_INSTRUCTION,
   VOTE_INSTRUCTION,
+  SUMMARIZER_SYSTEM,
+  CLAIM0_HEADER,
+  CLAIM0_NOTE,
+  buildClaim0Block,
   buildAliases,
   formatTranscriptForPrompt,
   type DialogueTurn,
@@ -199,7 +205,7 @@ describe("runConsultation 并行编排", () => {
     expect(userMsg?.content).toContain("我的问题ABC");
   });
 
-  it("context 存在时并入 user 消息", async () => {
+  it("context 存在时并入 user 消息（claim-0 框架，R5/AC4）", async () => {
     const adapter = makeEchoAdapter();
     const targets = [makeTarget("x")];
 
@@ -210,6 +216,10 @@ describe("runConsultation 并行编排", () => {
     const userMsg = adapter.calls[0]!.messages.find((m) => m.role === "user");
     expect(userMsg?.content).toContain("问题");
     expect(userMsg?.content).toContain("背景信息CTX");
+    // claim-0 框架文案；不再出现旧的「背景信息:」权威背书标签
+    expect(userMsg?.content).toContain("主理 AI 提供的初步分析");
+    expect(userMsg?.content).toContain("可能有误，请独立判断，欢迎质疑");
+    expect(userMsg?.content).not.toContain("背景信息:");
   });
 });
 
@@ -396,7 +406,7 @@ describe("PII 隐私脱敏（发往 LLM 前掩码）", () => {
     );
 
     const userMsg = adapter.calls[0]!.messages.find((m) => m.role === "user");
-    expect(userMsg?.content).toBe("如何联系 [手机号]\n\n请就以下主题给出你的专业见解,清晰阐述你的核心观点与理由。");
+    expect(userMsg?.content).toBe(`如何联系 [手机号]\n\n${SEED_INSTRUCTION}`);
   });
 
   it("dialogue 专家回复含 PII 时，后续轮次注入前掩码", async () => {
@@ -780,11 +790,16 @@ describe("互评投票与匿名化（task 09-13-peer-review-judge）", () => {
     return { events, notifier: (e: StreamEvent) => void events.push(e) };
   }
 
-  it("VOTE_INSTRUCTION 含禁自投与限长约束（vote-prompt-fix）", () => {
+  it("VOTE_INSTRUCTION 含禁自投与限长约束（vote-prompt-fix）+ 论据化投票标准（R9）", () => {
     expect(typeof VOTE_INSTRUCTION).toBe("string");
     expect(VOTE_INSTRUCTION).toContain("不得投给你自己");
     expect(VOTE_INSTRUCTION).toContain("150 字以内");
     expect(VOTE_INSTRUCTION).toContain("你的发言");
+    // R9：评判标准论据化 + 理由必须引用被投者具体论据 + claim-0 非候选人
+    expect(VOTE_INSTRUCTION).toContain("论据质量");
+    expect(VOTE_INSTRUCTION).toContain("具体论据");
+    expect(VOTE_INSTRUCTION).toContain("claim-0");
+    expect(VOTE_INSTRUCTION).toContain("不是候选人");
   });
 
   it("buildAliases：按 targets 顺序分配 专家A/B/…", () => {
@@ -1045,5 +1060,105 @@ describe("互评投票与匿名化（task 09-13-peer-review-judge）", () => {
       makeConfig(adapter)
     );
     expect(res3.judgeInfo).toBeUndefined();
+  });
+});
+
+describe("claim-0 反锚定与论据锚定（task 09-26-debate-evidence-grounding）", () => {
+  const topic = "如何设计一个高并发系统";
+  const targets = [makeTarget("a"), makeTarget("b")];
+  const context = "我初步判断用单体架构就够了";
+
+  /** 捕获每条 user prompt 的 stub adapter（回复带序号便于构造差异）。 */
+  function makeCaptureAdapter() {
+    const seen: string[] = [];
+    const adapter = makeStubAdapter(async (params) => {
+      seen.push(String(params.messages.at(-1)?.content ?? ""));
+      return { content: `观点#${seen.length}` };
+    });
+    return { adapter, seen };
+  }
+
+  it("buildClaim0Block：undefined/纯空白返回空串；有效 context 组装 header+原文+note（design §2）", () => {
+    expect(buildClaim0Block(undefined)).toBe("");
+    expect(buildClaim0Block("   \n\t ")).toBe("");
+    const block = buildClaim0Block(`  ${context}  `);
+    expect(block).toBe(`${CLAIM0_HEADER}\n${context}\n\n${CLAIM0_NOTE}`);
+  });
+
+  it("debate + context：第 1 轮盲答不含 context，第 2 轮起 claim-0 块前置于实录（R2/R3/AC2）", async () => {
+    const { adapter, seen } = makeCaptureAdapter();
+
+    await runDialogue(
+      { topic, targets, mode: "debate", rounds: 2, summarize: false, context },
+      makeConfig(adapter)
+    );
+
+    expect(seen).toHaveLength(4);
+    // 种子轮盲答：prompt 只有 topic + SEED_INSTRUCTION，无任何 context 痕迹
+    for (const p of seen.slice(0, 2)) {
+      expect(p).not.toContain("单体架构");
+      expect(p).not.toContain(CLAIM0_HEADER);
+      expect(p).not.toContain(CLAIM0_NOTE);
+    }
+    // 第 2 轮：claim-0 块出现，且块内含「可推翻 / 不参与投票」语义
+    for (const p of seen.slice(2)) {
+      expect(p).toContain(CLAIM0_HEADER);
+      expect(p).toContain("单体架构");
+      expect(p).toContain("不参与互评投票");
+      expect(p).toContain("欢迎质疑");
+      expect(p).toContain("推翻");
+      // claim-0 前置于上一轮发言实录段
+      expect(p.indexOf(CLAIM0_HEADER)).toBeLessThan(p.indexOf("上一轮发言:"));
+    }
+  });
+
+  it("relay + context：各轮 prompt（含种子轮）均含 claim-0 块（R4/AC3）", async () => {
+    const { adapter, seen } = makeCaptureAdapter();
+
+    await runDialogue(
+      { topic, targets, mode: "relay", rounds: 2, summarize: false, context },
+      makeConfig(adapter)
+    );
+
+    expect(seen).toHaveLength(4);
+    for (const p of seen) {
+      expect(p).toContain(CLAIM0_HEADER);
+      expect(p).toContain("单体架构");
+      expect(p).toContain("不参与互评投票");
+    }
+    // 种子轮（无实录分支）也在 topic 之后、SEED_INSTRUCTION 之前附 claim-0
+    expect(seen[0]!.indexOf(CLAIM0_HEADER)).toBeLessThan(
+      seen[0]!.indexOf(SEED_INSTRUCTION)
+    );
+  });
+
+  it("无 context：所有轮次 prompt 不含 claim-0 头（组装形状不变，AC1 红线）", async () => {
+    const { adapter, seen } = makeCaptureAdapter();
+
+    await runDialogue(
+      { topic, targets, mode: "debate", rounds: 2, summarize: false },
+      makeConfig(adapter)
+    );
+
+    expect(seen).toHaveLength(4);
+    for (const p of seen) {
+      expect(p).not.toContain(CLAIM0_HEADER);
+      expect(p).not.toContain("主理 AI");
+    }
+  });
+
+  it("指令常量升级：SEED/DEBATE 论据与防锚定要求，SUMMARIZER 无共识条款（R7/R8/R10）", () => {
+    // R7：核心主张 + 可验证依据 + 不确定点 + 防锚定句
+    expect(SEED_INSTRUCTION).toContain("核心主张");
+    expect(SEED_INSTRUCTION).toContain("依据");
+    expect(SEED_INSTRUCTION).toContain("不确定");
+    expect(SEED_INSTRUCTION).toContain("独立判断");
+    // R8：点名对方具体论据 + 己方论据给来源 + 推测标注
+    expect(DEBATE_INSTRUCTION).toContain("具体论据");
+    expect(DEBATE_INSTRUCTION).toContain("来源");
+    expect(DEBATE_INSTRUCTION).toContain("推测");
+    // R10：无共识条款，禁止强行归并少数意见
+    expect(SUMMARIZER_SYSTEM).toContain("无共识");
+    expect(SUMMARIZER_SYSTEM).toContain("不得强行");
   });
 });

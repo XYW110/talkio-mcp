@@ -36,6 +36,12 @@ import type { StreamNotifier } from "../utils/notify.js";
 /** Zod raw shape for brainstorm arguments (passed as inputSchema). */
 export const brainstormSchema = {
   topic: z.string().describe("要讨论的主题（去空白后不能为空）"),
+  context: z
+    .string()
+    .optional()
+    .describe(
+      "发起方的初步分析或背景（claim-0，可能有误）：debate 模式第 1 轮各专家盲答不注入，第 2 轮起以「主理 AI 初步判断」块注入供质疑推翻；relay 模式随每轮注入；报告单列该块且它不参与互评投票",
+    ),
   mode: z
     .enum(["debate", "relay"])
     .optional()
@@ -87,6 +93,7 @@ export const brainstormSchema = {
 /** Inferred argument type for the handler. */
 export type BrainstormArgs = {
   topic: string;
+  context?: string;
   mode?: "debate" | "relay";
   rounds?: number;
   cards?: string[];
@@ -152,6 +159,7 @@ export async function handleBrainstorm(
 
   const opts: DialogueOptions = {
     topic: args.topic,
+    context: args.context,
     targets: debateTargets,
     mode,
     rounds,
@@ -245,6 +253,7 @@ export async function handleBrainstorm(
 
   const report =
     formatBrainstormReport(args.topic, mode, rounds, first.turns, first.summary, {
+      initiatorContext: args.context,
       votes: first.votes,
       aliases: first.aliases,
       roundVotes: first.roundVotes,

@@ -28,7 +28,9 @@ export const consultExpertsSchema = {
   context: z
     .string()
     .optional()
-    .describe("可选背景信息(代码片段、约束等)"),
+    .describe(
+      "主理 AI 的初步分析/背景（claim-0，可能有误）：供专家独立参考与质疑，不作为权威事实",
+    ),
   cards: z
     .array(z.string())
     .optional()

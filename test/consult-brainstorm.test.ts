@@ -24,8 +24,9 @@ vi.mock("../src/providers/registry.js", () => ({
   isMockProviderEnabled: () => process.env.TALKIO_MOCK_PROVIDER === "1",
 }));
 
+import { z } from "zod";
 import { handleConsultExperts } from "../src/tools/consult-experts.js";
-import { handleBrainstorm } from "../src/tools/brainstorm.js";
+import { brainstormSchema, handleBrainstorm } from "../src/tools/brainstorm.js";
 import {
   REASONING_STRATEGY_INSTRUCTIONS,
   applyReasoningStrategy,
@@ -731,5 +732,86 @@ describe("推理策略注入（task 09-13-council-enhancement P1-B）", () => {
     );
     // 未配置策略的 reviewer 不受影响
     expect(adapter.calls[1]!.messages[0]!.content).toBe("你是 reviewer");
+  });
+});
+
+describe("claim-0 注入与报告（task 09-26-debate-evidence-grounding）", () => {
+  it("brainstormSchema：context 为可选 string（AC1）", () => {
+    const schema = z.object(brainstormSchema);
+    expect(schema.safeParse({ topic: "x" }).success).toBe(true);
+    expect(
+      schema.safeParse({ topic: "x", context: "初步分析" }).success
+    ).toBe(true);
+    expect(schema.safeParse({ topic: "x", context: 42 }).success).toBe(false);
+  });
+
+  it("brainstorm + context（debate）：第 1 轮盲答不含 context，第 2 轮注入 claim-0，报告含小节（AC2/AC6）", async () => {
+    clearKeys();
+    process.env.OPENAI_API_KEY = "sk-test";
+    const adapter = makeEchoAdapter();
+    const result = await handleBrainstorm(
+      {
+        topic: "落地路径",
+        context: "我初步倾向自研网关（可能有误）",
+        cards: ["c-architect", "c-reviewer"],
+        rounds: 2,
+        summarize: false,
+      },
+      councilConfig(adapter)
+    );
+    expect(result.isError).not.toBe(true);
+    // 2 卡 × 2 轮，无总结
+    expect(adapter.calls).toHaveLength(4);
+    // 种子轮盲答：prompt 不含 context 文本与 claim-0 头
+    for (const call of adapter.calls.slice(0, 2)) {
+      const user = String(call.messages.at(-1)?.content ?? "");
+      expect(user).not.toContain("自研网关");
+      expect(user).not.toContain("【主理 AI 初步判断（claim-0）】");
+    }
+    // 第 2 轮：claim-0 块注入，且含「可推翻 / 不参与投票」语义
+    for (const call of adapter.calls.slice(2)) {
+      const user = String(call.messages.at(-1)?.content ?? "");
+      expect(user).toContain("自研网关");
+      expect(user).toContain("【主理 AI 初步判断（claim-0）】");
+      expect(user).toContain("不参与互评投票");
+    }
+    // 报告：claim-0 小节位于实录之前，标注未参与盲答与投票
+    const text = textOf(result);
+    expect(text).toContain("## 发起方初步判断（claim-0）");
+    expect(text).toContain("自研网关");
+    expect(text).toContain("未参与第 1 轮盲答");
+    expect(text.indexOf("发起方初步判断")).toBeLessThan(
+      text.indexOf("### 第 1 轮")
+    );
+  });
+
+  it("brainstorm 无 context：报告不含 claim-0 小节（字节不变红线）", async () => {
+    clearKeys();
+    process.env.OPENAI_API_KEY = "sk-test";
+    const adapter = makeEchoAdapter();
+    const result = await handleBrainstorm(
+      { topic: "落地路径", cards: ["c-architect"], rounds: 1, summarize: false },
+      councilConfig(adapter)
+    );
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).not.toContain("发起方初步判断");
+  });
+
+  it("brainstorm context 为纯空白：等价于未传（无 claim-0 小节）", async () => {
+    clearKeys();
+    process.env.OPENAI_API_KEY = "sk-test";
+    const adapter = makeEchoAdapter();
+    const result = await handleBrainstorm(
+      {
+        topic: "落地路径",
+        context: "   ",
+        cards: ["c-architect"],
+        rounds: 1,
+        summarize: false,
+      },
+      councilConfig(adapter)
+    );
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).not.toContain("发起方初步判断");
   });
 });

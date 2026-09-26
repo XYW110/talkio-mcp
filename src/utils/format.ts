@@ -94,15 +94,20 @@ export function formatTranscript(turns: DialogueTurn[]): string {
   return lines.join("\n").trimEnd();
 }
 
-/** formatBrainstormReport 的可选扩展段（R1 互评投票 / R3 裁决者）。 */
+/** formatBrainstormReport 的可选扩展段（R1 互评投票 / R3 裁决者 / R6 claim-0）。 */
 export interface BrainstormReportExtras {
-  /** 投票轮产物；为空时省略投票段。 */
+  /**
+   * 发起方初步判断（claim-0，R6）：提供时在实录之前渲染「发起方初步判断」
+   * 小节，标注其未参与第 1 轮盲答、也不是投票候选人；缺省时完全不输出。
+   */
+  initiatorContext?: string;
+  /** 投票轮产物（R1）；为空时省略投票段。 */
   votes?: DialogueTurn[];
-  /** 代号映射：投票逐条匿名展示 + 末尾代号↔专家对照表。 */
+  /** 匿名代号映射（R2）：投票逐条匿名展示 + 末尾代号↔专家对照表。 */
   aliases?: DialogueAlias[];
   /** 结构化投票结果（P1-A）：渲染「投票明细」小节；为空时省略。 */
   roundVotes?: RoundVotes;
-  /** 裁决者标注：综合段标题注明裁决卡或回退。 */
+  /** 裁决者标注（R3）：综合段标题注明裁决卡或回退。 */
   judgeInfo?: { cardId: string; cardName: string; fallback?: boolean };
   /** P3-A runs：多轮运行总数（>1 时报告头主题行追加 (runs=N)）。 */
   runsTotal?: number;
@@ -129,6 +134,19 @@ export function formatBrainstormReport(
   lines.push(`**模式:** ${mode === "debate" ? "辩论" : "接龙"}`);
   lines.push(`**轮数:** ${rounds}`);
   lines.push("");
+  // claim-0 小节（R6）：仅 initiatorContext 存在时输出；标注其未参与盲答
+  // 与投票。缺省时完全不进入输出流（上方内容逐字节不变）。
+  const initiator = extras?.initiatorContext;
+  if (initiator && initiator.trim().length > 0) {
+    lines.push("## 发起方初步判断（claim-0）");
+    lines.push("");
+    lines.push(`> ${initiator.trim()}`);
+    lines.push("");
+    lines.push(
+      "（claim-0 未参与第 1 轮盲答，也不是投票候选人；以上内容仅供检验。）"
+    );
+    lines.push("");
+  }
   lines.push(formatTranscript(turns));
   lines.push("");
   // 互评投票（R1）：匿名代号逐条呈现，末尾还原代号↔专家对照表。
