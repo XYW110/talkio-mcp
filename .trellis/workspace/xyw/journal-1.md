@@ -348,3 +348,30 @@ Completed the 00-bootstrap-guidelines task by filling 12 backend and frontend sp
 ### Status
 
 [OK] **Completed**
+
+## Session 12: 辩论质量 P3——魔鬼代言人轮换 + 票文解析强化
+
+**Date**: 2026-09-27
+**Task**: 09-27-debate-quality-p3（已归档 archive/2026-09/）
+**Branch**: `master`
+
+### Summary
+
+Q1=A/Q2=A 拍板三项编排级增强：①debate 第≥2轮每轮轮换一名魔鬼代言人（targets[(round-2)%n]，DEVILS_ADVOCATE_INSTRUCTION 用"你"称呼匿名安全，零新增调用），DialogueResult.devilsAdvocates → 报告小节（缺省零字节）；②parseVotedForAlias 两级匹配（全称优先 + 裸代号回退：邻接字母数字排除 + 别名白名单防误报，共享 collectAliasMentions 单一正则源），vote-prompt-fix 遗留缺陷闭环；③isSelfVoteBallot → VoteBallot.selfVote → 报告"⚠️ 自投（无效票）"三态 + JSONL additive 字段，自投复发从"未识别"变为可见。248 tests + typecheck 绿；真跑（ac6-after-run.md）：轮换小节/强质疑形态（含质疑自方前轮论据——"即使认同也要反驳"被执行）/三票全解析零自投 全过；票数分裂时总结器合理区分互评分裂与主题共识。已知限制："A/B 测试"斜杠单字母 2 卡场景会误命中（PRD 未要求防护，记 spec）。检查代理探针发现并修复解析断言区分度缺口（voter=专家B 的 API/OWASP 负向用例）。排除项：ReConcile 加权（缺地面真值）、MADRA 检索（缺证据源设计）——若立项需先出设计调研。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `db3aeb3` | feat(backend): 辩论质量 P3——魔鬼代言人轮换 + 裸代号票文解析 + 自投显式标记 |
+| `db2d3eb` | docs(trellis): debate-quality-p3 任务产物 + dialogue-prompts spec 增补 P3 契约 |
+
+### Next Steps
+
+- 投票加权/MADRA 检索立项前需先回答：校准信号从哪来 / 证据源是什么（独立设计调研）
+- 若自投再复发且频率升高：VOTE_INSTRUCTION 措辞实验或计票层显式丢弃 selfVote 票
+- "A/B 测试"误命中如实际出现，考虑把裸代号回退收紧为"投票关键词邻近"（投/选/支持 + 字母）
+
+### Status
+
+[OK] **Completed**
