@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端质量要求（测试覆盖/编译器门禁）"}
+{"file": ".trellis/spec/backend/dialogue-prompts.md", "reason": "辩论 prompt 契约（claim-0 三语义/注入矩阵）——魔鬼代言人须作为新条目并入且不破坏既有矩阵"}
+{"file": ".trellis/tasks/09-27-debate-quality-p3/research.md", "reason": "P3 三项依据（MAD 对抗角色/修正偏置/裸代号与自投真跑证据）"}
