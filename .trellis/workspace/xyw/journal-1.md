@@ -322,3 +322,29 @@ Completed the 00-bootstrap-guidelines task by filling 12 backend and frontend sp
 ### Status
 
 [OK] **Completed**
+
+## Session 11: 辩论反锚定与论据锚定——claim-0 盲答 + 论据化投票
+
+**Date**: 2026-09-26
+**Task**: 09-26-debate-evidence-grounding（已归档 archive/2026-09/）
+**Branch**: `master`
+
+### Summary
+
+网调研（Debate-or-Vote 鞅定理 / MAST 谄媚锚定失败模式 / ReConcile 论据化投票）立项并全链路交付：brainstorm 增可选 context（发起方初步分析）——debate 首轮盲答不注入、第≥2轮以 claim-0 块（可推翻/非候选人）前置于实录，relay 随轮注入；consult_experts 背景信息标签改 claim-0 框架；SEED/DEBATE/VOTE/SUMMARIZER 指令论据化（主张+依据+来源、点名论据反驳、按论据质量投票、票数分裂输出无共识）；报告增 claim-0 小节（仅 context 存在时）。231 tests + typecheck 全绿；真实 LLM 埋毒验证（ac8-after-run.md，毒饵=编造 QPS 3 倍数据）五项全过：首轮毒饵未被吞、次轮逐条反驳 claim-0、票文引用具体论据、总结无共识条款生效。观察：DeepSeek V4 Flash 自投漏网 1 例（解析层兜底为未识别代号）；推理文本泄露进 content 属该模型既有现象。spec 新增 backend/dialogue-prompts.md（claim-0 三语义 + 注入矩阵 + 兼容红线）。坑：shell hook cwd gotcha 又踩一次（stub 恢复法有效，见记忆）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2eb4c0f` | feat(backend): 辩论反锚定与论据锚定——claim-0 盲答注入 + 指令论据化 |
+| `100e58b` | docs(trellis): debate-evidence-grounding 任务文档 + dialogue-prompts spec |
+
+### Next Steps
+
+- P3 候选（research.md 映射表）：投票加权/校准（ReConcile 式）、检索证据接入（MADRA）、查证轮/强制魔鬼代言人、votedForAlias 裸代号解析
+- 自投漏网观察：若复发率高，考虑 VOTE_INSTRUCTION 措辞强化或解析层显式拒绝本人别名票
+
+### Status
+
+[OK] **Completed**
