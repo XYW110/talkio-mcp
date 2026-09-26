@@ -42,6 +42,12 @@ export const brainstormSchema = {
     .describe(
       "发起方的初步分析或背景（claim-0，可能有误）：debate 模式第 1 轮各专家盲答不注入，第 2 轮起以「主理 AI 初步判断」块注入供质疑推翻；relay 模式随每轮注入；报告单列该块且它不参与互评投票",
     ),
+  evidence: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "调用方提供的证据包(代码片段/数据/文档引文/实测输出),将编号为[E1..En]注入各轮供专家引用;区别于 context(发起方主张)",
+    ),
   mode: z
     .enum(["debate", "relay"])
     .optional()
@@ -94,6 +100,7 @@ export const brainstormSchema = {
 export type BrainstormArgs = {
   topic: string;
   context?: string;
+  evidence?: string[];
   mode?: "debate" | "relay";
   rounds?: number;
   cards?: string[];
@@ -160,6 +167,7 @@ export async function handleBrainstorm(
   const opts: DialogueOptions = {
     topic: args.topic,
     context: args.context,
+    evidence: args.evidence,
     targets: debateTargets,
     mode,
     rounds,
@@ -201,7 +209,13 @@ export async function handleBrainstorm(
           reason: b.reason,
           // 自投显式标记（P3-R3）：仅 true 时写键（additive，正常票 JSONL 字节不变）。
           ...(b.selfVote === true ? { selfVote: true } : {}),
+          // 二阶预测（R1.3）：仅非空时写键（additive）。
+          ...(b.predictions && b.predictions.length > 0
+            ? { predictions: b.predictions }
+            : {}),
         })),
+        // SP 赢家（R1.5）：仅计算成功时写键（additive，顶层）。
+        ...(result.spWinner ? { spWinner: result.spWinner } : {}),
         ...(runField !== undefined ? { run: runField } : {}),
       });
     }
@@ -256,9 +270,11 @@ export async function handleBrainstorm(
   const report =
     formatBrainstormReport(args.topic, mode, rounds, first.turns, first.summary, {
       initiatorContext: args.context,
+      evidence: args.evidence,
       votes: first.votes,
       aliases: first.aliases,
       roundVotes: first.roundVotes,
+      spWinner: first.spWinner,
       judgeInfo: first.judgeInfo,
       devilsAdvocates: first.devilsAdvocates,
       ...(runsTotal > 1 ? { runsTotal } : {}),

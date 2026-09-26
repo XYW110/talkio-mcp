@@ -937,3 +937,127 @@ describe("魔鬼代言人轮换与自投标记（task 09-27-debate-quality-p3）
     }
   });
 });
+
+describe("evidence 参数与 SP 聚合（task 09-27-sp-evidence-aggregation）", () => {
+  it("brainstormSchema：evidence 为可选 string 数组（R2.1）", () => {
+    const schema = z.object(brainstormSchema);
+    expect(schema.safeParse({ topic: "x" }).success).toBe(true);
+    expect(schema.safeParse({ topic: "x", evidence: [] }).success).toBe(true);
+    expect(
+      schema.safeParse({ topic: "x", evidence: ["代码片段"] }).success
+    ).toBe(true);
+    expect(schema.safeParse({ topic: "x", evidence: 42 }).success).toBe(false);
+    expect(schema.safeParse({ topic: "x", evidence: ["a", 1] }).success).toBe(
+      false
+    );
+  });
+
+  it("evidence 端到端：debate 各轮 prompt 注入证据库（空白项跳过），报告含证据库小节（AC1/AC2）", async () => {
+    clearKeys();
+    process.env.OPENAI_API_KEY = "sk-test";
+    const adapter = makeEchoAdapter();
+    const result = await handleBrainstorm(
+      {
+        topic: "落地路径",
+        evidence: ["压测报告：P99=200ms", "  ", "网关代码片段 handler.go"],
+        cards: ["c-architect", "c-reviewer"],
+        rounds: 2,
+        summarize: false,
+      },
+      councilConfig(adapter)
+    );
+    expect(result.isError).not.toBe(true);
+    // 4 次作答（2 种子 + 2 第 2 轮）prompt 全部含证据库，空白项不占编号
+    expect(adapter.calls).toHaveLength(4);
+    for (const call of adapter.calls) {
+      const user = String(call.messages.at(-1)?.content ?? "");
+      expect(user).toContain("【可引用证据库");
+      expect(user).toContain("[E1] 压测报告：P99=200ms");
+      expect(user).toContain("[E2] 网关代码片段 handler.go");
+      expect(user).toContain("以上证据是共享的事实材料");
+    }
+    // 报告：证据库小节在实录之前
+    const text = textOf(result);
+    expect(text).toContain("### 证据库");
+    expect(text).toContain("[E1] 压测报告：P99=200ms");
+    expect(text.indexOf("### 证据库")).toBeLessThan(text.indexOf("### 第 1 轮"));
+  });
+
+  it("SP 聚合端到端：报告一致态，vote 事件携带 predictions 与顶层 spWinner（additive，AC3/AC5）", async () => {
+    clearKeys();
+    process.env.OPENAI_API_KEY = "sk-o";
+    process.env.ANTHROPIC_API_KEY = "sk-a";
+    process.env.DEEPSEEK_API_KEY = "sk-d";
+    // 3 卡投票：A→B、B→C、C→B（多数=B）；预测 A:[B,C] B:[A,C] C:[A,B]
+    // actual: A=0, B=2/3, C=1/3；predicted: 各 1/3 → SP=专家B = 多数赢家
+    const adapter = makeStubAdapter(async (params) => {
+      const sys = String(params.messages[0]?.content ?? "");
+      const user = String(params.messages.at(-1)?.content ?? "");
+      if (user.includes(VOTE_INSTRUCTION)) {
+        if (sys.includes("architect")) {
+          return {
+            content:
+              "我投专家B，其容灾论据最扎实；预测：专家B 会投专家A，专家C 会投专家B。",
+          };
+        }
+        if (sys.includes("security")) {
+          return {
+            content:
+              "我投专家C，其灰度发布方案最稳；预测：专家A 会投专家B，专家C 会投专家A。",
+          };
+        }
+        return {
+          content:
+            "我投专家B，其容量估算有实测数据；预测：专家A 会投专家B，专家B 会投专家B。",
+        };
+      }
+      return { content: "观点陈述。" };
+    });
+    const recDir = await mkdtemp(path.join(tmpdir(), "talkio-sp-agg-"));
+    try {
+      process.env.TALKIO_RECORDS = "1";
+      const sess = (await startSession({ tool: "brainstorm", prompt: "x" }, recDir))!;
+      const result = await handleBrainstorm(
+        {
+          topic: "落地路径",
+          cards: ["c-architect", "c-security", "c-performance"],
+          rounds: 1,
+          vote: true,
+          summarize: false,
+        },
+        councilConfig(adapter),
+        { record: sess }
+      );
+      expect(result.isError).not.toBe(true);
+      sess.finish({ status: "ok" });
+      await sess.flush();
+
+      // 报告：聚合结果一致态（多数=专家B、SP=专家B）
+      const text = textOf(result);
+      expect(text).toContain("### 聚合结果");
+      expect(text).toContain("- 多数赢家与 SP 赢家一致：专家B（聚合信号稳健）");
+
+      // JSONL vote 事件：predictions 逐票透传 + 顶层 spWinner（additive）
+      const raw = await readFile(path.join(recDir, `${sess.id}.jsonl`), "utf-8");
+      const events = raw
+        .split("\n")
+        .filter((l) => l.trim() !== "")
+        .map((l) => JSON.parse(l) as Record<string, unknown>);
+      const voteEvent = events.find((e) => e.type === "vote") as {
+        votes: Array<{ predictions?: string[] }>;
+        spWinner?: string;
+      };
+      expect(voteEvent).toBeDefined();
+      expect(voteEvent.spWinner).toBe("专家B");
+      expect(voteEvent.votes).toHaveLength(3);
+      expect(voteEvent.votes.map((v) => v.predictions)).toEqual([
+        ["专家B", "专家C"],
+        ["专家A", "专家C"],
+        ["专家A", "专家B"],
+      ]);
+    } finally {
+      delete process.env.TALKIO_RECORDS;
+      await rm(recDir, { recursive: true, force: true });
+    }
+  });
+});

@@ -33,14 +33,23 @@ import {
   CLAIM0_NOTE,
   buildClaim0Block,
   buildAliases,
+  buildEvidenceLibrary,
+  EVIDENCE_LIBRARY_HEADER,
+  EVIDENCE_LIBRARY_NOTE,
+  EVIDENCE_ITEM_MAX_CHARS,
+  EVIDENCE_LIBRARY_MAX_CHARS,
   formatTranscriptForPrompt,
   parseVotedForAlias,
   isSelfVoteBallot,
+  surprisinglyPopular,
   devilsAdvocateIndex,
   DEVILS_ADVOCATE_INSTRUCTION,
   type DialogueTurn,
 } from "../src/orchestrator/dialogue.js";
-import { formatBrainstormReport } from "../src/utils/format.js";
+import {
+  collectEvidenceRefs,
+  formatBrainstormReport,
+} from "../src/utils/format.js";
 import type { StreamEvent } from "../src/utils/notify.js";
 
 /**
@@ -795,16 +804,19 @@ describe("互评投票与匿名化（task 09-13-peer-review-judge）", () => {
     return { events, notifier: (e: StreamEvent) => void events.push(e) };
   }
 
-  it("VOTE_INSTRUCTION 含禁自投与限长约束（vote-prompt-fix）+ 论据化投票标准（R9）", () => {
+  it("VOTE_INSTRUCTION 含禁自投/限长/论据引用约束 + 二阶预测行（SP 聚合 R1.1）", () => {
     expect(typeof VOTE_INSTRUCTION).toBe("string");
     expect(VOTE_INSTRUCTION).toContain("不得投给你自己");
     expect(VOTE_INSTRUCTION).toContain("150 字以内");
     expect(VOTE_INSTRUCTION).toContain("你的发言");
-    // R9：评判标准论据化 + 理由必须引用被投者具体论据 + claim-0 非候选人
-    expect(VOTE_INSTRUCTION).toContain("论据质量");
+    // 论据化投票标准保留：理由必须引用被投者的具体论据
     expect(VOTE_INSTRUCTION).toContain("具体论据");
-    expect(VOTE_INSTRUCTION).toContain("claim-0");
-    expect(VOTE_INSTRUCTION).toContain("不是候选人");
+    // R2.5：论据若基于证据库，须标注证据编号
+    expect(VOTE_INSTRUCTION).toContain("证据编号");
+    // R1.1（SP 聚合）：最后一行「预测：」开头，预测其他专家的票、不含自己
+    expect(VOTE_INSTRUCTION).toContain("「预测：」开头");
+    expect(VOTE_INSTRUCTION).toContain("预测其他专家会各投给谁");
+    expect(VOTE_INSTRUCTION).toContain("不含你自己");
   });
 
   it("buildAliases：按 targets 顺序分配 专家A/B/…", () => {
@@ -1477,5 +1489,456 @@ describe("报告渲染：魔鬼代言人小节与投票明细三态（task 09-27
       "- **专家B** → ⚠️ 自投（无效票）：我投B，我的论据最完整"
     );
     expect(report).toContain("- 专家C → （未识别代号）：看不太懂");
+  });
+});
+
+describe("SP 二阶聚合（task 09-27-sp-evidence-aggregation）", () => {
+  const topic = "如何设计一个高并发系统";
+  const K3 = ["专家A", "专家B", "专家C"];
+
+  describe("surprisinglyPopular 纯函数（AC4）", () => {
+    it("经典例：被多数低估的知情少数派被 SP 选中", () => {
+      // votes=[A,A,B]（A 为多数赢家）；预测者普遍预计 A 压倒性获胜（B 被系统性低估）
+      expect(
+        surprisinglyPopular(
+          ["专家A", "专家A", "专家B"],
+          [["专家A"], ["专家A"], ["专家A", "专家B"]],
+          K3
+        )
+      ).toBe("专家B");
+    });
+
+    it("并列最大 → null（design §3.3）", () => {
+      // 预测与实际完全一致 → 边际全零并列
+      expect(
+        surprisinglyPopular(
+          ["专家A", "专家A", "专家B"],
+          [["专家A"], ["专家A"], ["专家B"]],
+          K3
+        )
+      ).toBeNull();
+      // n=2 退化：互投且互相预测对 → 并列
+      expect(
+        surprisinglyPopular(
+          ["专家B", "专家A"],
+          [["专家A"], ["专家B"]],
+          ["专家A", "专家B"]
+        )
+      ).toBeNull();
+    });
+
+    it("可解析预测 <2 份 → null（Q2=A 降级）", () => {
+      expect(
+        surprisinglyPopular(["专家A", "专家B"], [[], ["专家A"]], K3)
+      ).toBeNull();
+      expect(surprisinglyPopular(["专家A", "专家B"], [[], []], K3)).toBeNull();
+    });
+
+    it("无有效票 → null；knownAliases 外提及忽略", () => {
+      expect(
+        surprisinglyPopular(["", ""], [["专家A"], ["专家A"]], K3)
+      ).toBeNull();
+      expect(
+        surprisinglyPopular(["专家Z"], [["专家A"], ["专家A"]], K3)
+      ).toBeNull();
+    });
+  });
+
+  it("选票预测解析：全/半角冒号分割、排除本人、去重保序；无标记无 predictions 键（AC3）", async () => {
+    const targets = [makeTarget("a"), makeTarget("b"), makeTarget("c")];
+    const adapter = makeStubAdapter(async (params) => {
+      const sys = String(params.messages[0]?.content ?? "");
+      const user = String(params.messages.at(-1)?.content ?? "");
+      if (user.includes(VOTE_INSTRUCTION)) {
+        if (sys.includes("你是 a")) {
+          // 全角冒号：预测段提及 B/A/C/B → 排除本人 A、去重保序
+          return {
+            content:
+              "我投专家B，其容灾论据最扎实；预测：专家B 会投专家A，专家C 会投专家B。",
+          };
+        }
+        if (sys.includes("你是 b")) {
+          // 半角冒号变体
+          return {
+            content: "我投C 的方案。\n预测:专家A 会投专家B，专家C 会投专家A。",
+          };
+        }
+        // 无任何预测标记 → 全文为投票段、predictions 不写键
+        return { content: "我投专家B，其容量估算有实测数据。" };
+      }
+      return { content: "观点陈述。" };
+    });
+
+    const { roundVotes } = await runDialogue(
+      { topic, targets, mode: "debate", rounds: 1, summarize: false, vote: true },
+      makeConfig(adapter)
+    );
+
+    const ballots = roundVotes!.ballots;
+    expect(ballots[0]!.votedForAlias).toBe("专家B");
+    expect(ballots[0]!.predictions).toEqual(["专家B", "专家C"]);
+    expect(ballots[1]!.votedForAlias).toBe("专家C");
+    expect(ballots[1]!.predictions).toEqual(["专家A", "专家C"]);
+    expect(ballots[2]!.votedForAlias).toBe("专家B");
+    expect(ballots[2]!.predictions).toBeUndefined();
+  });
+
+  it("选票预测解析：行首「预测」（无冒号）同样分割（R1.2 容错）", async () => {
+    const adapter = makeStubAdapter(async (params) => {
+      const user = String(params.messages.at(-1)?.content ?? "");
+      if (user.includes(VOTE_INSTRUCTION)) {
+        return {
+          content: "我投专家B 的方案。\n预测 专家B 与 专家C 会各投专家A。",
+        };
+      }
+      return { content: "观点陈述。" };
+    });
+
+    // 顺序 [b, c, a] → 代号：b=专家A、c=专家B、a=专家C；投票者 b（专家A）
+    const { roundVotes } = await runDialogue(
+      {
+        topic,
+        targets: [makeTarget("b"), makeTarget("c"), makeTarget("a")],
+        mode: "debate",
+        rounds: 1,
+        summarize: false,
+        vote: true,
+      },
+      makeConfig(adapter)
+    );
+    // 投票段「我投专家B 的方案。」→ 专家B；预测段提及 B/C/A（本人 A 丢弃）→ [B, C]
+    expect(roundVotes!.ballots[0]!.votedForAlias).toBe("专家B");
+    expect(roundVotes!.ballots[0]!.predictions).toEqual(["专家B", "专家C"]);
+  });
+
+  it("spWinner 端到端：唯一 argmax 写键；预测不足时不写键（AC5）", async () => {
+    // 3 卡：A→B、B→C、C→B（多数=B）；预测 A:[B,C] B:[A,C] C:[A,B]
+    // actual: A=0, B=2/3, C=1/3；predicted: 各 1/3 → margin: A=-1/3, B=1/3, C=0
+    // → SP=专家B = 多数赢家
+    const targets = [makeTarget("a"), makeTarget("b"), makeTarget("c")];
+    const adapter = makeStubAdapter(async (params) => {
+      const sys = String(params.messages[0]?.content ?? "");
+      const user = String(params.messages.at(-1)?.content ?? "");
+      if (user.includes(VOTE_INSTRUCTION)) {
+        if (sys.includes("你是 a")) {
+          return {
+            content:
+              "我投专家B，其容灾论据最扎实；预测：专家B 会投专家A，专家C 会投专家B。",
+          };
+        }
+        if (sys.includes("你是 b")) {
+          return {
+            content:
+              "我投专家C，其灰度发布方案最稳；预测：专家A 会投专家B，专家C 会投专家A。",
+          };
+        }
+        return {
+          content:
+            "我投专家B，其容量估算有实测数据；预测：专家A 会投专家B，专家B 会投专家B。",
+        };
+      }
+      return { content: "观点陈述。" };
+    });
+
+    const { roundVotes, spWinner } = await runDialogue(
+      { topic, targets, mode: "debate", rounds: 1, summarize: false, vote: true },
+      makeConfig(adapter)
+    );
+    expect(spWinner).toBe("专家B");
+    expect(roundVotes!.ballots.map((b) => b.predictions)).toEqual([
+      ["专家B", "专家C"],
+      ["专家A", "专家C"],
+      ["专家A", "专家B"],
+    ]);
+
+    // 2 卡 echo（互投、预测段无别名）→ 可解析预测 0 份 → 不写 spWinner 键
+    const { spWinner: sp2 } = await runDialogue(
+      {
+        topic,
+        targets: [makeTarget("a"), makeTarget("b")],
+        mode: "debate",
+        rounds: 1,
+        summarize: false,
+        vote: true,
+      },
+      makeConfig(makeEchoAdapter())
+    );
+    expect(sp2).toBeUndefined();
+  });
+});
+
+describe("报告聚合结果三态（task 09-27-sp-evidence-aggregation，AC5）", () => {
+  const turns: DialogueTurn[] = [
+    { round: 1, expertId: "a", expertName: "专家-a", icon: "🤖", content: "甲观点" },
+  ];
+  const votes = [
+    { round: 0, expertId: "a", expertName: "专家-a", icon: "🤖", content: "我投专家B" },
+  ];
+  const aliases = [
+    { alias: "专家A", expertId: "a", expertName: "专家-a" },
+    { alias: "专家B", expertId: "b", expertName: "专家-b" },
+    { alias: "专家C", expertId: "c", expertName: "专家-c" },
+  ];
+  // A→B、B→C、C→B：多数赢家 = 专家B
+  const ballots = [
+    { voterCardId: "card-a", voterAlias: "专家A", votedForAlias: "专家B", reason: "r1" },
+    { voterCardId: "card-b", voterAlias: "专家B", votedForAlias: "专家C", reason: "r2" },
+    { voterCardId: "card-c", voterAlias: "专家C", votedForAlias: "专家B", reason: "r3" },
+  ];
+
+  it("一致：多数赢家与 SP 赢家一致（位置在投票明细后、讨论总结前）", () => {
+    const report = formatBrainstormReport("主题", "debate", 1, turns, "总结内容", {
+      votes,
+      aliases,
+      roundVotes: { round: 1, ballots },
+      spWinner: "专家B",
+    });
+    expect(report).toContain("### 聚合结果");
+    expect(report).toContain("- 多数赢家与 SP 赢家一致：专家B（聚合信号稳健）");
+    const aggIdx = report.indexOf("### 聚合结果");
+    expect(aggIdx).toBeGreaterThan(report.indexOf("### 投票明细"));
+    expect(aggIdx).toBeLessThan(report.indexOf("### 讨论总结"));
+  });
+
+  it("分歧：双轨呈现 + 趋同警报语义", () => {
+    const report = formatBrainstormReport("主题", "debate", 1, turns, undefined, {
+      roundVotes: { round: 1, ballots },
+      spWinner: "专家A",
+    });
+    expect(report).toContain(
+      "- 多数赢家：专家B；SP 赢家：专家A —— ⚠️ 多数可能被预期锁定（趋同警报），请阅读双方论据后再裁决"
+    );
+  });
+
+  it("未计算：spWinner 缺省（预测不足）", () => {
+    const report = formatBrainstormReport("主题", "debate", 1, turns, undefined, {
+      roundVotes: { round: 1, ballots },
+    });
+    expect(report).toContain("- 多数赢家：专家B（预测不足，未计算 SP）");
+  });
+
+  it("票数并列：无单一多数的缺省行；无票 → 零字节", () => {
+    const tieReport = formatBrainstormReport("主题", "debate", 1, turns, undefined, {
+      roundVotes: {
+        round: 1,
+        ballots: [
+          { voterCardId: "card-a", voterAlias: "专家A", votedForAlias: "专家B", reason: "r1" },
+          { voterCardId: "card-b", voterAlias: "专家B", votedForAlias: "专家A", reason: "r2" },
+        ],
+      },
+    });
+    expect(tieReport).toContain("- 多数赢家：（票数并列，预测不足，未计算 SP）");
+
+    const noVotes = formatBrainstormReport("主题", "debate", 1, turns);
+    expect(noVotes).not.toContain("聚合结果");
+  });
+});
+
+describe("证据锚定协议（task 09-27-sp-evidence-aggregation）", () => {
+  const topic = "如何设计一个高并发系统";
+  const targets = [makeTarget("a"), makeTarget("b")];
+  const context = "我初步判断用单体架构就够了";
+
+  function makeCaptureAdapter() {
+    const seen: string[] = [];
+    const adapter = makeStubAdapter(async (params) => {
+      seen.push(String(params.messages.at(-1)?.content ?? ""));
+      return { content: `观点#${seen.length}` };
+    });
+    return { adapter, seen };
+  }
+
+  describe("buildEvidenceLibrary 纯函数（AC2）", () => {
+    it("无参/全空白 → 空串；编号 [E1]..[En] 跳过空白项；块内含引用纪律与可能有误语义", () => {
+      expect(buildEvidenceLibrary(undefined)).toBe("");
+      expect(buildEvidenceLibrary([])).toBe("");
+      expect(buildEvidenceLibrary(["  ", "\n\t ", ""])).toBe("");
+      const block = buildEvidenceLibrary(["证据甲", "  ", "证据乙"]);
+      expect(block).toBe(
+        `${EVIDENCE_LIBRARY_HEADER}\n\n[E1] 证据甲\n\n[E2] 证据乙\n\n${EVIDENCE_LIBRARY_NOTE}`
+      );
+      // 认识论区分（D3）：事实材料非立场 + 可能有误 + 引用标注编号
+      expect(EVIDENCE_LIBRARY_NOTE).toContain("不是立场主张");
+      expect(EVIDENCE_LIBRARY_NOTE).toContain("可能不完整或有误");
+      expect(EVIDENCE_LIBRARY_NOTE).toContain("标注编号");
+    });
+
+    it("单条 2000 截断加省略号；总量 8000 截断加「（证据库已截断）」", () => {
+      const perItem = buildEvidenceLibrary([
+        "x".repeat(EVIDENCE_ITEM_MAX_CHARS + 500),
+      ]);
+      expect(perItem).toContain("x".repeat(EVIDENCE_ITEM_MAX_CHARS) + "…");
+      expect(perItem).not.toContain("x".repeat(EVIDENCE_ITEM_MAX_CHARS + 1));
+
+      // 4 条各 2000（不触发单条截断）→ 条目区 4×(5+2000)+3×2 = 8026 > 8000
+      const four = buildEvidenceLibrary([
+        "y".repeat(2000),
+        "y".repeat(2000),
+        "y".repeat(2000),
+        "y".repeat(2000),
+      ]);
+      expect(four).toContain("（证据库已截断）");
+      // 注意 header 自身含 "[E1]..[En]" 字样，定位条目区需用条目前缀 "[E1] y"
+      const body = four.slice(
+        four.indexOf("[E1] y"),
+        four.indexOf(EVIDENCE_LIBRARY_NOTE)
+      );
+      // 条目区总量被钳制在 8000 + 省略标记内
+      expect(body.length).toBeLessThanOrEqual(
+        EVIDENCE_LIBRARY_MAX_CHARS + "…（证据库已截断）".length + 2
+      );
+    });
+  });
+
+  it("evidence 注入矩阵：debate 种子/≥2 注入，种子盲答仍不含 context；投票轮不注入（AC1/R2.3）", async () => {
+    const evidence = ["基准压测：QPS 1000 时 P99 200ms"];
+    const { adapter, seen } = makeCaptureAdapter();
+
+    await runDialogue(
+      {
+        topic,
+        targets,
+        mode: "debate",
+        rounds: 2,
+        summarize: false,
+        vote: true,
+        context,
+        evidence,
+      },
+      makeConfig(adapter)
+    );
+
+    // seen: 2 种子 + 2 第二轮 + 2 投票
+    expect(seen).toHaveLength(6);
+    // 种子轮：证据库注入（盲答隔离仅针对 context/claim-0，不针对证据基底）
+    for (const p of seen.slice(0, 2)) {
+      expect(p).toContain(EVIDENCE_LIBRARY_HEADER);
+      expect(p).toContain("[E1] 基准压测：QPS 1000 时 P99 200ms");
+      expect(p).toContain(EVIDENCE_LIBRARY_NOTE);
+      // 盲答边界不破：claim-0 仍不注入
+      expect(p).not.toContain("单体架构");
+      expect(p).not.toContain(CLAIM0_HEADER);
+    }
+    // 种子轮模板逐字节：topic → 证据库 → SEED_INSTRUCTION（debate 无 claim-0）
+    expect(seen[0]).toBe(
+      `${topic}\n\n${buildEvidenceLibrary(evidence)}\n\n${SEED_INSTRUCTION}`
+    );
+    // 第 2 轮：证据块在 claim-0 头之前（顺序 = evidence、claim-0、实录）
+    for (const p of seen.slice(2, 4)) {
+      expect(p).toContain(EVIDENCE_LIBRARY_HEADER);
+      expect(p.indexOf(EVIDENCE_LIBRARY_HEADER)).toBeLessThan(
+        p.indexOf(CLAIM0_HEADER)
+      );
+      expect(p.indexOf(CLAIM0_HEADER)).toBeLessThan(p.indexOf("上一轮发言:"));
+    }
+    // 投票轮：不注入证据库
+    for (const p of seen.slice(4)) {
+      expect(p).not.toContain(EVIDENCE_LIBRARY_HEADER);
+      expect(p).not.toContain("[E1] 基准压测");
+    }
+  });
+
+  it("evidence 注入矩阵：relay 各轮（含种子轮）均注入，顺序 evidence → claim-0（R2.3）", async () => {
+    const evidence = ["实测数据点甲"];
+    const { adapter, seen } = makeCaptureAdapter();
+
+    await runDialogue(
+      { topic, targets, mode: "relay", rounds: 2, summarize: false, context, evidence },
+      makeConfig(adapter)
+    );
+
+    expect(seen).toHaveLength(4);
+    for (const p of seen) {
+      expect(p).toContain(EVIDENCE_LIBRARY_HEADER);
+      expect(p).toContain("单体架构");
+      expect(p.indexOf(EVIDENCE_LIBRARY_HEADER)).toBeLessThan(
+        p.indexOf(CLAIM0_HEADER)
+      );
+    }
+    // 种子轮（无实录分支）：topic → 证据库 → claim-0 → SEED_INSTRUCTION
+    expect(seen[0]!.indexOf(EVIDENCE_LIBRARY_HEADER)).toBeLessThan(
+      seen[0]!.indexOf(CLAIM0_HEADER)
+    );
+    expect(seen[0]!.indexOf(CLAIM0_HEADER)).toBeLessThan(
+      seen[0]!.indexOf(SEED_INSTRUCTION)
+    );
+  });
+
+  it("无 evidence：所有 prompt 组装逐字节还原现状（AC1 红线）", async () => {
+    const { adapter, seen } = makeCaptureAdapter();
+    await runDialogue(
+      { topic, targets, mode: "debate", rounds: 2, summarize: false, context },
+      makeConfig(adapter)
+    );
+    for (const p of seen) {
+      expect(p).not.toContain(EVIDENCE_LIBRARY_HEADER);
+      expect(p).not.toContain(EVIDENCE_LIBRARY_NOTE);
+    }
+    // 种子轮现状形状（无 context/evidence）
+    const { adapter: a2, seen: seen2 } = makeCaptureAdapter();
+    await runDialogue(
+      { topic, targets, mode: "debate", rounds: 1, summarize: false },
+      makeConfig(a2)
+    );
+    expect(seen2[0]).toBe(`${topic}\n\n${SEED_INSTRUCTION}`);
+    // evidence 全空白等价于未传
+    const { adapter: a3, seen: seen3 } = makeCaptureAdapter();
+    await runDialogue(
+      { topic, targets, mode: "debate", rounds: 1, summarize: false, evidence: ["  ", ""] },
+      makeConfig(a3)
+    );
+    expect(seen3[0]).toBe(`${topic}\n\n${SEED_INSTRUCTION}`);
+  });
+
+  it("collectEvidenceRefs：多专家计数、越界编号忽略、未引用专家空列表（AC6）", () => {
+    const turns: DialogueTurn[] = [
+      { round: 1, expertId: "a", expertName: "安全专家", icon: "", content: "如 [E1] 所示；[E1] 亦印证" },
+      { round: 2, expertId: "b", expertName: "性能专家", icon: "", content: "引用 [E9] 越界无效，[E2] 有效" },
+      { round: 2, expertId: "c", expertName: "架构专家", icon: "", content: "不引用任何证据" },
+    ];
+    expect(collectEvidenceRefs(turns, 3)).toEqual([
+      { expertName: "安全专家", cited: [{ id: 1, count: 2 }] },
+      { expertName: "性能专家", cited: [{ id: 2, count: 1 }] },
+      { expertName: "架构专家", cited: [] },
+    ]);
+  });
+
+  it("报告证据两小节：证据库在实录前、引用统计在实录后魔鬼代言人前；零引用/无 evidence 零输出（AC2/AC6）", () => {
+    const evidence = ["证据甲", "证据乙"];
+    const refTurns: DialogueTurn[] = [
+      { round: 1, expertId: "a", expertName: "安全专家", icon: "🤖", content: "引用 [E1] 两次 [E1]" },
+      { round: 1, expertId: "b", expertName: "性能专家", icon: "🤖", content: "无引用" },
+    ];
+    const report = formatBrainstormReport("主题", "debate", 2, refTurns, undefined, {
+      evidence,
+      devilsAdvocates: [{ round: 2, expertName: "专家-a" }],
+    });
+    expect(report).toContain("### 证据库");
+    expect(report).toContain("[E1] 证据甲");
+    expect(report).toContain("[E2] 证据乙");
+    expect(report.indexOf("### 证据库")).toBeLessThan(report.indexOf("### 第 1 轮"));
+    expect(report).toContain("### 证据引用统计");
+    expect(report).toContain("- 安全专家：[E1]×2");
+    expect(report).toContain("- 性能专家：（未引用证据）");
+    expect(report.indexOf("### 证据引用统计")).toBeLessThan(
+      report.indexOf("### 魔鬼代言人轮换")
+    );
+
+    // 证据提供但零引用 → 统计小节零输出（证据库小节仍输出）
+    const zeroRefs = formatBrainstormReport(
+      "主题",
+      "debate",
+      1,
+      refTurns.map((t) => ({ ...t, content: "无引用" })),
+      undefined,
+      { evidence }
+    );
+    expect(zeroRefs).toContain("### 证据库");
+    expect(zeroRefs).not.toContain("### 证据引用统计");
+
+    // 无 evidence → 两小节零输出
+    const noEvidence = formatBrainstormReport("主题", "debate", 1, refTurns);
+    expect(noEvidence).not.toContain("### 证据库");
+    expect(noEvidence).not.toContain("证据引用统计");
   });
 });

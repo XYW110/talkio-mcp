@@ -9,6 +9,7 @@ import type {
   DialogueTurn,
   DialogueAlias,
   RoundVotes,
+  VoteBallot,
 } from "../orchestrator/dialogue.js";
 
 /** Build the Markdown consultation report (design §3.1). */
@@ -113,6 +114,78 @@ export interface BrainstormReportExtras {
   runsTotal?: number;
   /** 魔鬼代言人轮换（P3-R1）：debate round≥2 每轮一位；为空时省略小节（零字节）。 */
   devilsAdvocates?: Array<{ round: number; expertName: string }>;
+  /**
+   * 证据包（R2.4）：提供（且含非空白项）时在实录前渲染「### 证据库」小节、
+   * 实录后渲染「### 证据引用统计」小节；缺省时两小节零输出。
+   */
+  evidence?: string[];
+  /** SP 赢家（R1.5）：仅计算成功时提供；与 roundVotes 一同渲染「### 聚合结果」。 */
+  spWinner?: string;
+}
+
+/** 证据引用统计的单条计数（R2.4）：id = 证据编号（1 起），count = 引用次数。 */
+export interface EvidenceRefCount {
+  id: number;
+  count: number;
+}
+
+/** 单专家的 [En] 引用扫描结果（R2.4）：零引用专家 cited 为空数组。 */
+export interface ExpertEvidenceRefs {
+  expertName: string;
+  cited: EvidenceRefCount[];
+}
+
+/**
+ * 扫描实录 turns 中的 [En] 证据引用（R2.4/D4：客观正则扫描，不做语义级抽取）。
+ * 正则 /\[E(\d+)\]/g 逐 turn 匹配，编号 > evidenceCount 的越界引用忽略；
+ * 同一专家按编号去重计数、按首次出现顺序排列；专家按 turns 首现顺序输出。
+ * runs>1 由调用方传入 first run 的 turns（与 votes 同策略）。
+ */
+export function collectEvidenceRefs(
+  turns: DialogueTurn[],
+  evidenceCount: number
+): ExpertEvidenceRefs[] {
+  const byExpert = new Map<string, EvidenceRefCount[]>();
+  for (const turn of turns) {
+    const cited = byExpert.get(turn.expertName) ?? [];
+    for (const m of turn.content.matchAll(/\[E(\d+)\]/g)) {
+      const id = Number(m[1]);
+      if (!Number.isInteger(id) || id < 1 || id > evidenceCount) continue;
+      const existing = cited.find((c) => c.id === id);
+      if (existing) existing.count += 1;
+      else cited.push({ id, count: 1 });
+    }
+    byExpert.set(turn.expertName, cited);
+  }
+  return [...byExpert.entries()].map(([expertName, cited]) => ({
+    expertName,
+    cited,
+  }));
+}
+
+/**
+ * 多数赢家（R1.5）：有效票（votedForAlias 非空）的唯一众数；无有效票或票数
+ * 并列（无单一多数）返回 null。纯函数，供「### 聚合结果」三态渲染。
+ */
+function resolveMajorityWinner(ballots: VoteBallot[]): string | null {
+  const counts = new Map<string, number>();
+  for (const b of ballots) {
+    if (!b.votedForAlias) continue;
+    counts.set(b.votedForAlias, (counts.get(b.votedForAlias) ?? 0) + 1);
+  }
+  let best: string | null = null;
+  let bestCount = 0;
+  let tie = false;
+  for (const [alias, count] of counts) {
+    if (count > bestCount) {
+      best = alias;
+      bestCount = count;
+      tie = false;
+    } else if (count === bestCount) {
+      tie = true;
+    }
+  }
+  return tie ? null : best;
 }
 
 /**
@@ -136,6 +209,20 @@ export function formatBrainstormReport(
   lines.push(`**模式:** ${mode === "debate" ? "辩论" : "接龙"}`);
   lines.push(`**轮数:** ${rounds}`);
   lines.push("");
+  // 证据库小节（R2.4）：提供 evidence 时在实录之前展示编号条目（透明度），
+  // 编号语义与 prompt 注入块一致（跳过空白项、按顺序编号）；缺省/全空白
+  // → 零字节输出。位置镜像注入顺序：证据库（事实基底）→ claim-0（可推翻主张）。
+  const evidenceItems = (extras?.evidence ?? [])
+    .map((e) => e.trim())
+    .filter((e) => e !== "");
+  if (evidenceItems.length > 0) {
+    lines.push("### 证据库");
+    lines.push("");
+    evidenceItems.forEach((item, i) => {
+      lines.push(`[E${i + 1}] ${item}`);
+      lines.push("");
+    });
+  }
   // claim-0 小节（R6）：仅 initiatorContext 存在时输出；标注其未参与盲答
   // 与投票。缺省时完全不进入输出流（上方内容逐字节不变）。
   const initiator = extras?.initiatorContext;
@@ -151,6 +238,26 @@ export function formatBrainstormReport(
   }
   lines.push(formatTranscript(turns));
   lines.push("");
+  // 证据引用统计（R2.4）：实录之后、魔鬼代言人轮换之前；per-expert [En]
+  // 客观正则扫描。无 evidence、或证据提供了但零引用 → 零字节输出。
+  if (evidenceItems.length > 0) {
+    const refStats = collectEvidenceRefs(turns, evidenceItems.length);
+    const totalDistinctRefs = refStats.reduce(
+      (acc, r) => acc + r.cited.length,
+      0
+    );
+    if (totalDistinctRefs > 0) {
+      lines.push("### 证据引用统计");
+      lines.push("");
+      for (const stat of refStats) {
+        const cited = stat.cited.length
+          ? stat.cited.map((c) => `[E${c.id}]×${c.count}`).join("、")
+          : "（未引用证据）";
+        lines.push(`- ${stat.expertName}：${cited}`);
+      }
+      lines.push("");
+    }
+  }
   // 魔鬼代言人轮换（P3-R1）：位于实录之后、「互评投票」之前，按轮列出该轮
   // 指定的专家实名；缺省（relay / rounds<2 / 旧路径）零字节输出。
   const devils = extras?.devilsAdvocates ?? [];
@@ -201,6 +308,32 @@ export function formatBrainstormReport(
       }
       lines.push("");
     }
+  }
+  // 聚合结果（R1.5/D2）：投票明细之后、讨论总结之前，双轨三态呈现——
+  // 多数赢家（唯一众数）恒有定义，SP 赢家是附加信号；多数与 SP 的分歧本身
+  // 即趋同警报。无票（roundVotes 缺省/空）→ 零字节输出。
+  const aggVotes = extras?.roundVotes;
+  if (aggVotes && aggVotes.ballots.length > 0) {
+    const majority = resolveMajorityWinner(aggVotes.ballots);
+    const sp = extras?.spWinner;
+    lines.push("### 聚合结果");
+    lines.push("");
+    if (majority && sp) {
+      lines.push(
+        majority === sp
+          ? `- 多数赢家与 SP 赢家一致：${sp}（聚合信号稳健）`
+          : `- 多数赢家：${majority}；SP 赢家：${sp} —— ⚠️ 多数可能被预期锁定（趋同警报），请阅读双方论据后再裁决`
+      );
+    } else if (majority) {
+      lines.push(`- 多数赢家：${majority}（预测不足，未计算 SP）`);
+    } else if (sp) {
+      lines.push(
+        `- 多数赢家：（票数并列）；SP 赢家：${sp} —— ⚠️ 多数可能被预期锁定（趋同警报），请阅读双方论据后再裁决`
+      );
+    } else {
+      lines.push("- 多数赢家：（票数并列，预测不足，未计算 SP）");
+    }
+    lines.push("");
   }
   if (summary && summary.trim().length > 0) {
     // 裁决者标注（R3）：fallback 时在综合段标题注明回退。

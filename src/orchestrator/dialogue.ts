@@ -81,6 +81,13 @@ export interface DialogueOptions {
    * 在 topic 后注入。缺省/纯空白 = 无 claim-0，prompt 组装形状与现状一致。
    */
   context?: string;
+  /**
+   * 证据锚定（R2）：调用方提供的证据包（代码片段/数据/文档引文/实测输出），
+   * 编号为 [E1]..[En] 组装成「可引用证据库」块。debate 种子轮 / debate ≥2 轮 /
+   * relay 各轮均注入（证据是共享事实基底，区别于 claim-0 的可推翻主张），
+   * 投票轮不注入。缺省/全空白项 = 不注入，prompt 组装形状与现状逐字节一致。
+   */
+  evidence?: string[];
 }
 
 /** 匿名化代号映射（R2）：按 targets 顺序分配 专家A/B/…。 */
@@ -132,6 +139,9 @@ export interface DialogueResult {
   devilsAdvocates?: Array<{ round: number; expertId: string; expertName: string }>;
   /** 裁决者信息（R3）：报告综合段标注用；未提供 judgeCard 时缺省。 */
   judgeInfo?: { cardId: string; cardName: string; fallback?: boolean };
+  /** SP 赢家（R1.5）：surprisinglyPopular 唯一 argmax 时的别名；未计算/并列/
+   * 预测不足时不写键（JSONL additive，design §3.4）。 */
+  spWinner?: string;
 }
 
 /** 单张选票（P1-A 结构化中间结果；voterCardId 仅落盘用，展示一律走别名）。 */
@@ -146,6 +156,11 @@ export interface VoteBallot {
   reason: string;
   /** 自投显式标记（P3-R3）：票文只提及本人别名时置 true（无效票）；仅 true 时写键（additive）。 */
   selfVote?: boolean;
+  /**
+   * 二阶预测（R1.2/R1.3）：该票预测段内收集到的其他专家别名（排除本人、
+   * 去重保序）；无预测段或未收集到任何别名时不写键（JSONL additive）。
+   */
+  predictions?: string[];
 }
 
 /** 每轮投票结果（P1-A/D2：投票轮发生在全部内容轮后，round = 内容轮数）。 */
@@ -186,11 +201,13 @@ export const SUMMARIZER_SYSTEM =
 /** 投票轮指令（R1）：注入在匿名实录之后，要求每位专家给出互评投票。
  * 禁自投 + 限长：真实验证发现模型会投自己且票文过长（vote-prompt-fix），
  * 匿名制下自投等于无效票，票文过长会让投票段退化成第三轮发言。
- * R9（论据化投票）：评判标准 = 论据质量与可验证性；理由必须引用被投者的
- * 一条具体论据；「主理 AI 初步判断（claim-0）」不是候选人（D3：解析层
- * 不设防，靠指令明示 claim-0 无别名不可投）。 */
+ * R9（论据化投票）+ SP 二阶预测行（R1.1，task 09-27-sp-evidence-aggregation，
+ * design §3.1 原文）：投票理由引用被投者具体论据（论据若基于证据库标注证据
+ * 编号）；最后一行以「预测：」开头预测其他专家的票——二阶信息供
+ * surprisinglyPopular 聚合（「主理 AI 初步判断（claim-0）」无别名，天然非
+ * 候选人；结构要求为软约束，解析按「预测」标记容错）。 */
 export const VOTE_INSTRUCTION =
-  "以上是本次讨论的完整实录（已匿名，标注【你的发言】的行是你本人的观点）。请投票：选出你最认同的一位其他专家（代号），不得投给你自己；「主理 AI 初步判断（claim-0）」不是候选人，不存在对应代号。评判标准是论据质量与可验证性，而非观点立场的一致性；投票理由必须引用被投者的一条具体论据。150 字以内，直接给出专家代号与核心理由，并一句话说明你是否修正了自己的立场；不要展开论述，不要使用标题。";
+  "以上是本次讨论的完整实录（已匿名，标注【你的发言】的行是你本人的观点）。请投票：\n第一行给出投票——选出你最认同的一位其他专家（代号）与其核心理由（必须引用该专家的具体论据；论据若基于证据库请标注证据编号），150 字以内，不要标题；\n最后一行以「预测：」开头——预测其他专家会各投给谁（列出代号，不含你自己）。\n不得投给你自己；一句话说明你是否修正了自己的立场。";
 
 /** claim-0 块头（R3/R5）：发起方初步判断在 prompt 注入块中的统一标题。
  * 与别名「专家[A-Z]」形态刻意不同，parseVotedForAlias 天然不会命中。 */
@@ -209,6 +226,50 @@ export function buildClaim0Block(context: string | undefined): string {
   const trimmed = context?.trim() ?? "";
   if (trimmed === "") return "";
   return `${CLAIM0_HEADER}\n${trimmed}\n\n${CLAIM0_NOTE}`;
+}
+
+/** 证据库块头（R2）：调用方证据包在 prompt 注入块中的统一标题。
+ * 形态刻意区别于别名「专家[A-Z]」，parseVotedForAlias 不会命中。 */
+export const EVIDENCE_LIBRARY_HEADER =
+  "【可引用证据库（主理 AI 提供，编号 [E1]..[En]）】";
+
+/** 证据库说明行（R2/D3）：紧跟证据条目之后。与 claim-0 的认识论区分写在
+ * 块内——证据是共享事实材料（首轮可见、非立场），claim-0 是可推翻主张。 */
+export const EVIDENCE_LIBRARY_NOTE =
+  "以上证据是共享的事实材料,不是立场主张;引用其中内容时请标注编号,如 [E1]。证据可能不完整或有误,发现相互矛盾或与你的知识冲突时,请明确指出。";
+
+/** 单条证据截断上限（R2.2），超长加省略号。 */
+export const EVIDENCE_ITEM_MAX_CHARS = 2000;
+/** 证据库总量截断上限（R2.2），超限在截断处加省略号 + 截断标注。 */
+export const EVIDENCE_LIBRARY_MAX_CHARS = 8000;
+
+const EVIDENCE_LIBRARY_TRUNCATED_SUFFIX = "…（证据库已截断）";
+
+/**
+ * 组装证据库块（R2.2）：header + 编号条目 + 说明行。
+ * 编号 [E1]..[En] 按传入顺序分配，纯空白项跳过（不占编号）；单条超
+ * EVIDENCE_ITEM_MAX_CHARS 截断加省略号；条目区总量超 EVIDENCE_LIBRARY_MAX_CHARS
+ * 在截断处加省略号 + 「（证据库已截断）」。
+ * 无 evidence 或全部条目纯空白时返回空串，调用点按「无证据」处理
+ * （保证不传 evidence 时 prompt 组装形状与现状逐字节一致，design §4 红线）。
+ */
+export function buildEvidenceLibrary(evidence: string[] | undefined): string {
+  const items: string[] = [];
+  for (const raw of evidence ?? []) {
+    const trimmed = raw.trim();
+    if (trimmed === "") continue;
+    items.push(
+      trimmed.length > EVIDENCE_ITEM_MAX_CHARS
+        ? trimmed.slice(0, EVIDENCE_ITEM_MAX_CHARS) + "…"
+        : trimmed
+    );
+  }
+  if (items.length === 0) return "";
+  let body = items.map((item, i) => `[E${i + 1}] ${item}`).join("\n\n");
+  if (body.length > EVIDENCE_LIBRARY_MAX_CHARS) {
+    body = body.slice(0, EVIDENCE_LIBRARY_MAX_CHARS) + EVIDENCE_LIBRARY_TRUNCATED_SUFFIX;
+  }
+  return `${EVIDENCE_LIBRARY_HEADER}\n\n${body}\n\n${EVIDENCE_LIBRARY_NOTE}`;
 }
 
 /** 多轮 runs 合并调用系统提示（P3-A）：对 N 次运行的结论去重合并。 */
@@ -319,6 +380,111 @@ export function isSelfVoteBallot(
     if (alias !== voterAlias && mentioned.has(alias)) return false;
   }
   return true;
+}
+
+/**
+ * 按「预测」标记把票文分割为投票段与预测段（R1.2，SP 二阶聚合）：
+ * 优先匹配「预测：/预测:」（全半角冒号容错）；无冒号时回退行首「预测」标记；
+ * 无任何标记 → 全文为投票段、预测段为空串。分割只发生在 ballot 组装层，
+ * parseVotedForAlias / isSelfVoteBallot 的签名与既有语义不变（design §4.5）。
+ */
+function splitBallotPrediction(content: string): {
+  votePart: string;
+  predictionPart: string;
+} {
+  const colonIdx = content.search(/预测[：:]/);
+  if (colonIdx >= 0) {
+    return {
+      votePart: content.slice(0, colonIdx),
+      predictionPart: content.slice(colonIdx),
+    };
+  }
+  const lineMatch = content.match(/(?:^|\n)[ \t]*预测/);
+  if (lineMatch && lineMatch.index !== undefined) {
+    // 命中含换行/行首本身：跳过换行符，让预测段从「预测」一词起。
+    const splitAt = lineMatch.index === 0 ? 0 : lineMatch.index + 1;
+    return {
+      votePart: content.slice(0, splitAt),
+      predictionPart: content.slice(splitAt),
+    };
+  }
+  return { votePart: content, predictionPart: "" };
+}
+
+/**
+ * 收集预测段中的二阶预测别名（R1.2）：复用 collectAliasMentions（单一正则
+ * 来源，两级匹配），排除投票者本人（预测自己的条目丢弃）、去重保序。
+ */
+function collectPredictions(
+  predictionPart: string,
+  voterAlias: string,
+  knownAliases: string[]
+): string[] {
+  const seen = new Set<string>();
+  const predictions: string[] = [];
+  for (const m of collectAliasMentions(predictionPart, knownAliases)) {
+    if (m.alias === voterAlias) continue;
+    if (seen.has(m.alias)) continue;
+    seen.add(m.alias);
+    predictions.push(m.alias);
+  }
+  return predictions;
+}
+
+/** SP 边际比较的浮点容差：份额均为小数值，epsilon 防止 float 误差误判并列。 */
+const SP_MARGIN_EPSILON = 1e-9;
+
+/**
+ * Surprisingly Popular 二阶聚合（R1.4；Prelec 2017，多 LLM 版见任务 research.md）。
+ *
+ * votes: 各有效票的被投者别名（空串 = 未识别/自投，不计入实际得票；
+ * knownAliases 外的提及忽略）。predictions: 与 votes 平行的每票预测别名数组
+ * （可空；缺预测的票计入实际得票但不参与预测均值——Q2=A 降级语义）。
+ *
+ * 对每个候选 c：margin(c) = 实际得票率 − 跨预测者平均预测得票率（预测份内
+ * 条目为该预测者眼中的得票分布，份额 = 该别名出现次数 / 列表长度）。
+ * 返回唯一 argmax 的别名；预测份 <2、并列最大或无有效票 → null（不输出 SP）。
+ */
+export function surprisinglyPopular(
+  votes: string[],
+  predictions: string[][],
+  knownAliases: string[]
+): string | null {
+  const known = new Set(knownAliases);
+  const validVotes = votes.filter((v) => v !== "" && known.has(v));
+  const validPredictions = predictions
+    .map((p) => p.filter((a) => known.has(a)))
+    .filter((p) => p.length > 0);
+  if (validVotes.length === 0 || validPredictions.length < 2) return null;
+
+  const actualCount = new Map<string, number>();
+  for (const v of validVotes) {
+    actualCount.set(v, (actualCount.get(v) ?? 0) + 1);
+  }
+  const predictedSum = new Map<string, number>();
+  for (const p of validPredictions) {
+    for (const alias of known) {
+      const hits = p.filter((a) => a === alias).length;
+      predictedSum.set(alias, (predictedSum.get(alias) ?? 0) + hits / p.length);
+    }
+  }
+
+  let best: string | null = null;
+  let bestMargin = -Infinity;
+  let tie = false;
+  for (const alias of new Set(knownAliases)) {
+    const actual = (actualCount.get(alias) ?? 0) / validVotes.length;
+    const predicted = (predictedSum.get(alias) ?? 0) / validPredictions.length;
+    const margin = actual - predicted;
+    if (margin > bestMargin + SP_MARGIN_EPSILON) {
+      best = alias;
+      bestMargin = margin;
+      tie = false;
+    } else if (Math.abs(margin - bestMargin) <= SP_MARGIN_EPSILON) {
+      tie = true;
+    }
+  }
+  return tie ? null : best;
 }
 
 // --- Internal helpers ----------------------------------------------------
@@ -578,6 +744,13 @@ export async function runDialogue(
   const claim0 = buildClaim0Block(opts.context);
   const claim0Prefix = claim0 ? `${claim0}\n\n` : "";
 
+  // 证据库块（R2 证据锚定）：共享事实基底，debate 种子轮即注入（盲答隔离仅
+  // 针对 context/claim-0，不针对证据基底）；固定相对顺序 = evidence、claim-0、
+  // 实录（design §2.2）。空白/缺省 → evidencePrefix 为空串，逐字节还原现状。
+  // 投票轮不注入（票文引用的是已陈述论据）。
+  const evidenceBlock = buildEvidenceLibrary(opts.evidence);
+  const evidencePrefix = evidenceBlock ? `${evidenceBlock}\n\n` : "";
+
   if (targets.length === 0 || rounds === 0) {
     return { turns };
   }
@@ -671,12 +844,14 @@ export async function runDialogue(
       // Seed round: every expert answers the topic fresh (parallel).
       // 盲答边界（R2/D2）：debate 第 1 轮是独立盲答，不注入发起方 context；
       // relay 无盲答语义（R4，首位发言者需要背景），topic 后附 claim-0 块。
+      // 证据库（R2.3）：种子轮即注入（置于 topic 之后、指令之前），顺序
+      // evidence → claim-0（relay）→ SEED_INSTRUCTION。
       const seedClaim0Prefix = opts.mode === "relay" ? claim0Prefix : "";
       const results = await Promise.allSettled(
         targets.map((target) =>
           askExpert(
             target,
-            `${opts.topic}\n\n${seedClaim0Prefix}${SEED_INSTRUCTION}`,
+            `${opts.topic}\n\n${evidencePrefix}${seedClaim0Prefix}${SEED_INSTRUCTION}`,
             config
           )
         )
@@ -738,7 +913,9 @@ export async function runDialogue(
         });
       }
       const userContents = targets.map((target, i) => {
-        const base = `${opts.topic}\n\n${DEBATE_INSTRUCTION}\n\n${claim0Prefix}上一轮发言:\n${render(target.expert.id)}`;
+        // 证据库（R2.3）：插在现有 claim0Prefix 之前（顺序 = evidence、
+        // claim-0、实录；design §2.2），无 evidence 时 evidencePrefix 为空串。
+        const base = `${opts.topic}\n\n${DEBATE_INSTRUCTION}\n\n${evidencePrefix}${claim0Prefix}上一轮发言:\n${render(target.expert.id)}`;
         return i === daIdx
           ? `${base}\n\n${DEVILS_ADVOCATE_INSTRUCTION}`
           : base;
@@ -782,10 +959,11 @@ export async function runDialogue(
         const render = await resolveRenderer(turns, turns);
         const transcript = render();
         // claim-0（R4）：relay 无盲答语义，各轮 topic 后都带发起方初步判断。
+        // 证据库（R2.3）：各轮 topic 后注入，顺序 evidence → claim-0。
         const userContent =
           transcript.length > 0
-            ? `${opts.topic}\n\n${claim0Prefix}${RELAY_INSTRUCTION}\n\n此前发言:\n${transcript}`
-            : `${opts.topic}\n\n${claim0Prefix}${SEED_INSTRUCTION}`;
+            ? `${opts.topic}\n\n${evidencePrefix}${claim0Prefix}${RELAY_INSTRUCTION}\n\n此前发言:\n${transcript}`
+            : `${opts.topic}\n\n${evidencePrefix}${claim0Prefix}${SEED_INSTRUCTION}`;
         try {
           const answer = await askExpert(target, userContent, config);
           turns.push({
@@ -955,8 +1133,11 @@ export async function runDialogue(
       round: rounds,
       ballots: votes.map((v) => {
         const voterAlias = aliasByExpertId.get(v.expertId) ?? v.expertName;
+        // 预测分割（R1.2）：只发生在 ballot 组装层——投票段沿用既有解析
+        // （签名/语义不变），预测段单独收集二阶预测。
+        const { votePart, predictionPart } = splitBallotPrediction(v.content);
         const votedForAlias = parseVotedForAlias(
-          v.content,
+          votePart,
           voterAlias,
           knownAliases
         );
@@ -969,13 +1150,32 @@ export async function runDialogue(
         // 自投显式标记（P3-R3）：未识别出他人代号、且票文只提及本人 → 显式自投。
         if (
           votedForAlias === "" &&
-          isSelfVoteBallot(v.content, voterAlias, knownAliases)
+          isSelfVoteBallot(votePart, voterAlias, knownAliases)
         ) {
           ballot.selfVote = true;
+        }
+        // 二阶预测（R1.2）：仅非空时写键（JSONL additive，design §4.4）。
+        const predictions = collectPredictions(
+          predictionPart,
+          voterAlias,
+          knownAliases
+        );
+        if (predictions.length > 0) {
+          ballot.predictions = predictions;
         }
         return ballot;
       }),
     };
+    // SP 二阶聚合（R1.4/D2）：多数赢家恒有定义（投票明细三态），SP 赢家是
+    // 附加信号——唯一 argmax 才写键；预测不足/并列/无有效票 → 不写键。
+    const spWinner = surprisinglyPopular(
+      result.roundVotes.ballots.map((b) => b.votedForAlias),
+      result.roundVotes.ballots.map((b) => b.predictions ?? []),
+      knownAliases
+    );
+    if (spWinner) {
+      result.spWinner = spWinner;
+    }
   }
   // 裁决者信息（R3）：报告综合段标注用；无效时标注 fallback。
   if (opts.judge) {
