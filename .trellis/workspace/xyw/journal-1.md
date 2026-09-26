@@ -375,3 +375,31 @@ Q1=A/Q2=A 拍板三项编排级增强：①debate 第≥2轮每轮轮换一名�
 ### Status
 
 [OK] **Completed**
+
+## Session 13: SP 二阶聚合 + 证据锚定协议
+
+**Date**: 2026-09-27
+**Task**: 09-27-sp-evidence-aggregation（已归档 archive/2026-09/）
+**Branch**: `master`
+
+### Summary
+
+先导调研（Prelec SP / Beyond Majority Voting ISP / CISC-MARGIN 置信度加权落选 / PROClaim-DebateCV-FC-MAD）后 Q1=A/Q2=A 拍板：①brainstorm 增 evidence 参数（证据包 E1..En 注入各轮 + [En] 引用纪律 + 报告证据库/引用统计小节，单条 2000/总量 8000 截断）；②VOTE_INSTRUCTION 增二阶预测行，surprisinglyPopular 纯函数（margin=实际-预测得票率，唯一 argmax，缺预测/并列优雅降级），报告「聚合结果」双轨三态（分歧=趋同警报）+ JSONL spWinner/predictions additive。269 tests + typecheck 绿（check 代理独立手算 10 个 SP 探针用例含 2 个分母鉴别反例，并补齐 2 处 spec 缺口）。真跑（ac8-after-run.md）：E1 毒饵（"P99 200→20ms 来源不明"）被三专家独立识破、[En] 引用密集、预测行齐全、SP 计算成功且与多数一致；专家B 自投被 P3 机制正确标记。真跑发现解析边界：模型复述指令含「预测：」触发提前分割→票面未识别（如实暴露）——改进候选（取最后标记/行首）记 spec。R10 高光：总结器区分"多数倾向"与"共识"，拒绝强行归并。至此用户最初问题（少数服从多数 + 发起方锚定）的完整对策链落地：盲答→claim-0→论据化→魔鬼代言人→证据锚定→SP 聚合。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4eb7669` | feat(backend): SP 二阶聚合 + 证据锚定协议 |
+| `8e539b9` | docs(trellis): sp-evidence-aggregation 任务产物 + dialogue-prompts spec 增补证据库/SP 契约 |
+
+### Next Steps
+
+- 预测标记误分割改进：取最后一个「预测：」标记或强制行首（真跑实际发生，记 spec）
+- 预测段去重集合对 ≥4 专家丢失多重性——若默认卡上限调大需改为加权分布
+- 本地检索/向量库证据源：需独立安全评审（文件访问范围/PII）后再立项
+- SP 双轨分歧态的真跑样本尚未观察到（两次真跑均一致态）——可设计从众场景专项验证
+
+### Status
+
+[OK] **Completed**
