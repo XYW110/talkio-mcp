@@ -106,6 +106,18 @@ export function rotateAliases(
   return aliases.map((a, i) => ({ ...a, alias: aliases[(i + k) % n]!.alias }));
 }
 
+/**
+ * 第 round 轮（≥2）的魔鬼代言人下标（P3-R1）：targets[(round-2) % n]，确定性轮换；
+ * round<2 或空数组返回 -1（调用方按「本轮无魔鬼代言人」处理）。
+ */
+export function devilsAdvocateIndex(
+  round: number,
+  targetCount: number
+): number {
+  if (round < 2 || targetCount <= 0) return -1;
+  return (round - 2) % targetCount;
+}
+
 /** Result of runDialogue: ordered turns + optional summary. */
 export interface DialogueResult {
   turns: DialogueTurn[];
@@ -116,6 +128,8 @@ export interface DialogueResult {
   aliases?: DialogueAlias[];
   /** 结构化投票结果（P1-A）：vote 开启且至少一票成功时返回。 */
   roundVotes?: RoundVotes;
+  /** 魔鬼代言人轮换记录（P3-R1）：debate 模式 round≥2 每轮一条；relay / rounds<2 缺省。 */
+  devilsAdvocates?: Array<{ round: number; expertId: string; expertName: string }>;
   /** 裁决者信息（R3）：报告综合段标注用；未提供 judgeCard 时缺省。 */
   judgeInfo?: { cardId: string; cardName: string; fallback?: boolean };
 }
@@ -130,6 +144,8 @@ export interface VoteBallot {
   votedForAlias: string;
   /** 投票理由原文（截断到 ~200 字符，超长加省略号）。 */
   reason: string;
+  /** 自投显式标记（P3-R3）：票文只提及本人别名时置 true（无效票）；仅 true 时写键（additive）。 */
+  selfVote?: boolean;
 }
 
 /** 每轮投票结果（P1-A/D2：投票轮发生在全部内容轮后，round = 内容轮数）。 */
@@ -151,6 +167,11 @@ export const SEED_INSTRUCTION =
  * 无依据的观点必须显式标注为推测。 */
 export const DEBATE_INSTRUCTION =
   "以下是其他专家在上一轮的发言。请针对上述观点,提出你的质疑、补充或反驳,并完善你自己的立场。要求:质疑或反驳必须点名对方的具体论据,不要泛泛否定;提出新的己方论据时尽量给出可验证来源;没有依据支撑的观点,请明确标注为推测。";
+
+/** 魔鬼代言人轮指令（P3）：注入于该专家当轮 prompt 的 DEBATE_INSTRUCTION 之后。
+ * 用「你」称呼，不含任何专家名/代号 → 匿名安全（anonymize 路径不触碰本常量）。 */
+export const DEVILS_ADVOCATE_INSTRUCTION =
+  "【魔鬼代言人指令】本轮你担任魔鬼代言人:请优先找出前轮发言(包括主理 AI 初步判断)中最薄弱的论据,给出你能构造的最强质疑或最坏情形分析,即使你个人认同该观点也要执行;质疑必须点名具体论据并给依据;完成反驳后,照常给出你自己修正后的立场。";
 
 /** Relay instruction injected for each sequential speaker. */
 export const RELAY_INSTRUCTION =
@@ -226,22 +247,78 @@ function truncateBallotReason(content: string): string {
   return trimmed.slice(0, BALLOT_REASON_TRUNCATE_CHARS) + "…";
 }
 
+/** 单条票文别名提及（P3）：alias=映射后的已知别名；source=匹配来源。 */
+interface AliasMention {
+  alias: string;
+  source: "full" | "bare";
+}
+
 /**
- * 从票文中解析被投者代号（P1-A）：按出现顺序找到第一个「不是投票者本人」的
- * 已知别名。匿名实录中投票者自己的行带 own 标注且排在最前，真实票文里
- * 提及的第一个他人代号即被投者；识别失败返回空串（调用方按未识别展示）。
+ * 按序收集票文中的全部已知别名提及（P3 共享 helper，parseVotedForAlias 与
+ * isSelfVoteBallot 共同消费，避免两套正则漂移）：先全称（专家[A-Z]，现状
+ * 语义），后裸代号（独立大写字母，前后均非 [A-Za-z0-9]，映射 专家X 且必须
+ * 落在 knownAliases 白名单内——邻接排除 + 白名单共同防误报，API/QPS/AB/
+ * 未知字母均不命中）。不在此处排除投票者本人：parseVotedForAlias 需要跳过
+ * 本人，isSelfVoteBallot 依赖本人提及检测，由消费方各自处理。
+ */
+function collectAliasMentions(
+  content: string,
+  knownAliases: string[]
+): AliasMention[] {
+  const known = new Set(knownAliases);
+  const mentions: AliasMention[] = [];
+  for (const m of content.match(/专家[A-Z]/g) ?? []) {
+    if (known.has(m)) mentions.push({ alias: m, source: "full" });
+  }
+  for (const m of content.match(/(?<![A-Za-z0-9])[A-Z](?![A-Za-z0-9])/g) ?? []) {
+    const alias = `专家${m}`;
+    if (known.has(alias)) mentions.push({ alias, source: "bare" });
+  }
+  return mentions;
+}
+
+/**
+ * 从票文中解析被投者代号（P1-A，P3 两级匹配强化）：按出现顺序找到第一个
+ * 「不是投票者本人」的已知别名——先全称（专家[A-Z]，现状逻辑优先），无命中
+ * 再回退裸代号（独立大写字母）。匿名实录中投票者自己的行带 own 标注且排在
+ * 最前，真实票文里提及的第一个他人代号即被投者；识别失败返回空串
+ * （调用方结合 isSelfVoteBallot 区分自投与未识别）。
  */
 export function parseVotedForAlias(
   content: string,
   voterAlias: string,
   knownAliases: string[]
 ): string {
-  const known = new Set(knownAliases);
-  const matches = content.match(/专家[A-Z]/g) ?? [];
-  for (const m of matches) {
-    if (known.has(m) && m !== voterAlias) return m;
+  const mentions = collectAliasMentions(content, knownAliases);
+  // 步骤1（优先）：全称提及中第一个非本人别名（现状语义）。
+  for (const m of mentions) {
+    if (m.source === "full" && m.alias !== voterAlias) return m.alias;
+  }
+  // 步骤2（回退）：裸代号提及中第一个非本人别名。
+  for (const m of mentions) {
+    if (m.source === "bare" && m.alias !== voterAlias) return m.alias;
   }
   return "";
+}
+
+/**
+ * 自投显式标记（P3-R3）：票文提及了投票者本人别名（全称或裸代号）且未提及
+ * 任何其他已知别名 → 判为自投（无效票）。与「未识别代号」显式区分，让
+ * 自投复发可见（零自投非 prompt 可保证，见 vote-prompt-fix 基线）。
+ */
+export function isSelfVoteBallot(
+  content: string,
+  voterAlias: string,
+  knownAliases: string[]
+): boolean {
+  const mentioned = new Set(
+    collectAliasMentions(content, knownAliases).map((m) => m.alias)
+  );
+  if (!mentioned.has(voterAlias)) return false;
+  for (const alias of knownAliases) {
+    if (alias !== voterAlias && mentioned.has(alias)) return false;
+  }
+  return true;
 }
 
 // --- Internal helpers ----------------------------------------------------
@@ -476,6 +553,13 @@ export async function runDialogue(
   const rounds = Math.max(1, Math.min(5, Math.trunc(opts.rounds)));
   const targets = opts.targets;
   const turns: DialogueTurn[] = [];
+  // 魔鬼代言人轮换记录（P3-R1）：debate round≥2 每轮恰一位（确定性轮换），
+  // 仅记录轮次与实名，供报告「魔鬼代言人轮换」小节渲染。
+  const devilsAdvocates: Array<{
+    round: number;
+    expertId: string;
+    expertName: string;
+  }> = [];
   // Semantic compression state (task 08-28-semantic-truncation, design §4/§6).
   // summary: incremental summary; empty summaryText = not yet enabled.
   // summarizerFailed: set after a failed compressor call → hard truncation for
@@ -640,10 +724,25 @@ export async function runDialogue(
       });
       // claim-0（R3）：置于发言实录段之前（压缩/非压缩路径共用同一包裹点，
       // 不改 context-compressor）；无 context 时 claim0Prefix 为空串，形状不变。
-      const userContents = targets.map(
-        (target) =>
-          `${opts.topic}\n\n${DEBATE_INSTRUCTION}\n\n${claim0Prefix}上一轮发言:\n${render(target.expert.id)}`
-      );
+      // 魔鬼代言人轮换（P3-R1）：round≥2 每轮恰一位专家（targets[(round-2)%n]），
+      // 对该专家在 DEBATE_INSTRUCTION 及其后既有片段之后（userContent 末尾）追加
+      // DEVILS_ADVOCATE_INSTRUCTION——不改 transcript 渲染、不构造 DialogueTurn、
+      // 不进压缩器；其余专家、round 1 seed、relay、投票轮均不注入（design §4 红线）。
+      const daIdx = devilsAdvocateIndex(round, targets.length);
+      const daTarget = daIdx >= 0 ? targets[daIdx] : undefined;
+      if (daTarget) {
+        devilsAdvocates.push({
+          round,
+          expertId: daTarget.expert.id,
+          expertName: daTarget.expert.name,
+        });
+      }
+      const userContents = targets.map((target, i) => {
+        const base = `${opts.topic}\n\n${DEBATE_INSTRUCTION}\n\n${claim0Prefix}上一轮发言:\n${render(target.expert.id)}`;
+        return i === daIdx
+          ? `${base}\n\n${DEVILS_ADVOCATE_INSTRUCTION}`
+          : base;
+      });
       const results = await Promise.allSettled(
         targets.map((target, i) =>
           askExpert(target, userContents[i]!, config)
@@ -840,6 +939,9 @@ export async function runDialogue(
   );
 
   const result: DialogueResult = { turns, summary };
+  if (devilsAdvocates.length > 0) {
+    result.devilsAdvocates = devilsAdvocates;
+  }
   if (votes.length > 0) {
     result.votes = votes;
     result.aliases = aliases;
@@ -853,16 +955,25 @@ export async function runDialogue(
       round: rounds,
       ballots: votes.map((v) => {
         const voterAlias = aliasByExpertId.get(v.expertId) ?? v.expertName;
-        return {
+        const votedForAlias = parseVotedForAlias(
+          v.content,
+          voterAlias,
+          knownAliases
+        );
+        const ballot: VoteBallot = {
           voterCardId: cardIdByExpertId.get(v.expertId) ?? v.expertId,
           voterAlias,
-          votedForAlias: parseVotedForAlias(
-            v.content,
-            voterAlias,
-            knownAliases
-          ),
+          votedForAlias,
           reason: truncateBallotReason(v.content),
         };
+        // 自投显式标记（P3-R3）：未识别出他人代号、且票文只提及本人 → 显式自投。
+        if (
+          votedForAlias === "" &&
+          isSelfVoteBallot(v.content, voterAlias, knownAliases)
+        ) {
+          ballot.selfVote = true;
+        }
+        return ballot;
       }),
     };
   }

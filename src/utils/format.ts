@@ -111,6 +111,8 @@ export interface BrainstormReportExtras {
   judgeInfo?: { cardId: string; cardName: string; fallback?: boolean };
   /** P3-A runs：多轮运行总数（>1 时报告头主题行追加 (runs=N)）。 */
   runsTotal?: number;
+  /** 魔鬼代言人轮换（P3-R1）：debate round≥2 每轮一位；为空时省略小节（零字节）。 */
+  devilsAdvocates?: Array<{ round: number; expertName: string }>;
 }
 
 /**
@@ -149,6 +151,17 @@ export function formatBrainstormReport(
   }
   lines.push(formatTranscript(turns));
   lines.push("");
+  // 魔鬼代言人轮换（P3-R1）：位于实录之后、「互评投票」之前，按轮列出该轮
+  // 指定的专家实名；缺省（relay / rounds<2 / 旧路径）零字节输出。
+  const devils = extras?.devilsAdvocates ?? [];
+  if (devils.length > 0) {
+    lines.push("### 魔鬼代言人轮换");
+    lines.push("");
+    for (const d of devils) {
+      lines.push(`- 第 ${d.round} 轮：${d.expertName}`);
+    }
+    lines.push("");
+  }
   // 互评投票（R1）：匿名代号逐条呈现，末尾还原代号↔专家对照表。
   const votes = extras?.votes ?? [];
   if (votes.length > 0) {
@@ -171,15 +184,20 @@ export function formatBrainstormReport(
       lines.push("");
     }
     // 投票明细（P1-A）：在投票汇总小节后新增结构化逐票一行
-    // `专家A → 专家B：理由摘录`；被投代号未识别时以占位符呈现。
+    // `专家A → 专家B：理由摘录`。P3-R3 三态：正常（字节不变）/ 自投（显式
+    // 无效票标记）/ 其余未识别（现状占位符）。
     const roundVotes = extras?.roundVotes;
     if (roundVotes && roundVotes.ballots.length > 0) {
       lines.push("### 投票明细");
       lines.push("");
       for (const b of roundVotes.ballots) {
-        lines.push(
-          `- ${b.voterAlias} → ${b.votedForAlias || "（未识别代号）"}：${b.reason}`,
-        );
+        if (b.votedForAlias) {
+          lines.push(`- ${b.voterAlias} → ${b.votedForAlias}：${b.reason}`);
+        } else if (b.selfVote === true) {
+          lines.push(`- **${b.voterAlias}** → ⚠️ 自投（无效票）：${b.reason}`);
+        } else {
+          lines.push(`- ${b.voterAlias} → （未识别代号）：${b.reason}`);
+        }
       }
       lines.push("");
     }

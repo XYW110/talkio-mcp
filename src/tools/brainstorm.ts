@@ -199,6 +199,8 @@ export async function handleBrainstorm(
           voterCardId: b.voterCardId,
           votedForAlias: b.votedForAlias,
           reason: b.reason,
+          // 自投显式标记（P3-R3）：仅 true 时写键（additive，正常票 JSONL 字节不变）。
+          ...(b.selfVote === true ? { selfVote: true } : {}),
         })),
         ...(runField !== undefined ? { run: runField } : {}),
       });
@@ -258,6 +260,7 @@ export async function handleBrainstorm(
       aliases: first.aliases,
       roundVotes: first.roundVotes,
       judgeInfo: first.judgeInfo,
+      devilsAdvocates: first.devilsAdvocates,
       ...(runsTotal > 1 ? { runsTotal } : {}),
     }) +
     (runsTotal > 1

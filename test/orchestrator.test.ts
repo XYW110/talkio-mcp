@@ -34,8 +34,13 @@ import {
   buildClaim0Block,
   buildAliases,
   formatTranscriptForPrompt,
+  parseVotedForAlias,
+  isSelfVoteBallot,
+  devilsAdvocateIndex,
+  DEVILS_ADVOCATE_INSTRUCTION,
   type DialogueTurn,
 } from "../src/orchestrator/dialogue.js";
+import { formatBrainstormReport } from "../src/utils/format.js";
 import type { StreamEvent } from "../src/utils/notify.js";
 
 /**
@@ -1143,7 +1148,10 @@ describe("claim-0 反锚定与论据锚定（task 09-26-debate-evidence-groundin
     expect(seen).toHaveLength(4);
     for (const p of seen) {
       expect(p).not.toContain(CLAIM0_HEADER);
-      expect(p).not.toContain("主理 AI");
+      // P3 魔鬼代言人（D1 默认开启）：DEVILS_ADVOCATE_INSTRUCTION 提及
+      // 「主理 AI 初步判断」属指令文案引用而非 claim-0 块注入，故以块标记
+      // （header/note）判定，不再用宽泛的「主理 AI」作代理断言。
+      expect(p).not.toContain(CLAIM0_NOTE);
     }
   });
 
@@ -1160,5 +1168,314 @@ describe("claim-0 反锚定与论据锚定（task 09-26-debate-evidence-groundin
     // R10：无共识条款，禁止强行归并少数意见
     expect(SUMMARIZER_SYSTEM).toContain("无共识");
     expect(SUMMARIZER_SYSTEM).toContain("不得强行");
+  });
+});
+
+describe("裸代号票文解析与自投标记（task 09-27-debate-quality-p3）", () => {
+  const known3 = ["专家A", "专家B", "专家C"];
+
+  describe("parseVotedForAlias 两级匹配（签名不变）", () => {
+    it("裸代号正向：『我投B』『投给B。』『B 的论据最强』识别为专家B（AC1）", () => {
+      expect(parseVotedForAlias("我投B", "专家A", known3)).toBe("专家B");
+      expect(parseVotedForAlias("投给B。", "专家A", known3)).toBe("专家B");
+      expect(parseVotedForAlias("B 的论据最强", "专家A", known3)).toBe("专家B");
+      expect(parseVotedForAlias("我投B", "专家A", ["专家A", "专家B"])).toBe(
+        "专家B"
+      );
+    });
+
+    it("误报负向：API/QPS/OWASP/AB 等连续拉丁词与未知字母不命中（AC1）", () => {
+      expect(parseVotedForAlias("API 网关是瓶颈", "专家A", known3)).toBe("");
+      // voter≠A 的同型票文：邻接排除缺失时 "API" 的 A 会被误判为专家A（区分度增强）
+      expect(parseVotedForAlias("API 网关是瓶颈", "专家B", known3)).toBe("");
+      expect(parseVotedForAlias("QPS 提升一倍", "专家A", known3)).toBe("");
+      expect(parseVotedForAlias("OWASP 十大风险", "专家B", known3)).toBe("");
+      expect(parseVotedForAlias("AB 组合方案", "专家C", known3)).toBe("");
+      // 3 卡场景：N / X 不在已知别名集合
+      expect(parseVotedForAlias("N=10 的压测样本", "专家A", known3)).toBe("");
+      expect(parseVotedForAlias("方案 X 待定", "专家A", known3)).toBe("");
+    });
+
+    it("全称优先于裸代号；全称全为本人时回退裸代号（AC1）", () => {
+      // 全称优先：第一个非本人全称命中，即使同票文还有裸代号
+      expect(parseVotedForAlias("专家A 与 B", "专家C", known3)).toBe("专家A");
+      // 全称命中但均为本人 → 裸代号回退
+      expect(parseVotedForAlias("专家A 与 B", "专家A", known3)).toBe("专家B");
+      expect(
+        parseVotedForAlias("我坚持专家A 的立场，也部分认同 C", "专家A", known3)
+      ).toBe("专家C");
+    });
+
+    it("本人别名跳过逻辑不变：全称与裸代号均跳过本人（现状语义保持）", () => {
+      expect(parseVotedForAlias("我投专家A 和 B", "专家A", known3)).toBe(
+        "专家B"
+      );
+      expect(parseVotedForAlias("我投A 和 B", "专家A", known3)).toBe("专家B");
+      // 只提及本人 → 无命中
+      expect(parseVotedForAlias("我投B", "专家B", known3)).toBe("");
+      // 既有行为回归：全称匹配、按序取首个非本人
+      expect(parseVotedForAlias("专家C 说得对，B 也不错", "专家A", known3)).toBe(
+        "专家C"
+      );
+    });
+  });
+
+  describe("isSelfVoteBallot", () => {
+    it("仅提及本人（全称/裸代号）→ true（AC2）", () => {
+      expect(
+        isSelfVoteBallot("我投专家A，我的论据最完整", "专家A", known3)
+      ).toBe(true);
+      expect(isSelfVoteBallot("我投B，我的方案最稳", "专家B", known3)).toBe(
+        true
+      );
+    });
+
+    it("提及他人 / 无任何提及 → false", () => {
+      expect(isSelfVoteBallot("专家A 和 B 都不错", "专家A", known3)).toBe(
+        false
+      );
+      expect(isSelfVoteBallot("投给B", "专家A", known3)).toBe(false);
+      expect(isSelfVoteBallot("没有明确指向的票文", "专家A", known3)).toBe(
+        false
+      );
+    });
+  });
+});
+
+describe("魔鬼代言人轮换（task 09-27-debate-quality-p3）", () => {
+  const topic = "如何设计一个高并发系统";
+  const targets = [makeTarget("a"), makeTarget("b")];
+
+  function makeCaptureAdapter() {
+    const seen: string[] = [];
+    const adapter = makeStubAdapter(async (params) => {
+      seen.push(String(params.messages.at(-1)?.content ?? ""));
+      return { content: `观点#${seen.length}` };
+    });
+    return { adapter, seen };
+  }
+
+  it("devilsAdvocateIndex：targets[(round-2)%n]；round<2 或空数组返回 -1", () => {
+    expect(devilsAdvocateIndex(2, 2)).toBe(0);
+    expect(devilsAdvocateIndex(3, 2)).toBe(1);
+    expect(devilsAdvocateIndex(4, 2)).toBe(0);
+    expect(devilsAdvocateIndex(2, 3)).toBe(0);
+    expect(devilsAdvocateIndex(4, 3)).toBe(2);
+    expect(devilsAdvocateIndex(5, 3)).toBe(0);
+    expect(devilsAdvocateIndex(1, 2)).toBe(-1);
+    expect(devilsAdvocateIndex(0, 2)).toBe(-1);
+    expect(devilsAdvocateIndex(2, 0)).toBe(-1);
+  });
+
+  it("AC3 矩阵：rounds=3 两卡——第2轮 target0、第3轮 target1 含指令，同轮其余专家不含；第1轮不含", async () => {
+    const { adapter, seen } = makeCaptureAdapter();
+
+    const res = await runDialogue(
+      { topic, targets, mode: "debate", rounds: 3, summarize: false },
+      makeConfig(adapter)
+    );
+
+    expect(seen).toHaveLength(6);
+    const round1 = seen.slice(0, 2);
+    const round2 = seen.slice(2, 4);
+    const round3 = seen.slice(4, 6);
+    // 第 1 轮盲答：不含魔鬼代言人指令
+    for (const p of round1) {
+      expect(p).not.toContain("【魔鬼代言人指令】");
+    }
+    // 第 2 轮：target0（专家-a）含指令，target1 不含
+    expect(round2[0]).toContain(DEVILS_ADVOCATE_INSTRUCTION);
+    expect(round2[1]).not.toContain("【魔鬼代言人指令】");
+    // 第 3 轮：target1（专家-b）含指令，target0 不含
+    expect(round3[1]).toContain(DEVILS_ADVOCATE_INSTRUCTION);
+    expect(round3[0]).not.toContain("【魔鬼代言人指令】");
+    // DialogueResult 收集：每轮一条（轮次 + expertId + 实名）
+    expect(res.devilsAdvocates).toEqual([
+      { round: 2, expertId: "a", expertName: "专家-a" },
+      { round: 3, expertId: "b", expertName: "专家-b" },
+    ]);
+  });
+
+  it("注入点：追加在该专家 userContent 末尾（DEBATE_INSTRUCTION 及其后既有片段之后），常量匿名安全", async () => {
+    // 常量不含真名/代号（anonymize 路径不触碰本常量）
+    expect(DEVILS_ADVOCATE_INSTRUCTION).not.toContain("专家-a");
+    expect(DEVILS_ADVOCATE_INSTRUCTION).not.toContain("专家-b");
+    expect(DEVILS_ADVOCATE_INSTRUCTION).toContain("你");
+
+    const { adapter, seen } = makeCaptureAdapter();
+    await runDialogue(
+      { topic, targets, mode: "debate", rounds: 2, summarize: false },
+      makeConfig(adapter)
+    );
+    const devilPrompt = seen[2]!;
+    expect(devilPrompt.endsWith(`\n\n${DEVILS_ADVOCATE_INSTRUCTION}`)).toBe(
+      true
+    );
+    // 既有片段保持：DEBATE_INSTRUCTION 与匿名实录结构原样在前
+    expect(devilPrompt).toContain(DEBATE_INSTRUCTION);
+    expect(devilPrompt).toContain("上一轮发言:");
+    // 非指定专家 prompt 末尾不带指令
+    expect(seen[3]!.endsWith(`\n\n${DEVILS_ADVOCATE_INSTRUCTION}`)).toBe(false);
+  });
+
+  it("relay / 投票轮不注入：prompt 无指令、结果无 devilsAdvocates（design §4 红线）", async () => {
+    const { adapter, seen } = makeCaptureAdapter();
+    await runDialogue(
+      { topic, targets, mode: "relay", rounds: 2, summarize: false },
+      makeConfig(adapter)
+    );
+    expect(seen).toHaveLength(4);
+    for (const p of seen) {
+      expect(p).not.toContain("【魔鬼代言人指令】");
+    }
+
+    const seen2: string[] = [];
+    const voteAdapter = makeStubAdapter(async (params) => {
+      seen2.push(String(params.messages.at(-1)?.content ?? ""));
+      return { content: `回复#${seen2.length}` };
+    });
+    const res = await runDialogue(
+      { topic, targets, mode: "debate", rounds: 1, summarize: false, vote: true },
+      makeConfig(voteAdapter)
+    );
+    expect(seen2).toHaveLength(4); // 2 种子 + 2 投票
+    for (const p of seen2) {
+      expect(p).not.toContain("【魔鬼代言人指令】");
+    }
+    expect(res.devilsAdvocates).toBeUndefined();
+  });
+
+  it("rounds=1：无魔鬼代言人（结果无 devilsAdvocates，prompt 无指令）", async () => {
+    const { adapter, seen } = makeCaptureAdapter();
+    const res = await runDialogue(
+      { topic, targets, mode: "debate", rounds: 1, summarize: false },
+      makeConfig(adapter)
+    );
+    expect(seen).toHaveLength(2);
+    for (const p of seen) {
+      expect(p).not.toContain("【魔鬼代言人指令】");
+    }
+    expect(res.devilsAdvocates).toBeUndefined();
+  });
+
+  it("自投票文端到端：ballot 标记 selfVote=true 且 votedForAlias 为空（AC2）", async () => {
+    // 调用序列：seed a(0)、seed b(1)、vote a(2)、vote b(3)——投票票文只提及本人
+    const adapter = makeStubAdapter(async (params) => {
+      const sys = String(params.messages[0]?.content ?? "");
+      const user = String(params.messages.at(-1)?.content ?? "");
+      if (user.includes(VOTE_INSTRUCTION)) {
+        return {
+          content: sys.includes("你是 a")
+            ? "我投专家A，我的论据最完整。"
+            : "我投B，我的方案最稳。",
+        };
+      }
+      return { content: "第一轮观点陈述。" };
+    });
+
+    const { roundVotes } = await runDialogue(
+      { topic, targets, mode: "debate", rounds: 1, summarize: false, vote: true },
+      makeConfig(adapter)
+    );
+
+    expect(roundVotes).toBeDefined();
+    const ballots = roundVotes!.ballots;
+    expect(ballots).toHaveLength(2);
+    for (const b of ballots) {
+      expect(b.votedForAlias).toBe("");
+      expect(b.selfVote).toBe(true);
+    }
+  });
+});
+
+describe("报告渲染：魔鬼代言人小节与投票明细三态（task 09-27-debate-quality-p3）", () => {
+  const turns: DialogueTurn[] = [
+    { round: 1, expertId: "a", expertName: "专家-a", icon: "🤖", content: "甲观点" },
+  ];
+
+  it("devilsAdvocates 非空：实录后、互评投票前渲染小节；空缺省零字节（AC4）", () => {
+    const withDevils = formatBrainstormReport(
+      "主题",
+      "debate",
+      2,
+      turns,
+      undefined,
+      {
+        votes: [
+          {
+            round: 0,
+            expertId: "a",
+            expertName: "专家-a",
+            icon: "🤖",
+            content: "我投专家B",
+          },
+        ],
+        aliases: [
+          { alias: "专家A", expertId: "a", expertName: "专家-a" },
+          { alias: "专家B", expertId: "b", expertName: "专家-b" },
+        ],
+        devilsAdvocates: [
+          { round: 2, expertName: "专家-a" },
+          { round: 3, expertName: "专家-b" },
+        ],
+      }
+    );
+    expect(withDevils).toContain("### 魔鬼代言人轮换");
+    expect(withDevils).toContain("- 第 2 轮：专家-a");
+    expect(withDevils).toContain("- 第 3 轮：专家-b");
+    // 位置：实录之后、「互评投票」之前
+    const devilIdx = withDevils.indexOf("### 魔鬼代言人轮换");
+    expect(devilIdx).toBeGreaterThan(withDevils.indexOf("### 第 1 轮"));
+    expect(devilIdx).toBeLessThan(withDevils.indexOf("### 互评投票"));
+
+    // 缺省：relay / 旧路径零输出
+    const without = formatBrainstormReport("主题", "debate", 2, turns);
+    expect(without).not.toContain("魔鬼代言人");
+  });
+
+  it("投票明细三态：正常（字节不变）/ 自投显式标记 / 未识别占位符（AC2）", () => {
+    const report = formatBrainstormReport("主题", "debate", 1, turns, undefined, {
+      // 投票明细渲染在互评投票小节内：需 votes 非空（现状结构）
+      votes: [
+        {
+          round: 0,
+          expertId: "a",
+          expertName: "专家-a",
+          icon: "🤖",
+          content: "我投专家B",
+        },
+      ],
+      aliases: [{ alias: "专家A", expertId: "a", expertName: "专家-a" }],
+      roundVotes: {
+        round: 1,
+        ballots: [
+          {
+            voterCardId: "card-a",
+            voterAlias: "专家A",
+            votedForAlias: "专家B",
+            reason: "理由甲",
+          },
+          {
+            voterCardId: "card-b",
+            voterAlias: "专家B",
+            votedForAlias: "",
+            selfVote: true,
+            reason: "我投B，我的论据最完整",
+          },
+          {
+            voterCardId: "card-c",
+            voterAlias: "专家C",
+            votedForAlias: "",
+            reason: "看不太懂",
+          },
+        ],
+      },
+    });
+    expect(report).toContain("### 投票明细");
+    expect(report).toContain("- 专家A → 专家B：理由甲");
+    expect(report).toContain(
+      "- **专家B** → ⚠️ 自投（无效票）：我投B，我的论据最完整"
+    );
+    expect(report).toContain("- 专家C → （未识别代号）：看不太懂");
   });
 });

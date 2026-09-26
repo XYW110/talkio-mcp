@@ -63,6 +63,8 @@ export type RecordEvent =
         voterCardId: string;
         votedForAlias: string;
         reason: string;
+        /** 自投显式标记（P3-R3）：仅 true 时写键（additive，admin 端未知字段容错）。 */
+        selfVote?: boolean;
       }[];
       /** P3-A runs：多轮运行的序号（从 1 开始）；单轮路径缺省不写键。 */
       run?: number;

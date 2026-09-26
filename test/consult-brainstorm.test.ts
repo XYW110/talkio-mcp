@@ -31,6 +31,10 @@ import {
   REASONING_STRATEGY_INSTRUCTIONS,
   applyReasoningStrategy,
 } from "../src/orchestrator/strategy.js";
+import {
+  DEVILS_ADVOCATE_INSTRUCTION,
+  VOTE_INSTRUCTION,
+} from "../src/orchestrator/dialogue.js";
 
 const ENV_KEYS = [
   "OPENAI_API_KEY",
@@ -437,6 +441,8 @@ expect(result.isError).not.toBe(true);
     for (const v of voteEvent.votes) {
       expect(typeof v.reason).toBe("string");
       expect(v.reason.length).toBeGreaterThan(0);
+      // P3 additive：正常票（他人代号可识别）不写 selfVote 键，JSONL 字节不变
+      expect(v).not.toHaveProperty("selfVote");
     }
   });
 });
@@ -813,5 +819,121 @@ describe("claim-0 注入与报告（task 09-26-debate-evidence-grounding）", ()
     );
     expect(result.isError).not.toBe(true);
     expect(textOf(result)).not.toContain("发起方初步判断");
+  });
+});
+
+describe("魔鬼代言人轮换与自投标记（task 09-27-debate-quality-p3）", () => {
+  it("debate rounds=2：第2轮恰一位专家 prompt 含指令，报告含轮换小节（AC3/AC4）", async () => {
+    clearKeys();
+    process.env.OPENAI_API_KEY = "sk-test";
+    const seen: string[] = [];
+    const adapter = makeStubAdapter(async (params) => {
+      seen.push(String(params.messages.at(-1)?.content ?? ""));
+      return { content: "观点" };
+    });
+    const result = await handleBrainstorm(
+      {
+        topic: "落地路径",
+        cards: ["c-architect", "c-reviewer"],
+        rounds: 2,
+        summarize: false,
+      },
+      councilConfig(adapter)
+    );
+    expect(result.isError).not.toBe(true);
+    expect(adapter.calls).toHaveLength(4);
+    // 第 1 轮盲答不含指令；第 2 轮恰一位（targets[0]=architect）含
+    expect(seen[0]).not.toContain("【魔鬼代言人指令】");
+    expect(seen[1]).not.toContain("【魔鬼代言人指令】");
+    expect(seen[2]).toContain(DEVILS_ADVOCATE_INSTRUCTION);
+    expect(seen[3]).not.toContain("【魔鬼代言人指令】");
+    // 报告小节：按轮列出专家实名
+    const text = textOf(result);
+    expect(text).toContain("### 魔鬼代言人轮换");
+    expect(text).toContain("- 第 2 轮：architect");
+  });
+
+  it("relay：无轮换小节、无指令注入（缺省零字节）", async () => {
+    clearKeys();
+    process.env.OPENAI_API_KEY = "sk-test";
+    const adapter = makeEchoAdapter();
+    const result = await handleBrainstorm(
+      {
+        topic: "落地路径",
+        cards: ["c-architect", "c-reviewer"],
+        mode: "relay",
+        rounds: 2,
+        summarize: false,
+      },
+      councilConfig(adapter)
+    );
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).not.toContain("魔鬼代言人");
+  });
+
+  it("自投票文：报告显式标记自投（无效票），vote 事件携带 selfVote=true（AC2）", async () => {
+    clearKeys();
+    process.env.OPENAI_API_KEY = "sk-test";
+    // 投票阶段票文只提及本人别名 → 自投；种子阶段正常作答
+    const adapter = makeStubAdapter(async (params) => {
+      const sys = String(params.messages[0]?.content ?? "");
+      const user = String(params.messages.at(-1)?.content ?? "");
+      if (user.includes(VOTE_INSTRUCTION)) {
+        return {
+          content: sys.includes("architect")
+            ? "我投专家A，我的论据最完整。"
+            : "我投专家B，我的方案最稳。",
+        };
+      }
+      return { content: "第一轮观点陈述。" };
+    });
+    const recDir = await mkdtemp(path.join(tmpdir(), "talkio-p3-selfvote-"));
+    try {
+      process.env.TALKIO_RECORDS = "1";
+      const sess = (await startSession({ tool: "brainstorm", prompt: "x" }, recDir))!;
+      const result = await handleBrainstorm(
+        {
+          topic: "落地路径",
+          cards: ["c-architect", "c-reviewer"],
+          rounds: 1,
+          vote: true,
+          summarize: false,
+        },
+        councilConfig(adapter),
+        { record: sess }
+      );
+      expect(result.isError).not.toBe(true);
+      sess.finish({ status: "ok" });
+      await sess.flush();
+
+      // 报告三态：自投显式标记（非「未识别代号」）
+      const text = textOf(result);
+      expect(text).toContain("### 投票明细");
+      expect(text).toContain(
+        "- **专家A** → ⚠️ 自投（无效票）：我投专家A，我的论据最完整。"
+      );
+      expect(text).toContain(
+        "- **专家B** → ⚠️ 自投（无效票）：我投专家B，我的方案最稳。"
+      );
+
+      // JSONL vote 事件：selfVote=true 透传
+      const raw = await readFile(path.join(recDir, `${sess.id}.jsonl`), "utf-8");
+      const events = raw
+        .split("\n")
+        .filter((l) => l.trim() !== "")
+        .map((l) => JSON.parse(l) as Record<string, unknown>);
+      const voteEvent = events.find((e) => e.type === "vote") as {
+        votes: Array<Record<string, unknown>>;
+      };
+      expect(voteEvent).toBeDefined();
+      expect(voteEvent.votes).toHaveLength(2);
+      for (const v of voteEvent.votes) {
+        expect(v.votedForAlias).toBe("");
+        expect(v.selfVote).toBe(true);
+      }
+    } finally {
+      delete process.env.TALKIO_RECORDS;
+      await rm(recDir, { recursive: true, force: true });
+    }
   });
 });
