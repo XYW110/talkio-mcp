@@ -403,3 +403,35 @@ Q1=A/Q2=A 拍板三项编排级增强：①debate 第≥2轮每轮轮换一名�
 ### Status
 
 [OK] **Completed**
+
+## Session 14: talkio-mcp 服务器部署迁移至 1Panel 编排
+
+**Date**: 2026-09-28
+**Task**: none（用户拍板 1B 不建任务，纯运维直执行）
+**Branch**: `master`
+
+### Summary
+
+旧部署为 `docker run` 单容器（`dockercom110/talkio-mcp:latest`，3100，挂 `/opt/talkio/experts.json`，`--env-file /opt/talkio/.env`），不受 1Panel 管理。按用户要求删除并按 1Panel 推荐方式重部署为「容器编排」：`/opt/1panel/docker/compose/talkio-mcp/`（docker-compose.yml 镜像版 + experts.json 666），经 `POST /containers/compose`（from=path）注册，容器 `talkio-mcp-talkio-mcp-1`。验证全绿：CUSTOM_API_KEY 注入（启动日志无 config 警告）、`/` 200、`/api/config` 200、公网 SSE + initialize/initialized/tools/list 全 202；旧容器已 `docker rm`；`/opt/talkio/` 留作配置备份（2A）；`aitodo` 容器未触碰。
+
+### Gotchas（本次踩坑，已沉淀 panel-ops skill）
+
+1. **1Panel compose 创建会覆盖 `.env`**：`POST /containers/compose`（任意 from）的 `newComposeEnv` 用请求 `env` 字段重写 workdir/`.env`——预置好 83 字节的 .env 被清成 0 字节，容器起后 provider 密钥缺失。对策：密钥直接内联 compose `environment:`（磁盘与 1Panel 记录天然同步，无 UI 覆盖坑）。
+2. **`sed -i` 断 bind mount**：写入测试用 `echo >>` + `sed -i '$ d'`，文件是单行无尾换行 JSON → 整行被删（0 字节）；且 `sed -i` 走临时文件 rename，把容器内 bind mount 的旧 inode（仍含 "test" 尾巴）与宿主路径拆开。恢复：`cp /opt/talkio/experts.json`（同 inode 截断写）+ `compose up -d --force-recreate` 重解析挂载。教训：**bind mount 的活配置文件禁止 append/sed 测试**。
+3. compose API 语义：from=path 的 `path` 是 **yml 文件完整路径**（name 从父目录名派生）；创建即异步 `up`（先释放端口再创建）；search 返回的 env/文件内容实时读盘，磁盘为真，`compose/update` 对内容未变化的请求是 no-op（不写 env、不重建）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| 见下方 chore 提交 | journal + panel-ops skill gotchas |
+
+### Next Steps
+
+- （可选）编排 UI 若显示陈旧内容，重开编排页即可（from=path 实时读盘）
+- 生产数据仍是「无卷」形态（experts.json 即全部状态）；若未来加 SQLite 记录持久化需补 data 卷
+- 1Panel 编排 env 输入框显示为空属预期（密钥在 environment: 里）
+
+### Status
+
+[OK] **Completed**
