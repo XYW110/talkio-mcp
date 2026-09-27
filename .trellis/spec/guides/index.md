@@ -65,6 +65,16 @@ These guides help you **ask the right questions before coding**.
 
 **Verification rule**: Every CRITICAL/WARNING finding must be verified against the actual code before prioritizing. Budget ~35% false-positive rate for AI reviews.
 
+### When Changing CI / Publishing Pipeline
+
+- [ ] 镜像命名空间是否硬编码？→ 一律用 `${{ secrets.DOCKERHUB_USERNAME }}/<repo>` 拼接
+- [ ] 构建依赖的文件是否被 `.gitignore` 排除？→ CI 从仓库克隆，未跟踪文件必然缺失
+- [ ] 凭据类 secret 是否先在本地验证（`curl ... /v2/` → 200）再触发 CI？
+- [ ] 是否会把真实配置（`experts.json`）误纳入构建上下文？→ `.dockerignore` 必须排除
+- [ ] 发布后的标签策略是否覆盖「滚动 latest + 可回滚版本号」两条路径？
+
+→ Read [Docker Publish spec](../deployment/docker-publish.md)
+
 ---
 
 ## Pre-Modification Rule (CRITICAL)
