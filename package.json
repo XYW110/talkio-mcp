@@ -1,6 +1,6 @@
 {
   "name": "talkio-mcp-expert-council",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP server providing expert-council consultation (consult_experts) and multi-round brainstorm tools backed by configurable AI providers",
   "type": "module",
   "bin": {
