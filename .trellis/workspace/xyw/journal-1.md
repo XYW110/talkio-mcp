@@ -470,3 +470,38 @@ Q1=A/Q2=A 拍板三项编排级增强：①debate 第≥2轮每轮轮换一名�
 ### Status
 
 [OK] **Completed**
+
+---
+
+## Session 16: v0.2.0 打包发布 + 服务器部署
+
+**Date**: 2026-09-28
+**Task**: none（用户拍板 Q1A 不建任务纯运维直执行；Q2A bump+tag）
+**Branch**: `master`
+
+### Summary
+
+admin-web UX 优化落库后发布 v0.2.0 并部署上海 1Panel 编排。本地质量门全绿（typecheck + 269 tests）→ bump package.json 0.1.0→0.2.0（a95cd0c）→ `git push origin master v0.2.0`（17 个提交 + 仓库首个版本 tag）→ CI docker-publish 双 run 成功（master→latest 2m01s；v0.2.0→0.2.0/0.2 1m52s）→ 服务器 `cd /opt/1panel/docker/compose/talkio-mcp && docker compose pull && up -d --force-recreate` → 冒烟全绿：容器日志无密钥警告（SSE 模式 + 管理界面启用）、127.0.0.1:3100 root/config 200、公网 111.229.147.203:3100 root/config 200 + `GET /sse` 返回 endpoint 事件、公网 JS 产物哈希 `index-IVSNUfB4.js` 与本地 v0.2.0 构建一致（端到端证明新版本已上线）。
+
+### Gotchas
+
+1. **本机到 Docker Hub 全不通**（hub.docker.com / registry-1.docker.io 均 curl 000）：验证发布只能靠 CI success + 服务器侧实际拉取（pull 出 6 分钟前构建的镜像 8af280109eb8 即铁证），本地 curl 判 000 不代表发布失败。
+2. 1Panel `compose/search` 的 name 过滤不可靠（传 talkio 仍返回 aitodo 首项）——要精确取条目时全量拉回按 name 匹配，或直接 TAT `cat` 编排文件（磁盘为真）。
+3. pull+recreate 后旧镜像变 dangling `<none>`（f5f0552d9e80，10 天前版），留作回滚便利，确认稳定后 `docker image prune` 清理。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| a95cd0c | chore(release): v0.2.0（含 36b1564 feat admin-web + ac7c50c docs） |
+| 见下 | chore: record journal |
+
+### Next Steps
+
+- 稳定跑几天后 `docker image prune` 清 dangling 旧镜像
+- 若要固定版本部署（compose 写 :0.2.0 而非 :latest），改 compose 一行 + `up -d --force-recreate`；回滚同理
+- aitodo 容器与编排本次未触碰
+
+### Status
+
+[OK] **Completed**
