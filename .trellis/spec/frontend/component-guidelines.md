@@ -41,6 +41,37 @@
 
 **字号比例**：全局正文基准 13px/1.5，任意值字号收敛到 `12 / 13 / 14 / 16 / 20` 五档（辅助文字/正文/强调/小标题/标题）。当前 pages/*.tsx 尚存 `text-[10px]/[11px]/[15px]/[17px]/[18px]` 共 58 处历史债务（snow-ui-restyle 按"按需归一"放行），后续触碰相关页面时顺带收敛，不强制一次性清理。
 
+### Common Mistake: overflow-hidden 卡片内的行内操作簇被窄列裁剪（09-28 adminweb-ux-polish 实测）
+
+**Symptom**：模型列表行（`Card` + 行内 Toggle + 删除按钮，`lg:grid-cols-3`）在桌面 1280 下「删除」按钮 DOM 存在但**不可见**——被 `Card` 的 `overflow-hidden` 裁掉，列表删除功能静默不可达。
+
+**Cause**：行内 `flex` 布局里操作簇（`shrink-0` 的 Toggle 46px + 删除 ~50px + chevron 16px + checkbox 20px）合计 ~150px 固定宽；三列网格每组仅 ~290px，主内容 `min-w-0` 收缩到极限后操作簇溢出卡片右缘被裁剪。
+
+**Fix**：含行内操作簇的分组行卡片网格最多 `md:grid-cols-2`（两列 ~440px 即可容纳）；或把文字按钮降为 icon-only。
+
+**Prevention**：对「卡片 + overflow-hidden + 行内固定宽操作簇」组合，用 boundingBox 探针验收（Playwright `locator.boundingBox()` 比对卡片右缘），截图走查必含**单条数据**场景（此时列宽最窄、最易暴露）。
+
+### Don't: 禁用态只靠外层点击守卫（真正 disabled 才是契约）
+
+**Problem**：
+```tsx
+// Bad：外层 div 判断 disabled 后忽略点击，但内部 SelectCheckbox（真 <button>）
+// 点击仍会直达回调，绕过守卫；且 aria-disabled 与实际行为矛盾
+<div role="button" onClick={() => { if (!disabled) toggle(); }}>
+  <SelectCheckbox checked={checked} onClick={toggle} />
+</div>
+```
+
+**Why it's bad**：嵌套可交互元素各自可达，外层守卫只拦住冒泡路径拦不住子元素自己的激活；键盘 Enter 直达子按钮同样绕过。
+
+**Instead**：
+```tsx
+// Good：禁用语义下沉到组件本身（ui.tsx SelectCheckbox 增量 disabled?: boolean）
+<SelectCheckbox checked={checked} onClick={toggle} disabled={disabled} />
+```
+
+**Why**：原生 `disabled` 同时阻断指针与键盘路径，`disabled:cursor-not-allowed` 补视觉；外层守卫只保留「阻止冒泡到行点击」这一职责。ChatPage 运行中锁选卡即此用法。
+
 ## 组件分层职责 (Component Hierarchy & Responsibilities)
 
 落实 `claude-code-rules.md` 中的**“单一职责”**（Single Responsibility）原则：

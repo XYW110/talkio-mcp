@@ -435,3 +435,38 @@ Q1=A/Q2=A 拍板三项编排级增强：①debate 第≥2轮每轮轮换一名�
 ### Status
 
 [OK] **Completed**
+
+---
+
+## Session 15: admin-web 全站易用性与视觉优化
+
+**Date**: 2026-09-28
+**Task**: 09-28-adminweb-ux-polish（用户 Q1A/Q2A 拍板：建任务 + 仅 admin-web 全站 8 页）
+**Branch**: `master`
+
+### Summary
+
+对 admin-web 全站做易用性/优雅度优化：新增 feedback.tsx 反馈层（Toast 队列 + promise 化 ConfirmDialog）替换全部原生 window.confirm/alert（15+13 处）；overlays.tsx 增量导出通用 Modal 统一 5 个手写浮层（Esc 栈管理、双档宽动画）；修 3 个真 bug（ChatPage 标题字面 ###、ModelsPage 开关双触发、CardsPage id 反引号）+ 1 个走查新发现（模型页 3 列网格裁剪行内删除按钮 → 改 2 列）；空态动作按钮、复制 id/总结、Ctrl+S、保存 busy、ExpertEdit 关闭拦截 + 自动增高 + 字数、Records/Chat 手写控件换共享组件、prefers-reduced-motion 降级。流程：trellis-implement → trellis-check（PASS-with-notes，1 P1 修复：SelectCheckbox 增量 disabled 堵运行中绕过）→ Edge headless + playwright-core 截图走查（桌面 1280 + 移动 390 × snow/light + dracula/dark，26 张 PNG 全审）→ 双提交归档。
+
+### Gotchas
+
+1. **IAB 截图/点击会整体卡死**：ZCode 内置浏览器 screenshot 30s 超时连发、force click 也挂、tab 列表清空。对策：本机 Edge headless + playwright-core（scratch 目录 npm i playwright-core，executablePath 指向 msedge.exe）全流程可控，交互/截图/boundingBox 探针都稳。
+2. **后端 records 目录取「配置文件所在目录/records」**：`--config`/`TALKIO_EXPERTS_CONFIG` 指到 $TEMP 时 records 落空（env TALKIO_RECORDS_DIR 被 createServer 显式参数盖掉）。要看真实记录：草稿配置放仓库根（untracked scratch-experts.json），records/ 自然命中。
+3. 模型行「删除」被裁剪属 DOM 在/视觉无——必须在**单条数据**（列宽最窄）场景做截图走查才能暴露；已沉淀 component-guidelines（overflow-hidden 行内操作簇 + SelectCheckbox disabled 契约两条）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| 36b1564 | feat(admin-web): 全站易用性与视觉优化——反馈系统/Modal 统一/交互修复 |
+| 见下 | docs(trellis): 任务产物归档 + component-guidelines 两条前端经验 |
+
+### Next Steps
+
+- （可选 P3）confirm() 并发重入会覆盖 resolveRef（现无触发路径）；非 localhost 部署时 clipboard 需权限
+- ModelPicker 目前无页面引用（迁移后保持可用），若将来接入模型页可直接用
+- 专家页空态动作按钮因线上有数据未截到实图（代码已双重验证），全清数据后可见
+
+### Status
+
+[OK] **Completed**

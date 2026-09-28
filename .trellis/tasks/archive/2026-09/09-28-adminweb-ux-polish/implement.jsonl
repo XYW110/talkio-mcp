@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/frontend/theming-tokens.md", "reason": "本轮只消费既有 snowapp token/语义类，禁止硬编码色值；新动画与组件必须走 token 管道"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "新增 feedback.tsx / Modal 的组件拆分与单一职责须对齐 shadcn 式组件规范"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "新文件 components/feedback.tsx 的落位与命名规则"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "FeedbackProvider 用 Context 跨层 toast/confirm，需对照全局 Context 拆解口径"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "禁 any；useFeedback/confirm 的返回类型与 Promise<boolean> 契约须显式类型"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "textarea 自动增高 effect、Esc 关闭 effect、Ctrl+S 全局监听的封装方式"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "错误处理红线与提交流程；window.confirm/alert 清零属于该规范下的交互质量项"}
