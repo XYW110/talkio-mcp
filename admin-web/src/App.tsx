@@ -7,12 +7,12 @@ import {
   FolderClock,
   House,
   IdCard,
+  LoaderCircle,
   MessageCircle,
   Plug,
   Rocket,
   Save,
   Settings,
-  X,
   type LucideIcon,
 } from "lucide-react";
 import { api } from "./api";
@@ -28,6 +28,7 @@ import { ChatPage } from "./pages/ChatPage";
 import { ChevronRow, SectionLabel, Card } from "./components/ui";
 import { Button } from "./components/controls";
 import { DrawerSheet } from "./components/overlays";
+import { FeedbackProvider, useFeedback } from "./components/feedback";
 import { ThemeSwitcher } from "./theme/ThemeSwitcher";
 
 const EMPTY: ConfigFile = {
@@ -47,22 +48,21 @@ type Page =
   | { name: "usage" }
   | { name: "chat" };
 
-function ErrorBanner({ msg, onClose }: { msg: string; onClose: () => void }) {
+export default function App() {
+  // 反馈层挂在根部：全站 toast/confirm 经 Context 下发（见 components/feedback.tsx）
   return (
-    <div className="fixed top-4 left-1/2 z-[100] flex -translate-x-1/2 items-center gap-3 rounded-xl bg-bad px-4 py-2.5 text-on-solid shadow-lg">
-      <span className="text-sm">{msg}</span>
-      <button onClick={onClose} className="opacity-80 hover:opacity-100" aria-label="关闭">
-        <X size={14} aria-hidden="true" />
-      </button>
-    </div>
+    <FeedbackProvider>
+      <AppShell />
+    </FeedbackProvider>
   );
 }
 
-export default function App() {
+function AppShell() {
+  const { toast } = useFeedback();
   const [config, setConfig] = useState<ConfigFile>(EMPTY);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [page, setPage] = useState<Page>({ name: "settings" });
   const [editing, setEditing] = useState<Expert | "new" | null>(null);
   const [themeOpen, setThemeOpen] = useState(false);
@@ -78,13 +78,12 @@ export default function App() {
         // 工具开关 admin 暂不编辑：原样透传，保存时不丢失该字段
         disabledTools: cfg.disabledTools,
       });
-      setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      toast("error", e instanceof Error ? e.message : String(e), { sticky: true });
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     load();
@@ -112,7 +111,11 @@ export default function App() {
       const idSet = new Set(ids);
       const blocked = config.experts.filter((e) => idSet.has(e.id) && e.builtin);
       if (blocked.length > 0) {
-        window.alert(`内置专家不可删除：${blocked.map((e) => e.name).join("、")}`);
+        toast(
+          "error",
+          `内置专家不可删除：${blocked.map((e) => e.name).join("、")}`,
+          { sticky: true },
+        );
       }
       const deletable = new Set(
         config.experts.filter((e) => idSet.has(e.id) && !e.builtin).map((e) => e.id),
@@ -125,7 +128,7 @@ export default function App() {
       });
       setDirty(true);
     },
-    [config.experts],
+    [config.experts, toast],
   );
 
   const deleteExpert = useCallback((id: string) => deleteExperts([id]), [deleteExperts]);
@@ -228,23 +231,41 @@ export default function App() {
     setDirty(true);
   }, []);
 
-  const save = useCallback(async () => {
+  const save = useCallback(async (): Promise<boolean> => {
+    if (saving) return false; // busy 期间忽略重复触发（双击 / Ctrl+S）
+    setSaving(true);
     try {
       const result = await api.saveConfig(config);
       if (!result.ok) {
-        setError(result.error || "保存失败");
+        toast("error", result.error || "保存失败", { sticky: true });
         return false;
       }
       setDirty(false);
       if (result.restartRequired) {
-        setError("已保存。MCP server 需重启后新配置才生效（重启 talkio-mcp 进程）。");
+        toast("success", "已保存。MCP server 需重启后新配置才生效（重启 talkio-mcp 进程）。");
+      } else {
+        toast("success", "已保存");
       }
       return true;
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      toast("error", e instanceof Error ? e.message : String(e), { sticky: true });
       return false;
+    } finally {
+      setSaving(false);
     }
-  }, [config]);
+  }, [config, saving, toast]);
+
+  // 全局 Ctrl/Cmd+S：dirty 时触发保存（R6.4）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        if (dirty) void save();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [dirty, save]);
 
 const providers = Object.entries(config.providers) as [string, ProviderConfig][];
 
@@ -316,9 +337,17 @@ const providers = Object.entries(config.providers) as [string, ProviderConfig][]
   ];
 
   if (loading) {
+    // 品牌化首屏加载：旋转环 + 图标 + 文案（R6.6）
     return (
-      <div className="flex h-screen items-center justify-center text-[13px] text-ink-dim">
-        正在加载配置…
+      <div className="flex h-screen flex-col items-center justify-center gap-3 bg-canvas">
+        <span className="relative flex h-14 w-14 items-center justify-center">
+          <span
+            className="absolute inset-0 animate-spin rounded-full border-2 border-line border-t-info"
+            aria-hidden="true"
+          />
+          <MessageCircle size={22} className="text-info-text" aria-hidden="true" />
+        </span>
+        <p className="text-[13px] text-ink-dim">正在加载配置…</p>
       </div>
     );
   }
@@ -432,10 +461,14 @@ const editOverlay = editing && (
               <button
                 key={m.title}
                 onClick={() => setPage(m.page)}
-                className="flex flex-col gap-2 rounded-xl border border-line bg-island-strong p-4 text-left shadow-sm transition-colors hover:bg-hover active:bg-pressed"
+                className="group flex flex-col gap-2 rounded-xl border border-line bg-island-strong p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:bg-hover hover:shadow-md active:scale-[0.99] active:bg-pressed"
               >
                 <div className="flex items-center justify-between">
-                  <MenuIcon size={24} className="text-ink-mid" aria-hidden="true" />
+                  <MenuIcon
+                    size={24}
+                    className="text-ink-mid transition-colors group-hover:text-info-text"
+                    aria-hidden="true"
+                  />
                 {m.unit !== "" && (
                   <span className="rounded bg-hover px-1.5 py-0.5 text-[11px] text-ink-dim">
                     {m.count} {m.unit}
@@ -461,10 +494,17 @@ const editOverlay = editing && (
           <Button
             variant="primary"
             onClick={save}
-            disabled={!dirty}
+            disabled={!dirty || saving}
             className="flex-1 rounded-xl py-2.5 text-[14px] font-semibold"
           >
-            保存配置
+            {saving ? (
+              <span className="inline-flex items-center gap-1.5">
+                <LoaderCircle size={14} className="animate-spin" aria-hidden="true" />
+                保存中…
+              </span>
+            ) : (
+              "保存配置"
+            )}
           </Button>
         </div>
         <p className="mt-2 text-center text-[11px] text-ink-faint">
@@ -478,7 +518,6 @@ const editOverlay = editing && (
   return (
     // snow-app 布局：灰画布 + 呼吸边距，桌面端「侧栏岛 + 内容岛」，手机端「顶栏岛 + 内容岛」
     <div className="relative flex h-screen w-full flex-col gap-2.5 bg-canvas p-2.5 md:flex-row">
-      {error && <ErrorBanner msg={error} onClose={() => setError(null)} />}
 
       {/* PC：左侧悬浮岛导航（手机端不渲染） */}
       <PcSidebar
@@ -486,6 +525,7 @@ const editOverlay = editing && (
         onNavigate={setPage}
         menuItems={MENU_ITEMS}
         dirty={dirty}
+        saving={saving}
         onSave={save}
       />
 
@@ -495,7 +535,7 @@ const editOverlay = editing && (
           <div className="island island-strong flex flex-shrink-0 items-center px-3 py-2.5 md:hidden">
             <button
               onClick={() => setPage({ name: "settings" })}
-              className="flex min-h-[40px] items-center gap-1 rounded-md px-1.5 py-2 text-[13px] font-medium text-info-text active:bg-pressed"
+              className="flex min-h-[40px] items-center gap-1 rounded-md px-1.5 py-2 text-[13px] font-medium text-info-text transition-colors hover:bg-hover active:bg-pressed"
             >
               <ChevronLeft size={16} className="shrink-0 leading-none" aria-hidden="true" />
               <span>返回总览</span>
@@ -542,6 +582,7 @@ function PcSidebar({
   onNavigate,
   menuItems,
   dirty,
+  saving,
   onSave,
 }: {
   page: Page;
@@ -555,6 +596,7 @@ function PcSidebar({
     subtitle: string;
   }[];
   dirty: boolean;
+  saving: boolean;
   onSave: () => void;
 }) {
   const navItems = [
@@ -618,13 +660,22 @@ function PcSidebar({
         <Button
           variant="primary"
           onClick={onSave}
-          disabled={!dirty}
+          disabled={!dirty || saving}
           aria-label="保存配置"
           className="h-11 w-full lg:h-10"
         >
-          <span className="hidden lg:inline">{dirty ? "保存配置 ●" : "保存配置"}</span>
+          <span className="hidden lg:inline">
+            {saving ? (
+              <span className="inline-flex items-center gap-1.5">
+                <LoaderCircle size={14} className="animate-spin" aria-hidden="true" />
+                保存中…
+              </span>
+            ) : (
+              dirty ? "保存配置 ●" : "保存配置"
+            )}
+          </span>
           <span className="lg:hidden" aria-hidden="true">
-            <Save size={16} />
+            {saving ? <LoaderCircle size={16} className="animate-spin" /> : <Save size={16} />}
           </span>
         </Button>
         <p className="mt-1.5 hidden text-center text-[11px] text-ink-faint lg:block">

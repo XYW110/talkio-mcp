@@ -1,17 +1,18 @@
 import { useMemo, useState } from "react";
-import { ChevronRight, IdCard } from "lucide-react";
+import { ChevronRight, Copy, IdCard } from "lucide-react";
 import type { CardConfig, Expert, ModelConfig, ProviderConfig, SignalId } from "../types";
 import { SIGNAL_GROUPS, SIGNAL_GROUP_LABELS } from "../types";
 import {
   Card,
   EmptyState,
   MultiSelectToolbar,
-  NavBar,
   SectionLabel,
   SelectCheckbox,
   Toggle,
 } from "../components/ui";
 import { Button, Pill, SelectInput, TextInput } from "../components/controls";
+import { Modal } from "../components/overlays";
+import { useFeedback } from "../components/feedback";
 
 interface Props {
   cards: CardConfig[];
@@ -45,6 +46,7 @@ export function CardsPage({
   onDeleteMany,
   onToggle,
 }: Props) {
+  const { confirm, toast } = useFeedback();
   const [editing, setEditing] = useState<{ initial?: CardConfig; isNew: boolean } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
@@ -75,18 +77,51 @@ export function CardsPage({
     });
   };
 
-  const onDeleteSelected = () => {
+  const onDeleteSelected = async () => {
     if (visibleSelected.length === 0) return;
-    if (!window.confirm(`确定删除选中的 ${visibleSelected.length} 张角色卡？`)) return;
+    const ok = await confirm({
+      title: "删除所选角色卡",
+      message: `确定删除选中的 ${visibleSelected.length} 张角色卡？`,
+      confirmText: "删除",
+      danger: true,
+    });
+    if (!ok) return;
     onDeleteMany(visibleSelected);
     setSelected(new Set());
   };
 
-  const onClearAll = () => {
+  const onClearAll = async () => {
     if (cards.length === 0) return;
-    if (!window.confirm(`确定清空全部 ${cards.length} 张角色卡？`)) return;
+    const ok = await confirm({
+      title: "清空全部角色卡",
+      message: `确定清空全部 ${cards.length} 张角色卡？`,
+      confirmText: "清空",
+      danger: true,
+    });
+    if (!ok) return;
     onDeleteMany(cards.map((c) => c.id));
     setSelected(new Set());
+  };
+
+  /** 单个删除 */
+  const deleteOne = async (card: CardConfig) => {
+    const ok = await confirm({
+      title: "删除角色卡",
+      message: `确定删除角色卡「${card.name}」？`,
+      confirmText: "删除",
+      danger: true,
+    });
+    if (ok) onDelete(card.id);
+  };
+
+  /** 复制卡片 id（id 是 MCP 调用参数，R2.3）；非 https 环境降级为失败 toast */
+  const copyId = async (id: string) => {
+    try {
+      await navigator.clipboard.writeText(id);
+      toast("success", "已复制 id");
+    } catch {
+      toast("error", "复制失败");
+    }
   };
 
   const expertMap = useMemo(() => new Map(experts.map((e) => [e.id, e])), [experts]);
@@ -127,24 +162,36 @@ export function CardsPage({
         </p>
       </div>
 
-      <div className="flex-shrink-0">
-        <MultiSelectToolbar
-          noun="张"
-          totalText={`共 ${cards.length} 张`}
-          selectedCount={visibleSelected.length}
-          selectableCount={cardIds.length}
-          allSelected={allSelected}
-          onToggleAll={toggleSelectAll}
-          onDeleteSelected={onDeleteSelected}
-          onClearAll={onClearAll}
-          clearAllDisabled={cards.length === 0}
-        />
-      </div>
+      {/* 空列表且无选中时不渲染工具条（R3.2） */}
+      {(cards.length > 0 || visibleSelected.length > 0) && (
+        <div className="flex-shrink-0">
+          <MultiSelectToolbar
+            noun="张"
+            totalText={`共 ${cards.length} 张`}
+            selectedCount={visibleSelected.length}
+            selectableCount={cardIds.length}
+            allSelected={allSelected}
+            onToggleAll={toggleSelectAll}
+            onDeleteSelected={onDeleteSelected}
+            onClearAll={onClearAll}
+            clearAllDisabled={cards.length === 0}
+          />
+        </div>
+      )}
 
 {/* 手机端：iOS 分组列表 */}
       <div className="flex-1 overflow-y-auto pb-6 md:hidden">
         {cards.length === 0 ? (
-          <EmptyState icon={<IdCard size={40} />} title="还没有角色卡" subtitle="点右上角 ＋ 新建第一张角色卡" />
+          <EmptyState
+            icon={<IdCard size={40} />}
+            title="还没有角色卡"
+            subtitle="一张角色卡 = 一位专家 + 一个模型"
+            action={
+              <Button variant="primary" onClick={() => setEditing({ isNew: true })}>
+                新建角色卡
+              </Button>
+            }
+          />
         ) : (
           <Card>
             {cards.map((c, i) => {
@@ -159,10 +206,9 @@ export function CardsPage({
                   checked={selected.has(c.id)}
                   onToggleSelect={() => toggleSelect(c.id)}
                   onEdit={() => setEditing({ initial: c, isNew: false })}
-                  onDelete={() => {
-                    if (window.confirm(`确定删除角色卡「${c.name}」？`)) onDelete(c.id);
-                  }}
+                  onDelete={() => void deleteOne(c)}
                   onToggle={() => onToggle(c.id)}
+                  onCopyId={() => void copyId(c.id)}
                 />
               );
             })}
@@ -173,7 +219,16 @@ export function CardsPage({
       {/* 桌面端（md+）：卡片网格 */}
       <div className="hidden flex-1 overflow-y-auto px-4 pb-6 md:block">
         {cards.length === 0 ? (
-          <EmptyState icon={<IdCard size={40} />} title="还没有角色卡" subtitle="点右上角 ＋ 新建第一张角色卡" />
+          <EmptyState
+            icon={<IdCard size={40} />}
+            title="还没有角色卡"
+            subtitle="一张角色卡 = 一位专家 + 一个模型"
+            action={
+              <Button variant="primary" onClick={() => setEditing({ isNew: true })}>
+                新建角色卡
+              </Button>
+            }
+          />
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {cards.map((c) => {
@@ -194,7 +249,7 @@ export function CardsPage({
                       </span>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <p className="truncate text-[16px] font-medium text-ink">{c.name}</p>
+                          <p className="truncate text-[14px] font-medium text-ink">{c.name}</p>
                           {c.isDefault && <Pill tone="info">默认</Pill>}
                           {!c.enabled && <Pill tone="neutral">已禁用</Pill>}
                         </div>
@@ -206,7 +261,16 @@ export function CardsPage({
                   </p>
                   <div className="flex items-center justify-between border-t border-line pt-2.5">
                     <span className="truncate font-mono text-[11px] text-ink-faint">{c.id}</span>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="icon"
+                        className="!h-7 !w-7"
+                        onClick={() => void copyId(c.id)}
+                        aria-label="复制 id"
+                        title="复制 id"
+                      >
+                        <Copy size={13} aria-hidden="true" />
+                      </Button>
                       <span title={c.enabled ? "禁用" : "启用"}>
                         <Toggle checked={c.enabled !== false} onChange={() => onToggle(c.id)} />
                       </span>
@@ -215,7 +279,7 @@ export function CardsPage({
                         className="!h-auto px-2 py-0"
                         onClick={(ev) => {
                           ev.stopPropagation();
-                          if (window.confirm(`确定删除角色卡「${c.name}」？`)) onDelete(c.id);
+                          void deleteOne(c);
                         }}
                       >
                         删除
@@ -257,6 +321,7 @@ function CardRow({
   onEdit,
   onDelete,
   onToggle,
+  onCopyId,
 }: {
   card: CardConfig;
   expertName: string;
@@ -267,6 +332,7 @@ function CardRow({
   onEdit: () => void;
   onDelete: () => void;
   onToggle: () => void;
+  onCopyId: () => void;
 }) {
   return (
     <div className="group flex items-stretch">
@@ -284,7 +350,7 @@ function CardRow({
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <p className="truncate text-[16px] font-medium text-ink">{card.name}</p>
+            <p className="truncate text-[14px] font-medium text-ink">{card.name}</p>
             {card.isDefault && <Pill tone="info">默认</Pill>}
             {!card.enabled && <Pill tone="neutral">已禁用</Pill>}
           </div>
@@ -292,10 +358,23 @@ function CardRow({
             {expertName} → {modelText}
           </p>
         </div>
-        <span className="shrink-0 font-mono text-[11px] text-ink-faint">`{card.id}`</span>
+        {/* id 是 MCP 调用参数：不带反引号字面量（R2.3），复制入口在行尾 Copy 按钮 */}
+        <span className="shrink-0 font-mono text-[11px] text-ink-faint">{card.id}</span>
         <ChevronRight size={16} className="shrink-0 text-ink-faint" aria-hidden="true" />
       </button>
       <div className="flex shrink-0 items-center gap-2 px-2">
+        <Button
+          variant="icon"
+          className="!h-7 !w-7"
+          onClick={(ev) => {
+            ev.stopPropagation();
+            onCopyId();
+          }}
+          aria-label="复制 id"
+          title="复制 id"
+        >
+          <Copy size={13} aria-hidden="true" />
+        </Button>
         <span title={card.enabled ? "禁用" : "启用"}>
           <Toggle checked={card.enabled !== false} onChange={() => onToggle()} />
         </span>
@@ -335,6 +414,7 @@ function CardEditOverlay({
 }) {
   const enabledExperts = experts.filter((e) => e.enabled !== false);
   const enabledModels = models.filter((m) => m.enabled !== false);
+  const { toast } = useFeedback();
 
   const [id, setId] = useState(initial?.id ?? "");
   const [name, setName] = useState(initial?.name ?? "");
@@ -360,11 +440,21 @@ function CardEditOverlay({
   }, [isNew, expertId, modelId, id]);
 
   const handleSave = () => {
-    if (!expertId) return window.alert("请选择专家");
-    if (!modelId) return window.alert("请选择模型");
-    if (isNew && !previewId) return window.alert("无法生成角色卡 id");
+    if (!expertId) {
+      toast("error", "请选择专家");
+      return;
+    }
+    if (!modelId) {
+      toast("error", "请选择模型");
+      return;
+    }
+    if (isNew && !previewId) {
+      toast("error", "无法生成角色卡 id");
+      return;
+    }
     if (isNew && existingIds.includes(previewId)) {
-      return window.alert(`角色卡 id「${previewId}」已存在`);
+      toast("error", `角色卡 id「${previewId}」已存在`);
+      return;
     }
     onSave({
       id: isNew ? previewId : id,
@@ -380,21 +470,19 @@ function CardEditOverlay({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 sm:items-center sm:p-4">
-<div className="flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl bg-island-strong shadow-2xl sm:rounded-2xl md:max-w-lg">
-        <NavBar
-          title={isNew ? "新建角色卡" : "编辑角色卡"}
-          onBack={onClose}
-          right={
-            <Button variant="primary" className="!h-8 !px-3 rounded-md" onClick={handleSave}>
-              保存
-            </Button>
-          }
-        />
-
-        <div className="flex-1 overflow-y-auto">
-          <div className="px-4 pb-6">
-            <SectionLabel>绑定</SectionLabel>
+    <Modal
+      open
+      onClose={onClose}
+      title={isNew ? "新建角色卡" : "编辑角色卡"}
+      size="md"
+      right={
+        <Button variant="primary" className="!h-8 !px-3 rounded-md" onClick={handleSave}>
+          保存
+        </Button>
+      }
+    >
+      <div className="pb-6">
+        <SectionLabel>绑定</SectionLabel>
             <Card>
               {/* expert */}
               <div className="flex items-center border-b border-line px-4 py-3">
@@ -498,9 +586,7 @@ function CardEditOverlay({
                 </div>
               </div>
             </Card>
-          </div>
-        </div>
       </div>
-    </div>
+    </Modal>
   );
 }

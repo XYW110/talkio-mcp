@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Bot,
-  Check,
   ChevronRight,
   CornerDownLeft,
   FileText,
@@ -18,8 +17,9 @@ import {
 } from "lucide-react";
 import { api } from "../api";
 import type { RecordEvent, SessionMeta, UsageRecord } from "../types";
-import { Card, EmptyState, NavBar, SectionLabel } from "../components/ui";
+import { Card, EmptyState, MultiSelectToolbar, NavBar, SectionLabel, SelectCheckbox } from "../components/ui";
 import { Button, Pill, TextInput, type PillTone } from "../components/controls";
+import { useFeedback } from "../components/feedback";
 
 const TOOL_LABEL: Record<string, string> = {
   consult_experts: "专家会诊",
@@ -95,6 +95,7 @@ function localDate(iso: string): string | null {
 }
 
 export function RecordsPage({ onBack }: { onBack: () => void }) {
+  const { confirm } = useFeedback();
   const [records, setRecords] = useState<SessionMeta[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -185,16 +186,27 @@ export function RecordsPage({ onBack }: { onBack: () => void }) {
     }
   };
 
-  const onDeleteSelected = () => {
+  const onDeleteSelected = async () => {
     if (visibleSelected.length === 0) return;
-    if (!window.confirm(`确定删除选中的 ${visibleSelected.length} 条会话记录？此操作不可撤销。`))
-      return;
+    const ok = await confirm({
+      title: "删除所选会话记录",
+      message: `确定删除选中的 ${visibleSelected.length} 条会话记录？此操作不可撤销。`,
+      confirmText: "删除",
+      danger: true,
+    });
+    if (!ok) return;
     void runDelete(visibleSelected);
   };
 
-  const onClearAll = () => {
+  const onClearAll = async () => {
     if (records.length === 0) return;
-    if (!window.confirm(`确定清空全部 ${records.length} 条会话记录？此操作不可撤销。`)) return;
+    const ok = await confirm({
+      title: "清空全部会话记录",
+      message: `确定清空全部 ${records.length} 条会话记录？此操作不可撤销。`,
+      confirmText: "清空",
+      danger: true,
+    });
+    if (!ok) return;
     void runDelete([]);
   };
 
@@ -270,44 +282,23 @@ export function RecordsPage({ onBack }: { onBack: () => void }) {
         )}
       </div>
 
-      {/* 多选 / 批量删除 / 清空工具条 */}
-      <div className="flex items-center gap-2 px-4 py-1.5">
-        <button
-          onClick={toggleSelectAll}
-          disabled={filteredIds.length === 0}
-          className="flex items-center gap-1.5 text-[13px] text-ink-mid disabled:opacity-40"
-        >
-          <span
-            className={`flex h-4 w-4 items-center justify-center rounded border ${
-              allSelected ? "border-info bg-info" : "border-line bg-island-strong"
-            }`}
-          >
-            {allSelected && <Check size={10} className="leading-none text-on-solid" aria-hidden="true" />}
-          </span>
-          全选
-        </button>
-        <span className="text-[12px] text-ink-faint">
-          {visibleSelected.length > 0
-            ? `已选 ${visibleSelected.length} / ${filteredIds.length} 条`
-            : `共 ${filteredIds.length} 条`}
-        </span>
-        <div className="ml-auto flex items-center gap-2">
-          <button
-            onClick={onDeleteSelected}
-            disabled={visibleSelected.length === 0 || busy}
-            className="rounded-lg bg-bad-bg px-3 py-1.5 text-[13px] font-medium text-bad-text hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            删除所选
-          </button>
-          <button
-            onClick={onClearAll}
-            disabled={records.length === 0 || busy}
-            className="rounded-lg bg-hover px-3 py-1.5 text-[13px] font-medium text-ink-mid hover:bg-pressed disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            清空全部
-          </button>
+      {/* 多选 / 批量删除 / 清空工具条：复用共享 MultiSelectToolbar；空列表且无选中时隐藏（R3.2/R5.1） */}
+      {(filteredIds.length > 0 || visibleSelected.length > 0) && (
+        <div className="flex-shrink-0">
+          <MultiSelectToolbar
+            noun="条"
+            totalText={`共 ${filteredIds.length} 条`}
+            selectedCount={visibleSelected.length}
+            selectableCount={filteredIds.length}
+            allSelected={allSelected}
+            busy={busy}
+            onToggleAll={toggleSelectAll}
+            onDeleteSelected={onDeleteSelected}
+            onClearAll={onClearAll}
+            clearAllDisabled={records.length === 0}
+          />
         </div>
-      </div>
+      )}
 
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         {loading ? (
@@ -328,28 +319,15 @@ export function RecordsPage({ onBack }: { onBack: () => void }) {
                 <div
                   key={r.id}
                   onClick={() => setViewing(r.id)}
-                  className="flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-island-strong active:bg-hover"
-                  style={{
-                    borderBottom: i === filtered.length - 1 ? "none" : "1px solid var(--border-color)",
-                  }}
+                  className={`flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-island-strong active:bg-hover ${
+                    i === filtered.length - 1 ? "" : "border-b border-line"
+                  }`}
                 >
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleSelect(r.id);
-                    }}
-                    aria-label={checked ? "取消选择" : "选择"}
-                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] border"
-                    style={{
-                      borderColor: checked ? "var(--accent-blue)" : "var(--border-color)",
-                      background: checked ? "var(--accent-blue)" : "var(--surface-island-strong)",
-                    }}
-                  >
-                    {checked && <Check size={12} className="leading-none text-on-solid" aria-hidden="true" />}
-                  </button>
+                  {/* 勾选框复用共享 SelectCheckbox（自带 stopPropagation） */}
+                  <SelectCheckbox checked={checked} onClick={() => toggleSelect(r.id)} />
                   <ToolIcon tool={r.tool} />
                   <div className="min-w-0 flex-1">
-                    <span className="block truncate text-[16px] font-medium text-ink">
+                    <span className="block truncate text-[14px] font-medium text-ink">
                       {r.prompt}
                     </span>
                     <p className="mt-0.5 truncate text-[13px] leading-relaxed text-ink-dim">
@@ -519,8 +497,7 @@ function RunBadge({ run }: { run?: number }) {
 function InfoRow({ label, value, isLast }: { label: string; value: React.ReactNode; isLast: boolean }) {
   return (
     <div
-      className="flex items-center justify-between gap-4 px-4 py-2.5"
-      style={{ borderBottom: isLast ? "none" : "1px solid var(--border-color)" }}
+      className={`flex items-center justify-between gap-4 px-4 py-2.5 ${isLast ? "" : "border-b border-line"}`}
     >
       <span className="shrink-0 text-[14px] text-ink-dim">{label}</span>
       <span className="min-w-0 truncate text-right text-[14px] text-ink">{value}</span>

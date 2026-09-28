@@ -14,11 +14,12 @@ import { ChevronDown } from "lucide-react";
 export type ButtonVariant = "primary" | "ghost" | "danger-text" | "icon";
 
 const BUTTON_BASE =
-  "inline-flex flex-shrink-0 items-center justify-center gap-1.5 font-medium transition-colors " +
+  "inline-flex flex-shrink-0 items-center justify-center gap-1.5 font-medium transition-all " +
   "disabled:cursor-not-allowed disabled:opacity-40";
 
 const BUTTON_VARIANTS: Record<ButtonVariant, string> = {
-  primary: "h-10 rounded-lg bg-accent-ink px-4 text-[13px] text-on-solid hover:opacity-90",
+  // active 微缩放：primary 按下反馈（R6.3，幅度克制）
+  primary: "h-10 rounded-lg bg-accent-ink px-4 text-[13px] text-on-solid hover:opacity-90 active:scale-[0.98]",
   ghost: "h-10 rounded-lg px-3 text-[13px] text-ink-mid hover:bg-hover",
   "danger-text": "h-10 rounded-lg px-3 text-[13px] text-bad hover:opacity-80",
   icon: "h-10 w-10 rounded-lg text-info-text hover:bg-hover",

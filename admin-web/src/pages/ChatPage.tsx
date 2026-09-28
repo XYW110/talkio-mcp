@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, MessageCircle, Rocket, TriangleAlert } from "lucide-react";
+import { Copy, MessageCircle, Rocket, TriangleAlert } from "lucide-react";
 import type { CardConfig } from "../types";
 import { api } from "../api";
-import { Card, SectionLabel } from "../components/ui";
+import { Card, SectionLabel, SelectCheckbox } from "../components/ui";
 import { Button, SelectInput } from "../components/controls";
+import { useFeedback } from "../components/feedback";
 
 interface Props {
   cards: CardConfig[];
@@ -19,6 +20,7 @@ const MODES: { value: "debate" | "relay"; label: string; desc: string }[] = [
 const MAX_CARDS = 6;
 
 export function ChatPage({ cards }: Props) {
+  const { toast } = useFeedback();
   const [topic, setTopic] = useState("");
   const [mode, setMode] = useState<"debate" | "relay">("debate");
   const [rounds, setRounds] = useState(1);
@@ -41,33 +43,42 @@ export function ChatPage({ cards }: Props) {
 
   const enabledCards = cards.filter((c) => c.enabled);
 
-  const toggleCard = useCallback(
-    (id: string) => {
-      setSelected((prev) => {
-        const next = new Set(prev);
-        if (next.has(id)) {
-          next.delete(id);
-        } else {
-          if (next.size >= MAX_CARDS) {
-            window.alert(`最多选择 ${MAX_CARDS} 张角色卡`);
-            return prev;
-          }
-          next.add(id);
-        }
-        return next;
-      });
-    },
-    [],
-  );
+  // setState updater 必须纯净：上限提示移到事件层，先判断再切换
+  const toggleCard = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleToggleCard = (id: string) => {
+    if (!selected.has(id) && selected.size >= MAX_CARDS) {
+      toast("error", `最多选择 ${MAX_CARDS} 张角色卡`);
+      return;
+    }
+    toggleCard(id);
+  };
+
+  /** 复制讨论总结全文（R6.5）；clipboard 不可用时降级为失败 toast */
+  const copyReport = async () => {
+    try {
+      await navigator.clipboard.writeText(report);
+      toast("success", "已复制讨论总结");
+    } catch {
+      toast("error", "复制失败");
+    }
+  };
 
   const start = useCallback(async () => {
     const t = topic.trim();
     if (!t) {
-      window.alert("请填写讨论话题");
+      toast("error", "请填写讨论话题");
       return;
     }
     if (selected.size === 0) {
-      window.alert("请至少选择一张角色卡");
+      toast("error", "请至少选择一张角色卡");
       return;
     }
     setBusy(true);
@@ -139,7 +150,7 @@ es.addEventListener("error", (ev) => {
     } finally {
       setBusy(false);
     }
-}, [topic, mode, rounds, selected]);
+}, [topic, mode, rounds, selected, toast]);
 
   return (
     <div className="h-full overflow-y-auto">
@@ -196,7 +207,19 @@ es.addEventListener("error", (ev) => {
           <div className="mt-4 mb-6">
             <SectionLabel>讨论总结</SectionLabel>
             <Card className="p-4">
-              <h2 className="mb-2 text-[16px] font-bold text-ink">### 讨论总结</h2>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                {/* 标题不带 ### 字面量（R2.1）；头部提供一键复制全文（R6.5） */}
+                <h2 className="text-[16px] font-bold text-ink">讨论总结</h2>
+                <Button
+                  variant="icon"
+                  className="!h-8 !w-8"
+                  onClick={() => void copyReport()}
+                  aria-label="复制讨论总结"
+                  title="复制"
+                >
+                  <Copy size={15} aria-hidden="true" />
+                </Button>
+              </div>
               <pre className="whitespace-pre-wrap break-words font-sans text-[14px] leading-relaxed text-ink-mid">
                 {report}
               </pre>
@@ -279,29 +302,33 @@ es.addEventListener("error", (ev) => {
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {enabledCards.map((c) => {
                     const checked = selected.has(c.id);
+                    const disabled = status === "running";
                     return (
-                      <button
+                      // 外层用 div[role=button]：内部需嵌套 SelectCheckbox（本身是 button），
+                      // 不能再用 button 包 button；键盘经 Enter/Space 触发（AC11）
+                      <div
                         key={c.id}
-                        type="button"
-                        disabled={status === "running"}
-                        onClick={() => toggleCard(c.id)}
-                        className={`flex items-center gap-2 rounded-[10px] border px-3 py-2.5 text-left transition-colors ${
+                        role="button"
+                        tabIndex={disabled ? -1 : 0}
+                        aria-pressed={checked}
+                        aria-disabled={disabled}
+                        onClick={() => {
+                          if (!disabled) handleToggleCard(c.id);
+                        }}
+                        onKeyDown={(e) => {
+                          if (disabled) return;
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            handleToggleCard(c.id);
+                          }
+                        }}
+                        className={`flex cursor-pointer items-center gap-2 rounded-[10px] border px-3 py-2.5 text-left transition-colors ${
                           checked
                             ? "border-info bg-info-bg"
-                            : "border-line bg-island-strong hover:bg-island-strong"
-                        } disabled:opacity-50`}
+                            : "border-line bg-island-strong hover:bg-hover"
+                        } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
                       >
-                        <span
-                          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] border"
-                          style={{
-                            borderColor: checked ? "var(--accent-blue)" : "var(--border-color)",
-                            background: checked ? "var(--accent-blue)" : "var(--surface-island-strong)",
-                          }}
-                        >
-                          {checked && (
-                            <Check size={12} className="leading-none text-on-solid" aria-hidden="true" />
-                          )}
-                        </span>
+                        <SelectCheckbox checked={checked} onClick={() => handleToggleCard(c.id)} disabled={disabled} />
                         <span className="min-w-0">
                           <span className="block truncate text-[14px] font-medium text-ink">
                             {c.name}
@@ -310,7 +337,7 @@ es.addEventListener("error", (ev) => {
                             角色卡 · 已启用
                           </span>
                         </span>
-                      </button>
+                      </div>
                     );
                   })}
                 </div>

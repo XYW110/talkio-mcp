@@ -3,6 +3,7 @@ import { Bot, ChevronRight, Search, X } from "lucide-react";
 import type { Expert } from "../types";
 import { EmptyState, MultiSelectToolbar, SelectCheckbox } from "../components/ui";
 import { Button, Pill, TextInput } from "../components/controls";
+import { useFeedback } from "../components/feedback";
 
 interface Props {
   experts: Expert[];
@@ -13,6 +14,7 @@ interface Props {
 }
 
 export function ExpertsPage({ experts, onAdd, onEdit, onDelete, onDeleteMany }: Props) {
+  const { confirm } = useFeedback();
   const [showSearch, setShowSearch] = useState(false);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -57,25 +59,42 @@ const filtered = useMemo(() => {
     });
   };
 
-  const onDeleteSelected = () => {
+  const onDeleteSelected = async () => {
     if (visibleSelected.length === 0) return;
-    if (!window.confirm(`确定删除选中的 ${visibleSelected.length} 位专家？引用它们的角色卡会一并删除。`))
-      return;
+    const ok = await confirm({
+      title: "删除所选专家",
+      message: `确定删除选中的 ${visibleSelected.length} 位专家？引用它们的角色卡会一并删除。`,
+      confirmText: "删除",
+      danger: true,
+    });
+    if (!ok) return;
     onDeleteMany(visibleSelected);
     setSelected(new Set());
   };
 
-  const onClearAll = () => {
+  const onClearAll = async () => {
     const removable = experts.filter((e) => !e.builtin);
     if (removable.length === 0) return;
-    if (
-      !window.confirm(
-        `确定清空全部 ${removable.length} 位专家（内置专家保留）？引用它们的角色卡会一并删除。`,
-      )
-    )
-      return;
+    const ok = await confirm({
+      title: "清空全部专家",
+      message: `确定清空全部 ${removable.length} 位专家（内置专家保留）？引用它们的角色卡会一并删除。`,
+      confirmText: "清空",
+      danger: true,
+    });
+    if (!ok) return;
     onDeleteMany(removable.map((e) => e.id));
     setSelected(new Set());
+  };
+
+  /** 单个删除（样式化 ConfirmDialog，promise 化） */
+  const deleteOne = async (expert: Expert) => {
+    const ok = await confirm({
+      title: "删除专家",
+      message: `确定删除专家「${expert.name}」？`,
+      confirmText: "删除",
+      danger: true,
+    });
+    if (ok) onDelete(expert.id);
   };
 
   return (
@@ -106,19 +125,22 @@ const filtered = useMemo(() => {
         </p>
       </div>
 
-      <div className="flex-shrink-0">
-        <MultiSelectToolbar
-          noun="位"
-          totalText={`共 ${experts.length} 位`}
-          selectedCount={visibleSelected.length}
-          selectableCount={selectableCount}
-          allSelected={allSelected}
-          onToggleAll={toggleSelectAll}
-          onDeleteSelected={onDeleteSelected}
-          onClearAll={onClearAll}
-          clearAllDisabled={experts.filter((e) => !e.builtin).length === 0}
-        />
-      </div>
+      {/* 空列表且无选中时不渲染工具条（R3.2） */}
+      {(experts.length > 0 || visibleSelected.length > 0) && (
+        <div className="flex-shrink-0">
+          <MultiSelectToolbar
+            noun="位"
+            totalText={`共 ${experts.length} 位`}
+            selectedCount={visibleSelected.length}
+            selectableCount={selectableCount}
+            allSelected={allSelected}
+            onToggleAll={toggleSelectAll}
+            onDeleteSelected={onDeleteSelected}
+            onClearAll={onClearAll}
+            clearAllDisabled={experts.filter((e) => !e.builtin).length === 0}
+          />
+        </div>
+      )}
 
       {/* Search Bar */}
       {showSearch && (
@@ -144,7 +166,16 @@ const filtered = useMemo(() => {
           query ? (
             <EmptyState icon={<Search size={40} />} title="没有匹配的专家" />
           ) : (
-            <EmptyState icon={<Bot size={40} />} title="还没有专家" subtitle="点右上角 ＋ 新建你的第一位专家" />
+            <EmptyState
+              icon={<Bot size={40} />}
+              title="还没有专家"
+              subtitle="创建你的第一位 AI 专家"
+              action={
+                <Button variant="primary" onClick={onAdd}>
+                  新建专家
+                </Button>
+              }
+            />
           )
         ) : (
           <div className="pb-4">
@@ -156,9 +187,7 @@ const filtered = useMemo(() => {
                 checked={!e.builtin && selected.has(e.id)}
                 onToggleSelect={() => !e.builtin && toggleSelect(e.id)}
                 onEdit={() => onEdit(e.id)}
-                onDelete={() => {
-                  if (window.confirm(`确定删除专家「${e.name}」？`)) onDelete(e.id);
-                }}
+                onDelete={() => void deleteOne(e)}
               />
             ))}
           </div>
@@ -171,7 +200,16 @@ const filtered = useMemo(() => {
           query ? (
             <EmptyState icon={<Search size={40} />} title="没有匹配的专家" />
           ) : (
-            <EmptyState icon={<Bot size={40} />} title="还没有专家" subtitle="点右上角 ＋ 新建你的第一位专家" />
+            <EmptyState
+              icon={<Bot size={40} />}
+              title="还没有专家"
+              subtitle="创建你的第一位 AI 专家"
+              action={
+                <Button variant="primary" onClick={onAdd}>
+                  新建专家
+                </Button>
+              }
+            />
           )
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -209,9 +247,7 @@ const filtered = useMemo(() => {
                     <Button
                       variant="danger-text"
                       className="!h-auto px-2 py-0"
-                      onClick={() => {
-                        if (window.confirm(`确定删除专家「${e.name}」？`)) onDelete(e.id);
-                      }}
+                      onClick={() => void deleteOne(e)}
                     >
                       删除
                     </Button>

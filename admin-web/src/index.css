@@ -102,3 +102,35 @@ body {
 .detail-panel {
   animation: snowapp-slide-left 200ms ease-out;
 }
+
+/* Modal 面板：移动端走 .drawer-panel 底部滑入；≥sm 居中弹窗改用 pop-in（scale+fade）。
+   须定义在 .drawer-panel 之后，媒体查询内规则才能在 sm+ 覆盖滑入动画。 */
+@media (min-width: 640px) {
+  .modal-panel {
+    animation: snowapp-pop-in 180ms ease-out;
+  }
+}
+
+/* ===== 反馈层动画（Toast / ConfirmDialog 等 Modal 复用）===== */
+@keyframes snowapp-pop-in {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes snowapp-toast-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.toast-item {
+  animation: snowapp-toast-in 180ms ease-out;
+}
+
+/* 动效降级：浮层/Toast 一律直接呈现，不做位移动画 */
+@media (prefers-reduced-motion: reduce) {
+  .overlay-mask,
+  .drawer-panel,
+  .detail-panel,
+  .modal-panel,
+  .toast-item {
+    animation: none;
+  }
+}

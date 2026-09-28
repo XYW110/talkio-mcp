@@ -4,6 +4,8 @@ import { api } from "../api";
 import type { UsageAggregate, UsageRecord } from "../types";
 import { Card, EmptyState, NavBar, SectionLabel } from "../components/ui";
 import { Button, SelectInput } from "../components/controls";
+import { Modal } from "../components/overlays";
+import { useFeedback } from "../components/feedback";
 
 // ── 本地价格表（localStorage）：modelId → { input, output }，单位 元 / 百万 token ──
 
@@ -67,6 +69,7 @@ function fmtCost(u: UsageRecord, price: PriceEntry): string {
 }
 
 export function UsagePage({ onBack }: { onBack: () => void }) {
+  const { toast } = useFeedback();
   const [data, setData] = useState<UsageAggregate | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -74,7 +77,6 @@ export function UsagePage({ onBack }: { onBack: () => void }) {
   const [priceTable, setPriceTable] = useState<PriceTable>(() => loadPriceTable());
   const [priceOpen, setPriceOpen] = useState(false);
   const [priceDraft, setPriceDraft] = useState("");
-  const [toast, setToast] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -91,13 +93,6 @@ export function UsagePage({ onBack }: { onBack: () => void }) {
   useEffect(() => {
     load();
   }, [load]);
-
-  // toast 自动消失（3s）
-  useEffect(() => {
-    if (!toast) return;
-    const t = window.setTimeout(() => setToast(null), 3000);
-    return () => window.clearTimeout(t);
-  }, [toast]);
 
   // 按天条形的最大日总量（条宽比例基准），至少 1 避免 0 除
   const maxDay = useMemo(
@@ -138,7 +133,7 @@ export function UsagePage({ onBack }: { onBack: () => void }) {
       setPriceTable(next);
       setPriceOpen(false);
     } catch (e) {
-      setToast(e instanceof Error ? e.message : String(e));
+      toast("error", e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -224,11 +219,7 @@ export function UsagePage({ onBack }: { onBack: () => void }) {
                     return (
                       <div
                         key={d.date}
-                        className="py-2"
-                        style={{
-                          borderBottom:
-                            i === data.byDay.length - 1 ? "none" : "1px solid var(--border-color)",
-                        }}
+                        className={`py-2 ${i === data.byDay.length - 1 ? "" : "border-b border-line"}`}
                       >
                         <div className="flex items-center justify-between text-[13px]">
                           <span className="text-ink-mid">{d.date}</span>
@@ -269,11 +260,7 @@ export function UsagePage({ onBack }: { onBack: () => void }) {
                     return (
                       <div
                         key={c.cardId}
-                        className="flex items-center gap-2 px-4 py-2.5"
-                        style={{
-                          borderBottom:
-                            i === data.byCard.length - 1 ? "none" : "1px solid var(--border-color)",
-                        }}
+                        className={`flex items-center gap-2 px-4 py-2.5 ${i === data.byCard.length - 1 ? "" : "border-b border-line"}`}
                       >
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5">
@@ -311,11 +298,7 @@ export function UsagePage({ onBack }: { onBack: () => void }) {
                   data.byModel.map((m, i) => (
                     <div
                       key={m.modelId}
-                      className="flex items-center gap-2 px-4 py-2.5"
-                      style={{
-                        borderBottom:
-                          i === data.byModel.length - 1 ? "none" : "1px solid var(--border-color)",
-                      }}
+                      className={`flex items-center gap-2 px-4 py-2.5 ${i === data.byModel.length - 1 ? "" : "border-b border-line"}`}
                     >
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
@@ -346,46 +329,35 @@ export function UsagePage({ onBack }: { onBack: () => void }) {
         )}
       </div>
 
-      {/* 价格表编辑浮层 */}
-      {priceOpen && (
-        <div
-          className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4"
-          onClick={() => setPriceOpen(false)}
-        >
-          <div
-            className="island island-strong w-full max-w-lg p-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p className="text-[16px] font-semibold text-ink">价格表（元 / 百万 token）</p>
-            <p className="mt-1 text-[12px] leading-relaxed text-ink-dim">
-              JSON 格式：{"{"}"模型ID": {"{"}"input": 输入价, "output": 输出价{"}"}{"}"}
-              。命中模型的角色卡会显示估算成本；仅保存在浏览器本地（localStorage），不进后端。
-            </p>
-            <textarea
-              value={priceDraft}
-              onChange={(e) => setPriceDraft(e.target.value)}
-              rows={10}
-              spellCheck={false}
-              className="mt-2 w-full rounded-lg border border-line bg-island px-3 py-2 font-mono text-[12px] leading-relaxed text-ink outline-none focus:border-info"
-            />
-            <div className="mt-3 flex justify-end gap-2">
-              <Button variant="ghost" onClick={() => setPriceOpen(false)}>
-                取消
-              </Button>
-              <Button variant="primary" onClick={savePriceTable}>
-                保存
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* toast（价格表解析失败等），样式对齐 App 的 ErrorBanner */}
-      {toast && (
-        <div className="fixed top-4 left-1/2 z-[100] flex -translate-x-1/2 items-center rounded-xl bg-bad px-4 py-2.5 text-on-solid shadow-lg">
-          <span className="text-sm">{toast}</span>
-        </div>
-      )}
+      {/* 价格表编辑浮层：迁入共享 Modal 外壳（动画 + Esc + aria，R4.1） */}
+      <Modal
+        open={priceOpen}
+        onClose={() => setPriceOpen(false)}
+        title="价格表（元 / 百万 token）"
+        size="lg"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setPriceOpen(false)}>
+              取消
+            </Button>
+            <Button variant="primary" onClick={savePriceTable}>
+              保存
+            </Button>
+          </>
+        }
+      >
+        <p className="text-[12px] leading-relaxed text-ink-dim">
+          JSON 格式：{"{"}"模型ID": {"{"}"input": 输入价, "output": 输出价{"}"}{"}"}
+          。命中模型的角色卡会显示估算成本；仅保存在浏览器本地（localStorage），不进后端。
+        </p>
+        <textarea
+          value={priceDraft}
+          onChange={(e) => setPriceDraft(e.target.value)}
+          rows={10}
+          spellCheck={false}
+          className="mt-2 w-full rounded-lg border border-line bg-island px-3 py-2 font-mono text-[12px] leading-relaxed text-ink outline-none focus:border-info"
+        />
+      </Modal>
     </div>
   );
 }

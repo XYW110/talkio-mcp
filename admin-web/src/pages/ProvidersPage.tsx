@@ -3,7 +3,6 @@ import { Plug } from "lucide-react";
 import type { ProviderConfig } from "../types";
 import {
   Card,
-  NavBar,
   SectionLabel,
   ChevronRow,
   EmptyState,
@@ -11,6 +10,8 @@ import {
   SelectCheckbox,
 } from "../components/ui";
 import { Button, Chip, SelectInput } from "../components/controls";
+import { Modal } from "../components/overlays";
+import { useFeedback } from "../components/feedback";
 
 interface Props {
   providers: [string, ProviderConfig][];
@@ -46,12 +47,24 @@ export function ProvidersPage({
   onDelete,
   onDeleteMany,
 }: Props) {
+  const { confirm } = useFeedback();
   const [editing, setEditing] = useState<{
     name: string;
     value: ProviderConfig;
     isNew: boolean;
   } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const openNew = () =>
+    setEditing({
+      name: "",
+      value: {
+        type: "openai-compatible",
+        baseUrl: "",
+        apiKeyEnv: "CUSTOM_API_KEY",
+      },
+      isNew: true,
+    });
 
   // provider id 就是 name
   const providerNames = useMemo(() => providers.map(([name]) => name), [providers]);
@@ -74,28 +87,54 @@ export function ProvidersPage({
     });
   };
 
-  const onDeleteSelected = () => {
+  const onDeleteSelected = async () => {
     if (visibleSelected.length === 0) return;
-    if (
-      !window.confirm(
-        `确定删除选中的 ${visibleSelected.length} 个 provider？其下模型与引用它们的角色卡会一并删除。`,
-      )
-    )
-      return;
+    const ok = await confirm({
+      title: "删除所选 provider",
+      message: `确定删除选中的 ${visibleSelected.length} 个 provider？其下模型与引用它们的角色卡会一并删除。`,
+      confirmText: "删除",
+      danger: true,
+    });
+    if (!ok) return;
     onDeleteMany(visibleSelected);
     setSelected(new Set());
   };
 
-  const onClearAll = () => {
+  const onClearAll = async () => {
     if (providers.length === 0) return;
-    if (
-      !window.confirm(
-        `确定清空全部 ${providers.length} 个 provider？其下模型与引用它们的角色卡会一并删除。`,
-      )
-    )
-      return;
+    const ok = await confirm({
+      title: "清空全部 provider",
+      message: `确定清空全部 ${providers.length} 个 provider？其下模型与引用它们的角色卡会一并删除。`,
+      confirmText: "清空",
+      danger: true,
+    });
+    if (!ok) return;
     onDeleteMany(providerNames);
     setSelected(new Set());
+  };
+
+  /** 单个删除（列表行 / 桌面卡共用文案） */
+  const deleteOne = async (name: string) => {
+    const ok = await confirm({
+      title: "删除 provider",
+      message: `删除 provider「${name}」？其下模型与引用它们的角色卡会一并删除。`,
+      confirmText: "删除",
+      danger: true,
+    });
+    if (ok) onDelete(name);
+  };
+
+  /** 编辑浮层内的删除（提示口径不同：专家变未绑定） */
+  const deleteFromOverlay = async (name: string) => {
+    const ok = await confirm({
+      title: "删除 provider",
+      message: `删除 provider「${name}」？引用它的专家会变成未绑定。`,
+      confirmText: "删除",
+      danger: true,
+    });
+    if (!ok) return;
+    onDelete(name);
+    setEditing(null);
   };
 
   return (
@@ -107,22 +146,7 @@ export function ProvidersPage({
             Provider
             <span className="ml-2 text-sm font-normal text-ink-faint">{providers.length} 个</span>
           </h1>
-          <Button
-            variant="icon"
-            onClick={() =>
-              setEditing({
-                name: "",
-                value: {
-                  type: "openai-compatible",
-                  baseUrl: "",
-                  apiKeyEnv: "CUSTOM_API_KEY",
-                },
-                isNew: true,
-              })
-            }
-            aria-label="新建 provider"
-            title="新建 provider"
-          >
+          <Button variant="icon" onClick={openNew} aria-label="新建 provider" title="新建 provider">
             ＋
           </Button>
         </div>
@@ -131,24 +155,36 @@ export function ProvidersPage({
         </p>
       </div>
 
-      <div className="flex-shrink-0">
-        <MultiSelectToolbar
-          noun="个"
-          totalText={`共 ${providers.length} 个`}
-          selectedCount={visibleSelected.length}
-          selectableCount={providerNames.length}
-          allSelected={allSelected}
-          onToggleAll={toggleSelectAll}
-          onDeleteSelected={onDeleteSelected}
-          onClearAll={onClearAll}
-          clearAllDisabled={providers.length === 0}
-        />
-      </div>
+      {/* 空列表且无选中时不渲染工具条（R3.2） */}
+      {(providers.length > 0 || visibleSelected.length > 0) && (
+        <div className="flex-shrink-0">
+          <MultiSelectToolbar
+            noun="个"
+            totalText={`共 ${providers.length} 个`}
+            selectedCount={visibleSelected.length}
+            selectableCount={providerNames.length}
+            allSelected={allSelected}
+            onToggleAll={toggleSelectAll}
+            onDeleteSelected={onDeleteSelected}
+            onClearAll={onClearAll}
+            clearAllDisabled={providers.length === 0}
+          />
+        </div>
+      )}
 
-{/* 手机端：分组列表 */}
+      {/* 手机端：分组列表 */}
       <div className="flex-1 overflow-y-auto pb-6 md:hidden">
         {providers.length === 0 ? (
-          <EmptyState icon={<Plug size={40} />} title="还没有 provider" subtitle="点右上角 ＋ 新建" />
+          <EmptyState
+            icon={<Plug size={40} />}
+            title="还没有 provider"
+            subtitle="配置 API 端点与 key 环境变量"
+            action={
+              <Button variant="primary" onClick={openNew}>
+                新建 Provider
+              </Button>
+            }
+          />
         ) : (
           <Card>
             {providers.map(([name, p], i) => (
@@ -169,11 +205,7 @@ export function ProvidersPage({
                 <Button
                   variant="danger-text"
                   className="!h-auto shrink-0 px-2 py-0"
-                  onClick={() => {
-                    if (window.confirm(`删除 provider「${name}」？其下模型与引用它们的角色卡会一并删除。`)) {
-                      onDelete(name);
-                    }
-                  }}
+                  onClick={() => void deleteOne(name)}
                   aria-label="删除"
                   title="删除"
                 >
@@ -188,7 +220,16 @@ export function ProvidersPage({
       {/* 桌面端（md+）：卡片网格 */}
       <div className="hidden flex-1 overflow-y-auto px-4 pb-6 md:block">
         {providers.length === 0 ? (
-          <EmptyState icon={<Plug size={40} />} title="还没有 provider" subtitle="点右上角 ＋ 新建" />
+          <EmptyState
+            icon={<Plug size={40} />}
+            title="还没有 provider"
+            subtitle="配置 API 端点与 key 环境变量"
+            action={
+              <Button variant="primary" onClick={openNew}>
+                新建 Provider
+              </Button>
+            }
+          />
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {providers.map(([name, p]) => (
@@ -221,11 +262,7 @@ export function ProvidersPage({
                   <Button
                     variant="danger-text"
                     className="!h-auto px-2 py-0"
-                    onClick={() => {
-                      if (window.confirm(`删除 provider「${name}」？其下模型与引用它们的角色卡会一并删除。`)) {
-                        onDelete(name);
-                      }
-                    }}
+                    onClick={() => void deleteOne(name)}
                   >
                     删除
                   </Button>
@@ -244,12 +281,7 @@ export function ProvidersPage({
             onUpsert(n, v);
             setEditing(null);
           }}
-          onDelete={() => {
-            if (window.confirm(`删除 provider「${editing.name}」？引用它的专家会变成未绑定。`)) {
-              onDelete(editing.name);
-              setEditing(null);
-            }
-          }}
+          onDelete={() => void deleteFromOverlay(editing.name)}
           onClose={() => setEditing(null)}
         />
       )}
@@ -274,6 +306,7 @@ function ProviderEditOverlay({
   const [value, setValue] = useState<ProviderConfig>(initial.value);
   // 最近点击的预设提示（P3-C：apiKeyEnv 建议值 / 本地可留空说明）
   const [presetHint, setPresetHint] = useState("");
+  const { toast } = useFeedback();
 
   const applyPreset = (p: ProviderPreset) => {
     // 只填充表单：编辑已有 provider 时即覆盖当前值（名称不动）；不触发保存。
@@ -293,60 +326,64 @@ function ProviderEditOverlay({
 
   const handleSave = () => {
     const n = name.trim();
-    if (!n) return window.alert("请填写名称");
+    if (!n) {
+      toast("error", "请填写名称");
+      return;
+    }
     if (initial.isNew && existingNames.includes(n)) {
-      return window.alert(`provider「${n}」已存在`);
+      toast("error", `provider「${n}」已存在`);
+      return;
     }
     if (!/^[A-Z_][A-Z0-9_]*$/i.test(value.apiKeyEnv)) {
-      return window.alert("apiKeyEnv 必须是合法环境变量名（字母/数字/下划线）");
+      toast("error", "apiKeyEnv 必须是合法环境变量名（字母/数字/下划线）");
+      return;
     }
     try {
       new URL(value.baseUrl);
     } catch {
-      return window.alert("baseUrl 必须是合法 URL");
+      toast("error", "baseUrl 必须是合法 URL");
+      return;
     }
     onSave(n, value);
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 sm:items-center sm:p-4">
-<div className="island island-strong flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-b-none shadow-2xl sm:rounded-2xl md:max-w-lg">
-        <NavBar
-          title={initial.isNew ? "新建 Provider" : `编辑 ${initial.name}`}
-          onBack={onClose}
-          right={
-            <div className="flex items-center gap-3">
-              {!initial.isNew && (
-                <Button variant="danger-text" className="!h-auto !px-0 py-0" onClick={onDelete}>
-                  删除
-                </Button>
-              )}
-              <Button variant="primary" className="!h-8 !px-3 rounded-md" onClick={handleSave}>
-                保存
-              </Button>
-            </div>
-          }
-        />
+    <Modal
+      open
+      onClose={onClose}
+      title={initial.isNew ? "新建 Provider" : `编辑 ${initial.name}`}
+      size="md"
+      right={
+        <div className="flex items-center gap-3">
+          {!initial.isNew && (
+            <Button variant="danger-text" className="!h-auto !px-0 py-0" onClick={onDelete}>
+              删除
+            </Button>
+          )}
+          <Button variant="primary" className="!h-8 !px-3 rounded-md" onClick={handleSave}>
+            保存
+          </Button>
+        </div>
+      }
+    >
+      <div className="pb-4">
+        {initial.isNew && (
+          <>
+            <SectionLabel>名称（唯一 key）</SectionLabel>
+            <Card>
+              <div className="px-4 py-0">
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="例如 custom / moonshot"
+                  className="w-full bg-transparent py-2.5 font-mono text-[13px] text-ink outline-none placeholder:text-ink-faint"
+                />
+              </div>
+            </Card>
+          </>
+        )}
 
-        <div className="flex-1 overflow-y-auto">
-          <div className="px-4">
-            {initial.isNew && (
-              <>
-                <SectionLabel>名称（唯一 key）</SectionLabel>
-                <Card>
-                  <div className="px-4 py-0">
-                    <input
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder="例如 custom / moonshot"
-                      className="w-full bg-transparent py-2.5 font-mono text-[13px] text-ink outline-none placeholder:text-ink-faint"
-                    />
-                  </div>
-                </Card>
-              </>
-            )}
-
-            <SectionLabel>快速填充</SectionLabel>
+        <SectionLabel>快速填充</SectionLabel>
             <Card>
               <div className="flex flex-wrap gap-2 px-4 py-3">
                 {PROVIDER_PRESETS.map((p) => (
@@ -400,7 +437,7 @@ function ProviderEditOverlay({
 
               {/* apiKeyEnv */}
               <div className="flex items-center px-4 py-3">
-                <span className="w-24 shrink-0 text-[13px] text-ink-dim">API Key 环境变量</span>
+                <span className="w-28 shrink-0 text-[13px] text-ink-dim">API Key 环境变量</span>
                 <input
                   value={value.apiKeyEnv}
                   onChange={(e) => setValue({ ...value, apiKeyEnv: e.target.value.toUpperCase() })}
@@ -413,9 +450,7 @@ function ProviderEditOverlay({
               真实 key 请写到项目根目录 .env（例如 {value.apiKeyEnv}=sk-...），不会写入 experts.json。
               改完配置后需重启 MCP server 才生效。
             </p>
-          </div>
-        </div>
       </div>
-    </div>
+    </Modal>
   );
 }

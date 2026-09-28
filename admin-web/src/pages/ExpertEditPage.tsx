@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Expert } from "../types";
 import { Card, NavBar, SectionLabel, SettingsRow, Toggle } from "../components/ui";
 import { Button, SelectInput, TextInput } from "../components/controls";
+import { useFeedback } from "../components/feedback";
 
 interface Props {
   initial?: Expert;
@@ -32,6 +33,7 @@ function slugify(name: string): string {
 }
 
 export function ExpertEditPage({ initial, onSave, onClose }: Props) {
+  const { confirm, toast } = useFeedback();
   const isNew = !initial;
   const [id, setId] = useState(initial?.id ?? "");
   const [name, setName] = useState(initial?.name ?? "");
@@ -45,10 +47,51 @@ export function ExpertEditPage({ initial, onSave, onClose }: Props) {
     initial?.reasoningStrategy ?? "",
   );
 
+  // 任一字段 ≠ initial 即视为有未保存改动（驱动关闭二次确认）
+  const isDirty =
+    id !== (initial?.id ?? "") ||
+    name !== (initial?.name ?? "") ||
+    icon !== (initial?.icon ?? "🤖") ||
+    systemPrompt !== (initial?.systemPrompt ?? "") ||
+    temperature !== (initial?.temperature ?? 0.7) ||
+    enabled !== (initial?.enabled ?? true) ||
+    maxTokens !== (initial?.maxTokens ?? 2048) ||
+    timeoutMs !== (initial?.timeoutMs ?? 120000) ||
+    strategy !== (initial?.reasoningStrategy ?? "");
+
+  // 关闭拦截：dirty 时走 ConfirmDialog（R4.2），Esc/取消不丢弃改动
+  const handleClose = async () => {
+    if (isDirty) {
+      const ok = await confirm({
+        title: "放弃未保存的修改？",
+        message: "当前表单有未保存的改动，关闭后将丢失。",
+        confirmText: "放弃修改",
+        danger: false,
+      });
+      if (!ok) return;
+    }
+    onClose();
+  };
+
+  // 系统提示词 textarea 自动增高（min 120 / max 400，超出后内部滚动）
+  const promptRef = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    const el = promptRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(400, Math.max(120, el.scrollHeight))}px`;
+  }, [systemPrompt]);
+
   const handleSave = () => {
     const finalId = (isNew ? slugify(id || name) : initial!.id).trim();
-    if (!name.trim()) return window.alert("请填写专家名称");
-    if (!systemPrompt.trim()) return window.alert("请填写系统提示词");
+    if (!name.trim()) {
+      toast("error", "请填写专家名称");
+      return;
+    }
+    if (!systemPrompt.trim()) {
+      toast("error", "请填写系统提示词");
+      return;
+    }
     onSave({
       id: finalId,
       name: name.trim(),
@@ -69,7 +112,7 @@ export function ExpertEditPage({ initial, onSave, onClose }: Props) {
 <div className="island island-strong flex h-full w-full flex-col md:max-h-[92vh] md:max-w-2xl">
       <NavBar
         title={isNew ? "新建专家" : "编辑专家"}
-        onBack={onClose}
+        onBack={() => void handleClose()}
         right={
           <Button
             variant="primary"
@@ -126,13 +169,17 @@ export function ExpertEditPage({ initial, onSave, onClose }: Props) {
           <Card>
             <div className="px-4 py-3">
               <textarea
+                ref={promptRef}
                 value={systemPrompt}
                 onChange={(e) => setSystemPrompt(e.target.value)}
                 placeholder="描述这个专家的角色、专长、语气与边界…"
-                className="w-full resize-none bg-transparent text-[13px] leading-relaxed text-ink outline-none placeholder:text-ink-faint"
-                style={{ minHeight: 120 }}
+                className="max-h-[400px] min-h-[120px] w-full resize-none overflow-y-auto bg-transparent text-[13px] leading-relaxed text-ink outline-none placeholder:text-ink-faint"
                 autoFocus={false}
               />
+              {/* 右下字数统计（R6.1） */}
+              <div className="mt-1 flex justify-end">
+                <span className="text-[11px] text-ink-faint">{systemPrompt.length} 字</span>
+              </div>
             </div>
           </Card>
 

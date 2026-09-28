@@ -16,7 +16,7 @@ export function NavBar({
     <div className="flex flex-shrink-0 items-center border-b border-line px-3 py-2.5">
       <button
         onClick={onBack}
-        className="flex min-h-[40px] min-w-[64px] items-center gap-0.5 rounded-md px-1 py-2 text-[13px] font-medium text-info-text active:bg-pressed"
+        className="flex min-h-[40px] min-w-[64px] items-center gap-0.5 rounded-md px-1 py-2 text-[13px] font-medium text-info-text transition-colors hover:bg-hover active:bg-pressed"
       >
         <ChevronLeft size={16} className="shrink-0 leading-none" aria-hidden="true" />
         <span>返回</span>
@@ -92,17 +92,21 @@ export function EmptyState({
   icon,
   title,
   subtitle,
+  action,
 }: {
   /** Lucide 图标节点（颜色继承文字色，尺寸由调用方传 size，一般 40） */
   icon: ReactNode;
   title: string;
   subtitle?: string;
+  /** 可选主操作按钮（如「新建 XX」），渲染在副标题下 */
+  action?: ReactNode;
 }) {
   return (
     <div className="flex flex-col items-center px-6 py-16 text-center">
       <span className="mb-3 opacity-40">{icon}</span>
       <p className="text-[14px] font-medium text-ink-dim">{title}</p>
       {subtitle && <p className="mt-1 text-[12px] text-ink-faint">{subtitle}</p>}
+      {action && <div className="mt-4">{action}</div>}
     </div>
   );
 }
@@ -124,7 +128,7 @@ export function Toggle({
         onChange={(e) => onChange(e.target.checked)}
         className="peer sr-only"
       />
-      <div className="h-[28px] w-[46px] rounded-full bg-pressed after:absolute after:left-[2px] after:top-[2px] after:h-[24px] after:w-[24px] after:rounded-full after:bg-island-strong after:shadow-sm after:transition-all after:content-[''] peer-checked:bg-info peer-checked:after:translate-x-[18px]" />
+      <div className="h-[28px] w-[46px] rounded-full bg-pressed after:absolute after:left-[2px] after:top-[2px] after:h-[24px] after:w-[24px] after:rounded-full after:bg-island-strong after:shadow-sm after:transition-all after:content-[''] peer-checked:bg-info peer-checked:after:translate-x-[18px] peer-focus-visible:ring-2 peer-focus-visible:ring-info" />
     </label>
   );
 }
@@ -134,13 +138,17 @@ export function Toggle({
 export function SelectCheckbox({
   checked,
   onClick,
+  disabled = false,
 }: {
   checked: boolean;
   onClick: () => void;
+  /** true 时按钮真正 disabled：不触发 onClick，键盘也不可达（如群聊运行中锁选卡） */
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
+      disabled={disabled}
       onClick={(e) => {
         e.stopPropagation();
         onClick();
@@ -148,7 +156,7 @@ export function SelectCheckbox({
       aria-label={checked ? "取消选择" : "选择"}
       className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] border transition-colors ${
         checked ? "border-info bg-info" : "border-line bg-island-strong"
-      }`}
+      } disabled:cursor-not-allowed`}
     >
       {checked && <Check size={12} className="leading-none text-on-solid" aria-hidden="true" />}
     </button>

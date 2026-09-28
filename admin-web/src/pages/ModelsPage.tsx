@@ -6,12 +6,13 @@ import {
   Card,
   EmptyState,
   MultiSelectToolbar,
-  NavBar,
   SectionLabel,
   SelectCheckbox,
   Toggle,
 } from "../components/ui";
 import { Button, Pill, SelectInput, TextInput } from "../components/controls";
+import { Modal } from "../components/overlays";
+import { useFeedback } from "../components/feedback";
 
 interface Props {
   models: ModelConfig[];
@@ -33,6 +34,7 @@ function slugifyModel(modelId: string): string {
 }
 
 export function ModelsPage({ models, providers, onUpsert, onDelete, onDeleteMany }: Props) {
+  const { confirm } = useFeedback();
   const [editing, setEditing] = useState<{
     initial?: ModelConfig;
     isNew: boolean;
@@ -66,28 +68,41 @@ export function ModelsPage({ models, providers, onUpsert, onDelete, onDeleteMany
     });
   };
 
-  const onDeleteSelected = () => {
+  const onDeleteSelected = async () => {
     if (visibleSelected.length === 0) return;
-    if (
-      !window.confirm(
-        `确定删除选中的 ${visibleSelected.length} 个模型？引用它们的角色卡会一并删除。`,
-      )
-    )
-      return;
+    const ok = await confirm({
+      title: "删除所选模型",
+      message: `确定删除选中的 ${visibleSelected.length} 个模型？引用它们的角色卡会一并删除。`,
+      confirmText: "删除",
+      danger: true,
+    });
+    if (!ok) return;
     onDeleteMany(visibleSelected);
     setSelected(new Set());
   };
 
-  const onClearAll = () => {
+  const onClearAll = async () => {
     if (models.length === 0) return;
-    if (
-      !window.confirm(
-        `确定清空全部 ${models.length} 个模型？引用它们的角色卡会一并删除。`,
-      )
-    )
-      return;
+    const ok = await confirm({
+      title: "清空全部模型",
+      message: `确定清空全部 ${models.length} 个模型？引用它们的角色卡会一并删除。`,
+      confirmText: "清空",
+      danger: true,
+    });
+    if (!ok) return;
     onDeleteMany(modelIds);
     setSelected(new Set());
+  };
+
+  /** 单个删除 */
+  const deleteOne = async (model: ModelConfig) => {
+    const ok = await confirm({
+      title: "删除模型",
+      message: `确定删除模型「${model.displayName || model.modelId}」？引用它的角色卡会被一并删除。`,
+      confirmText: "删除",
+      danger: true,
+    });
+    if (ok) onDelete(model.id);
   };
 
   // 按 provider 分组；组内按 tier 稳定排序（P3-B：tier 降序在前，无 tier 在后保持原序）
@@ -131,42 +146,50 @@ export function ModelsPage({ models, providers, onUpsert, onDelete, onDeleteMany
         </p>
       </div>
 
-      <div className="flex-shrink-0">
-        <MultiSelectToolbar
-          noun="个"
-          totalText={`共 ${models.length} 个`}
-          selectedCount={visibleSelected.length}
-          selectableCount={modelIds.length}
-          allSelected={allSelected}
-          onToggleAll={toggleSelectAll}
-          onDeleteSelected={onDeleteSelected}
-          onClearAll={onClearAll}
-          clearAllDisabled={models.length === 0}
-        />
-      </div>
+      {/* 空列表且无选中时不渲染工具条（R3.2） */}
+      {(models.length > 0 || visibleSelected.length > 0) && (
+        <div className="flex-shrink-0">
+          <MultiSelectToolbar
+            noun="个"
+            totalText={`共 ${models.length} 个`}
+            selectedCount={visibleSelected.length}
+            selectableCount={modelIds.length}
+            allSelected={allSelected}
+            onToggleAll={toggleSelectAll}
+            onDeleteSelected={onDeleteSelected}
+            onClearAll={onClearAll}
+            clearAllDisabled={models.length === 0}
+          />
+        </div>
+      )}
 
 {/* Grouped list */}
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         {models.length === 0 ? (
-          <EmptyState icon={<Brain size={40} />} title="还没有模型" subtitle="点右上角 ＋ 新建你的第一个模型" />
+          <EmptyState
+            icon={<Brain size={40} />}
+            title="还没有模型"
+            subtitle="创建你的第一个模型引擎"
+            action={
+              <Button variant="primary" onClick={() => setEditing({ isNew: true })}>
+                新建模型
+              </Button>
+            }
+          />
         ) : (
-<div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+<div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {grouped.map(([providerId, list]) => (
               <div key={providerId}>
                 <SectionLabel>{providerName(providerId)}</SectionLabel>
                 <Card>
-                  {list.map((m, i) => (
+                  {list.map((m) => (
 <ModelRow
                       key={m.id}
                       model={m}
-                      isLast={i === list.length - 1}
                       checked={selected.has(m.id)}
                       onToggleSelect={() => toggleSelect(m.id)}
                       onEdit={() => setEditing({ initial: m, isNew: false })}
-                      onDelete={() => {
-                        if (window.confirm(`确定删除模型「${m.displayName || m.modelId}」？引用它的角色卡会被一并删除。`))
-                          onDelete(m.id);
-                      }}
+                      onDelete={() => void deleteOne(m)}
                       onToggle={() => onUpsert({ ...m, enabled: !m.enabled })}
                     />
                   ))}
@@ -196,7 +219,6 @@ export function ModelsPage({ models, providers, onUpsert, onDelete, onDeleteMany
 
 function ModelRow({
   model,
-  isLast,
   checked,
   onToggleSelect,
   onEdit,
@@ -204,7 +226,6 @@ function ModelRow({
   onToggle,
 }: {
   model: ModelConfig;
-  isLast: boolean;
   checked: boolean;
   onToggleSelect: () => void;
   onEdit: () => void;
@@ -219,14 +240,13 @@ function ModelRow({
           onEdit();
         }}
         className="flex w-full items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-island-strong"
-        style={{ borderBottom: isLast ? "none" : undefined }}
       >
         <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-hover text-ink-mid">
           <Brain size={20} aria-hidden="true" />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <p className="truncate text-[16px] font-medium text-ink">
+            <p className="truncate text-[14px] font-medium text-ink">
               {model.displayName || model.modelId}
             </p>
             {!model.enabled && <Pill tone="neutral">已禁用</Pill>}
@@ -244,11 +264,12 @@ function ModelRow({
         <ChevronRight size={16} className="shrink-0 text-ink-faint" aria-hidden="true" />
       </button>
       <div className="flex shrink-0 items-center gap-2 px-2">
+        {/* 外层只拦截冒泡防止触发行编辑；状态翻转由 Toggle 自身 onChange 触发，
+            不可再在此处调 onToggle（R2.2：一次点击双触发导致开关不动） */}
         <span
           className="cursor-pointer"
           onClick={(ev) => {
             ev.stopPropagation();
-            onToggle();
           }}
           title={model.enabled ? "禁用" : "启用"}
         >
@@ -304,12 +325,24 @@ function ModelEditOverlay({
     return providerId && modelId ? `${providerId}-${slugifyModel(modelId)}` : "";
   }, [isNew, providerId, modelId, id]);
 
+  const { toast } = useFeedback();
+
   const handleSave = () => {
-    if (!providerId) return window.alert("请选择 provider");
-    if (!modelId.trim()) return window.alert("请填写模型 modelId（例如 gpt-4o）");
-    if (isNew && !previewId) return window.alert("无法生成模型 id");
+    if (!providerId) {
+      toast("error", "请选择 provider");
+      return;
+    }
+    if (!modelId.trim()) {
+      toast("error", "请填写模型 modelId（例如 gpt-4o）");
+      return;
+    }
+    if (isNew && !previewId) {
+      toast("error", "无法生成模型 id");
+      return;
+    }
     if (isNew && existingIds.includes(previewId)) {
-      return window.alert(`模型 id「${previewId}」已存在`);
+      toast("error", `模型 id「${previewId}」已存在`);
+      return;
     }
     // tier：空 = 不设分级（落盘删键）；填写则须为 1-100 的正整数（与后端 zod 一致）
     const tierValue = tier.trim() === "" ? undefined : Number(tier);
@@ -317,7 +350,8 @@ function ModelEditOverlay({
       tierValue !== undefined &&
       (!Number.isInteger(tierValue) || tierValue <= 0 || tierValue > 100)
     ) {
-      return window.alert("分级 tier 需为 1-100 的正整数，或留空不设分级");
+      toast("error", "分级 tier 需为 1-100 的正整数，或留空不设分级");
+      return;
     }
     onSave({
       id: isNew ? previewId : id,
@@ -332,21 +366,19 @@ function ModelEditOverlay({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 sm:items-center sm:p-4">
-<div className="flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl bg-island-strong shadow-2xl sm:rounded-2xl md:max-w-lg">
-        <NavBar
-          title={isNew ? "新建模型" : "编辑模型"}
-          onBack={onClose}
-          right={
-            <Button variant="primary" className="!h-8 !px-3 rounded-md" onClick={handleSave}>
-              保存
-            </Button>
-          }
-        />
-
-        <div className="flex-1 overflow-y-auto">
-          <div className="px-4 pb-6">
-            <SectionLabel>配置</SectionLabel>
+    <Modal
+      open
+      onClose={onClose}
+      title={isNew ? "新建模型" : "编辑模型"}
+      size="md"
+      right={
+        <Button variant="primary" className="!h-8 !px-3 rounded-md" onClick={handleSave}>
+          保存
+        </Button>
+      }
+    >
+      <div className="pb-6">
+        <SectionLabel>配置</SectionLabel>
             <Card>
               {/* provider */}
               <div className="flex items-center border-b border-line px-4 py-3">
@@ -431,9 +463,7 @@ function ModelEditOverlay({
                 <Toggle checked={enabled} onChange={setEnabled} />
               </div>
             </Card>
-          </div>
-        </div>
       </div>
-    </div>
+    </Modal>
   );
 }
