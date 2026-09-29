@@ -5,8 +5,15 @@
 ## 特性
 
 - **`list_cards`** — 列出当前可用角色卡（专家+模型的绑定）的 id、名称、专家名、模型名、Provider，以及是否已配置 API Key。调用其他工具前先用它确认角色卡 id 与就绪状态。**不再有 `list_experts`**，专家和模型已解绑为独立概念。
-- **`consult_experts`** — 向一组角色卡并行咨询同一个问题，返回结构化的多视角咨询报告。单张卡失败不会阻塞其他卡，失败项以 ⚠️ 标注。
-- **`brainstorm`** — 组织多张角色卡围绕主题进行多轮对话（**debate** 辩论 / **relay** 接龙），卡片可见彼此观点并相互质疑、补充、深化，最终可选产出总结。
+- **`consult_experts`** — 向一组角色卡并行咨询同一个问题，返回结构化的多视角咨询报告。单张卡失败不会阻塞其他卡，失败项以 ⚠️ 标注。支持 `select: "auto"` 信号路由选卡。
+- **`brainstorm`** — 组织多张角色卡围绕主题进行多轮对话（**debate** 辩论 / **relay** 接龙），卡片可见彼此观点并相互质疑、补充、深化。进阶能力：
+  - **证据包锚定** — `evidence` 传入代码/数据/文档引文，编号 [E1..En] 注入各轮供专家引用，减少凭空立论；
+  - **互评投票** — `vote: true` 时每位专家匿名互评最认同的观点（仅 debate）；
+  - **裁决者综合** — `judgeCard` 指定专门的角色卡执行最终综合，替代第一张卡；
+  - **多轮运行并集** — `runs: 2~3` 对同一主题完整重跑 N 次（每次轮换匿名别名）并去重合并，结论标注稳定性 `[K/N RUNS]`；
+  - **信号路由选卡** — `select: "auto"` 按主题内容自动匹配擅长领域的角色卡。
+- **`brainstorm_followup`** — 对上一轮 brainstorm 实录继续追问：全体各答一轮，或指定单卡深化。
+- **会话记录** — 每次工具调用落盘 JSONL 到 `records/`，便于事后审计与回放，写入失败不影响调用本身。
 - **多 Provider 支持** — OpenAI、Anthropic，以及任意 OpenAI 兼容 API（DeepSeek、Moonshot、Qwen 等，纯配置接入，无需新代码）。
 - **三概念体系** — **专家**（人设/参数）与**模型**（引擎）解绑为独立一等概念，通过**角色卡**绑定专家+模型。`experts.json` 分三段存储。
 - **双传输模式** — Stdio（本地，默认）与 HTTP/SSE（远程）。
@@ -88,7 +95,11 @@ cp .env.example .env
 
 ## 管理后台 admin-web
 
-`admin-web/` 是基于 React + Vite 的可视化管理界面，用于维护 **专家（Expert）/ 模型（Model）/ 角色卡（Card）** 三段式配置。
+`admin-web/` 是基于 React + Vite 的可视化管理界面，用于维护 **专家（Expert）/ 模型（Model）/ 角色卡（Card）** 三段式配置。亮点：
+
+- 新增 Provider 时内置 **7 个预设**（Ollama / LM Studio / vLLM / OpenRouter / DeepSeek / Moonshot / 智谱），一键填充 `baseUrl` 与 `apiKeyEnv`；
+- 角色卡可勾选**信号组**（配合 MCP 侧 `select: "auto"` 路由选卡）；
+- 会话记录页面中 `runs > 1` 的多轮运行以 **R{n} 徽标**区分运行序号。
 
 ### 开发模式
 
@@ -317,6 +328,15 @@ consult 行：`cards`=实际咨询卡数，`ok`/`failed`=成功 / 失败条数�
 
 首个错误匹配超时（`超时` / `timed out` / `timeout` / `TimedOut`）时追加 `（含超时）`。部分失败不压缩，各失败项原样保留。
 
+## 会话记录（records）
+
+`consult_experts` / `brainstorm` / `brainstorm_followup` 每次调用都会落盘一份 JSONL 会话记录，便于事后审计与回放：
+
+- **位置** — `<experts.json 所在目录>/records/<sessionId>.jsonl`（可用环境变量 `TALKIO_RECORDS_DIR` 覆盖）；
+- **结构** — 第 1 行固定为 `meta` 事件（所选卡片快照），最后一行固定为 `done`，中间为里程碑事件（卡片结果、对话 turn、轮次边界、总结）；`runs > 1` 时事件额外带 `run` 字段区分运行序号；
+- **隐私** — 落盘的是已经过 PII 掩码后的文本（与发给 LLM 的一致），不会新增暴露面；
+- **可靠性** — 记录写入失败只在 stderr 打 `[records]` 警告，绝不影响工具调用本身。
+
 ## 工具用法
 
 ### list_cards — 列出可用角色卡
@@ -344,9 +364,10 @@ consult 行：`cards`=实际咨询卡数，`ok`/`failed`=成功 / 失败条数�
 | 参数       | 类型     | 必填 | 说明                                                  |
 | ---------- | -------- | ---- | ----------------------------------------------------- |
 | `question` | string   | 是   | 要咨询的问题（去空白后不能为空）                      |
-| `context`  | string   | 否   | 背景信息（代码片段、约束等）                          |
+| `context`  | string   | 否   | 主理 AI 的初步分析/背景（claim-0，可能有误）：供专家独立参考与质疑，不作为权威事实 |
 | `cards`    | string[] | 否   | 角色卡 id 列表；缺省使用有 key 的启用角色卡（最多 3 张） |
 | `parallel` | boolean  | 否   | 是否并行调用（默认 true）；false 时按顺序逐个调用     |
+| `select`   | "auto"   | 否   | 传 `auto` 时按问题内容信号路由自动选卡（内置中英关键词信号组，见 [信号路由](#信号路由选卡)） |
 
 示例：
 
@@ -360,28 +381,58 @@ consult 行：`cards`=实际咨询卡数，`ok`/`failed`=成功 / 失败条数�
 
 ### brainstorm — 多轮头脑风暴
 
-多张角色卡围绕主题多轮对话，输出讨论实录与可选总结。
+多张角色卡围绕主题多轮对话，输出讨论实录与收敛总结（默认产出）。
 
-未指定时默认最多 3 张有 key 的启用角色卡、1 轮、不总结。显式传入 `cards` / `rounds` / `summarize` 时按调用方指定（`cards` 上限仍为 6）。
+未指定时默认最多 3 张有 key 的启用角色卡、1 轮、debate 模式、产出总结。显式传入 `cards` / `rounds` / `summarize` 时按调用方指定（`cards` 上限仍为 6）。
 
 | 参数        | 类型            | 必填 | 说明                                                              |
 | ----------- | --------------- | ---- | ----------------------------------------------------------------- |
 | `topic`     | string          | 是   | 讨论主题（去空白后不能为空）                                      |
-| `mode`      | debate 或 relay | 否   | 辩论（默认）或接龙                                                |
+| `context`   | string          | 否   | 发起方初步分析（claim-0，可能有误）：debate 第 1 轮各专家**盲答**不注入，第 2 轮起以「主理 AI 初步判断」块注入供质疑推翻；relay 随每轮注入；报告单列该块，不参与互评投票 |
+| `evidence`  | string[]        | 否   | 证据包（代码片段/数据/文档引文/实测输出），编号 [E1..En] 注入各轮供专家引用；区别于 `context`（发起方主张） |
+| `mode`      | debate 或 relay | 否   | 辩论（默认，并行）或接龙（串行）                                  |
 | `rounds`    | integer         | 否   | 轮数，1-5，默认 1                                                 |
 | `cards`     | string[]        | 否   | 角色卡 id 列表（上限 6 张）；缺省为有 key 的启用角色卡（最多 3 张） |
-| `summarize` | boolean         | 否   | 是否产出总结，默认 false                                          |
+| `summarize` | boolean         | 否   | 是否产出收敛总结，**默认 true**                                   |
+| `vote`      | boolean         | 否   | 互评投票（默认 false）：全部内容轮结束后、综合之前，每位专家匿名互评最认同的观点；仅 debate 生效，relay 下忽略 |
+| `judgeCard` | string          | 否   | 裁决者角色卡 id：由该卡（而非第一张卡）执行最终综合；该卡若同时参与议事会被剔除；无效时回退第一张卡并在报告注明 |
+| `select`    | "auto"          | 否   | 传 `auto` 按主题内容信号路由自动选卡；缺省按 cards/默认卡逻辑      |
+| `runs`      | 1 / 2 / 3       | 否   | 多轮运行：对同一主题完整重跑 N 次对话（每次轮换匿名别名）并去重合并结论，每条结论标注稳定性 [K/N RUNS]；>1 时成本按倍数增长，建议配合 vote + debate 使用（默认 1） |
 
 示例：
 
 ```json
 {
   "topic": "AI Agent 在客服场景的落地路径",
+  "context": "我倾向先用规则引擎兜底，再逐步上 LLM",
+  "evidence": ["客服峰值 QPS 2000，人工坐席 80 人", "现网 LLM P95 延迟 3.2s"],
   "mode": "debate",
   "rounds": 3,
+  "vote": true,
   "summarize": true
 }
 ```
+
+### brainstorm_followup — 实录追问
+
+服务器无状态：把上一次 brainstorm 返回的 `turns` 结构原样传回，即可带着历史上下文继续追问。两种粒度：
+
+- **不传 `card`**：全体选定卡各答一轮（debate 并行 / relay 串行，默认 relay）；
+- **传 `card`**：仅该卡深化（1 次 LLM 调用，1 条新 turn），可反复调用逐卡追问。
+
+`turns` 为空或格式无效时**降级**为无上下文追问并在报告标注（`⚠️ 未使用历史上下文`），不会因此报错。
+
+| 参数       | 类型            | 必填 | 说明                                                     |
+| ---------- | --------------- | ---- | -------------------------------------------------------- |
+| `question` | string          | 是   | 追问问题（去空白后不能为空）                             |
+| `turns`    | DialogueTurn[]  | 是   | 上一次 brainstorm 返回的实录 turns（`round`/`expertId`/`expertName`/`icon`/`content`） |
+| `cards`    | string[]        | 否   | 参与追问的卡 id 列表（缺省=启用且有 key，最多 3 张；传 `card` 时忽略） |
+| `card`     | string          | 否   | 指定单张卡 id 深化（仅该卡作答 1 条 turn）               |
+| `mode`     | debate 或 relay | 否   | 仅全体追问时有效（缺省 relay）                            |
+
+### 信号路由选卡
+
+`consult_experts` 与 `brainstorm` 均支持 `select: "auto"`：对问题/主题文本做中英双语关键词子串匹配，命中信号组后只选声明了对应信号的角色卡。内置信号组：`sql-data`（数据/SQL）、`security`（安全）、`infra`（基础设施）、`ml`（机器学习）、`api`（接口设计）、`frontend`（前端）、`cost`（成本）、`pipeline`（CI/流水线）、`writing`（文案写作）、`general`（通用）。角色卡的信号组在 `experts.json` 的 `card.signals` 中声明，admin-web 编辑卡时可勾选。
 
 ## SSE 模式
 
@@ -419,7 +470,7 @@ docker run --env-file .env -p 3100:3100 dockercom110/talkio-mcp
 需固定版本部署（便于回滚）时用版本号标签：
 
 ```bash
-docker pull dockercom110/talkio-mcp:0.1.0
+docker pull dockercom110/talkio-mcp:0.2.0
 ```
 
 ### 构建镜像
