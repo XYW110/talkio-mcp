@@ -7,6 +7,7 @@ import {
   FolderClock,
   House,
   IdCard,
+  KeyRound,
   LoaderCircle,
   MessageCircle,
   Plug,
@@ -15,7 +16,7 @@ import {
   Settings,
   type LucideIcon,
 } from "lucide-react";
-import { api } from "./api";
+import { api, authCheck, clearToken, getStoredToken, setUnauthorizedHandler } from "./api";
 import type { CardConfig, ConfigFile, Expert, ModelConfig, ProviderConfig } from "./types";
 import { ExpertsPage } from "./pages/ExpertsPage";
 import { ExpertEditPage } from "./pages/ExpertEditPage";
@@ -25,6 +26,8 @@ import { CardsPage } from "./pages/CardsPage";
 import { RecordsPage } from "./pages/RecordsPage";
 import { UsagePage } from "./pages/UsagePage";
 import { ChatPage } from "./pages/ChatPage";
+import { TokensPage } from "./pages/TokensPage";
+import { LoginView } from "./pages/LoginView";
 import { ChevronRow, SectionLabel, Card } from "./components/ui";
 import { Button } from "./components/controls";
 import { DrawerSheet } from "./components/overlays";
@@ -46,15 +49,64 @@ type Page =
   | { name: "cards" }
   | { name: "records" }
   | { name: "usage" }
+  | { name: "tokens" }
   | { name: "chat" };
 
 export default function App() {
   // 反馈层挂在根部：全站 toast/confirm 经 Context 下发（见 components/feedback.tsx）
   return (
     <FeedbackProvider>
-      <AppShell />
+      <AuthGate />
     </FeedbackProvider>
   );
+}
+
+/** 品牌化加载首屏：旋转环 + 图标 + 文案（登录校验 / 配置加载共用）。 */
+function BrandedLoading({ text }: { text: string }) {
+  return (
+    <div className="flex h-screen flex-col items-center justify-center gap-3 bg-canvas">
+      <span className="relative flex h-14 w-14 items-center justify-center">
+        <span
+          className="absolute inset-0 animate-spin rounded-full border-2 border-line border-t-info"
+          aria-hidden="true"
+        />
+        <MessageCircle size={22} className="text-info-text" aria-hidden="true" />
+      </span>
+      <p className="text-[13px] text-ink-dim">{text}</p>
+    </div>
+  );
+}
+
+/**
+ * 鉴权壳：启动时校验已存 token（GET /api/auth/check）；未登录渲染 LoginView；
+ * 会话中任何 401（api.ts 统一拦截）清 token 并切回登录页。
+ */
+function AuthGate() {
+  const [authState, setAuthState] = useState<"checking" | "login" | "ready">("checking");
+
+  useEffect(() => {
+    setUnauthorizedHandler(() => setAuthState("login"));
+    const token = getStoredToken();
+    if (!token) {
+      setAuthState("login");
+      return;
+    }
+    authCheck(token)
+      .then((r) => setAuthState(r.ok ? "ready" : "login"))
+      .catch(() => {
+        clearToken();
+        setAuthState("login");
+      });
+    return () => setUnauthorizedHandler(null);
+  }, []);
+
+  if (authState === "checking") {
+    return <BrandedLoading text="正在校验登录状态…" />;
+  }
+  if (authState === "login") {
+    return <LoginView onSuccess={() => setAuthState("ready")} />;
+  }
+  return <AppShell />;
 }
 
 function AppShell() {
@@ -327,6 +379,14 @@ const providers = Object.entries(config.providers) as [string, ProviderConfig][]
       subtitle: "Token 消耗聚合与成本估算",
     },
     {
+      page: { name: "tokens" },
+      icon: KeyRound,
+      title: "访问令牌",
+      count: 0,
+      unit: "",
+      subtitle: "管理 MCP 客户端接入凭证",
+    },
+    {
       page: { name: "chat" },
       icon: Rocket,
       title: "发起群聊",
@@ -337,19 +397,7 @@ const providers = Object.entries(config.providers) as [string, ProviderConfig][]
   ];
 
   if (loading) {
-    // 品牌化首屏加载：旋转环 + 图标 + 文案（R6.6）
-    return (
-      <div className="flex h-screen flex-col items-center justify-center gap-3 bg-canvas">
-        <span className="relative flex h-14 w-14 items-center justify-center">
-          <span
-            className="absolute inset-0 animate-spin rounded-full border-2 border-line border-t-info"
-            aria-hidden="true"
-          />
-          <MessageCircle size={22} className="text-info-text" aria-hidden="true" />
-        </span>
-        <p className="text-[13px] text-ink-dim">正在加载配置…</p>
-      </div>
-    );
+    return <BrandedLoading text="正在加载配置…" />;
   }
 
   // ── 编辑浮层（全屏页）──
@@ -414,6 +462,8 @@ const editOverlay = editing && (
     content = <RecordsPage onBack={() => setPage({ name: "settings" })} />;
   } else if (page.name === "usage") {
     content = <UsagePage onBack={() => setPage({ name: "settings" })} />;
+  } else if (page.name === "tokens") {
+    content = <TokensPage onBack={() => setPage({ name: "settings" })} />;
   } else if (page.name === "chat") {
     content = <ChatPage cards={config.cards} />;
   } else {
@@ -530,23 +580,29 @@ const editOverlay = editing && (
       />
 
       <div className="flex min-w-0 flex-1 flex-col gap-2.5">
-        {/* 手机端顶栏岛（返回）—— records / usage 自管理导航（NavBar 在页内），不重复渲染 */}
-        {page.name !== "settings" && page.name !== "records" && page.name !== "usage" && (
-          <div className="island island-strong flex flex-shrink-0 items-center px-3 py-2.5 md:hidden">
-            <button
-              onClick={() => setPage({ name: "settings" })}
-              className="flex min-h-[40px] items-center gap-1 rounded-md px-1.5 py-2 text-[13px] font-medium text-info-text transition-colors hover:bg-hover active:bg-pressed"
-            >
-              <ChevronLeft size={16} className="shrink-0 leading-none" aria-hidden="true" />
-              <span>返回总览</span>
-            </button>
-          </div>
-        )}
+        {/* 手机端顶栏岛（返回）—— records / usage / tokens 自管理导航（NavBar 在页内），不重复渲染 */}
+        {page.name !== "settings" &&
+          page.name !== "records" &&
+          page.name !== "usage" &&
+          page.name !== "tokens" && (
+            <div className="island island-strong flex flex-shrink-0 items-center px-3 py-2.5 md:hidden">
+              <button
+                onClick={() => setPage({ name: "settings" })}
+                className="flex min-h-[40px] items-center gap-1 rounded-md px-1.5 py-2 text-[13px] font-medium text-info-text transition-colors hover:bg-hover active:bg-pressed"
+              >
+                <ChevronLeft size={16} className="shrink-0 leading-none" aria-hidden="true" />
+                <span>返回总览</span>
+              </button>
+            </div>
+          )}
 
-        {/* 内容岛：桌面端始终是岛；手机端 settings / records / usage 页自身即岛，直接铺 */}
+        {/* 内容岛：桌面端始终是岛；手机端 settings / records / usage / tokens 页自身即岛，直接铺 */}
         <div
           className={
-            page.name === "settings" || page.name === "records" || page.name === "usage"
+            page.name === "settings" ||
+            page.name === "records" ||
+            page.name === "usage" ||
+            page.name === "tokens"
               ? "min-h-0 flex-1 overflow-hidden"
               : "island island-strong min-h-0 flex-1 overflow-hidden"
           }

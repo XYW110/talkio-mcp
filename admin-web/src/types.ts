@@ -138,6 +138,32 @@ export interface EnvVarStatus {
   configured: boolean;
 }
 
+// ── 鉴权与 MCP 访问令牌（GET /api/auth/check、/api/tokens，mirrors src/auth/tokens.ts）──
+
+/** 登录自检结果（authCheck 前端本地推导，notConfigured 对应 401 reason=admin_token_not_configured） */
+export interface AuthCheckResult {
+  ok: boolean;
+  /** true = 服务器未配置 TALKIO_ADMIN_TOKEN（fail-closed） */
+  notConfigured?: boolean;
+}
+
+/** GET /api/tokens 列表项（不含哈希与明文；fingerprint = 哈希后 4 位） */
+export interface McpTokenInfo {
+  id: string;
+  name: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  fingerprint: string;
+}
+
+/** POST /api/tokens 返回体（plaintext 仅此一次，之后任何接口不可再取） */
+export interface CreatedMcpToken {
+  id: string;
+  name: string;
+  createdAt: string;
+  plaintext: string;
+}
+
 // ── 会话记录（mirrors src/records/store.ts RecordEvent union）──
 
 export interface UsageRecord {
