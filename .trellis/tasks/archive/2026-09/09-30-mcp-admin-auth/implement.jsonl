@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端分层入口：目录约定与新模块落位(src/auth/)"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "401 JSON 形状需对齐统一错误契约"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "[auth] 日志行格式与 stderr 约定"}
+{"file": ".trellis/spec/backend/records-persistence.md", "reason": "原子写/IO失败不影响主请求的红线，token store 照此模式"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "vitest 单测/集成测试既有模式"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "admin-web 分层入口"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "LoginView/TokensView 必须遵守行内操作簇、Modal、disabled 契约"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "admin token 的 localStorage 持久化与全局状态接法"}
+{"file": ".trellis/spec/deployment/docker-publish.md", "reason": "push→CI→镜像→panel-ops 部署链路（步骤13依据）"}

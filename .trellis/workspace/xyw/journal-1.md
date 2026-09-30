@@ -505,3 +505,40 @@ admin-web UX 优化落库后发布 v0.2.0 并部署上海 1Panel 编排。本地
 ### Status
 
 [OK] **Completed**
+
+## Session 17: 09-30-mcp-admin-auth 双 token 鉴权上线
+
+**Date**: 2026-09-30
+**Task**: 09-30-mcp-admin-auth（SSE/API 凭证控制，规划→实现→检查→部署全流程）
+**Branch**: `master`
+
+### Summary
+
+admin token（env TALKIO_ADMIN_TOKEN 静态）+ MCP token（后台动态生成/吊销、明文一次性、SHA-256 落盘 mcp-tokens.json）双池鉴权，fail-closed。实现代理 3 提交（2513751 backend / 9f31beb admin-web / f2e1dbf docs），检查代理 AC1-6/8 全 PASS（289 tests + typecheck + build + build:web + stdio/SSE 双 smoke）。部署：push → CI 绿 → 服务器 compose 注入 token + mcp-tokens.json 挂载（预建 666）→ image pull → 重建。公网 AC7 实测全绿：无 token /api/config 与 /sse 401、静态壳 200、admin auth-check/config 200、生成 token 后 `scripts/smoke-sse.mjs` 公网真实 MCP 调用（SSE 握手 + list_cards）PASS；孤儿 token 吊销即失效现场验证。
+
+### Gotchas
+
+1. 1Panel `compose/operate` 必须带 `path` 字段（仅 name+operation 报 "no configuration file provided"）——panel-ops skill 文档需补记。
+2. 1Panel `files/save` 只能写已存在文件（新建用 `POST /files`）；`compose/update` 返回 200 却可能不落盘——写完必须 readback 验证。
+3. `containers/inspect` body 是 `{id, type:"container", detail:""}`（不是 container 字段）；`image/pull` 的 imageName 是数组。
+4. `GET /api/tokens` 直接返回数组（无 tokens 包裹键）。
+5. compose 改挂载/token 后必须 image pull + compose up（带 path）才重建；restart 不应用新配置。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| 2513751 | feat(auth): 双 token 鉴权——admin 静态 env + MCP 动态令牌池、fail-closed 门禁 |
+| 9f31beb | feat(admin-web): 登录页 + 访问令牌管理页 + 401 统一登出 |
+| f2e1dbf | docs: 鉴权与令牌管理章节、客户端配置示例 |
+| 见下 | docs(trellis): auth-tokens spec 沉淀 + journal |
+
+### Next Steps
+
+- 稳定后可 `docker image prune` 清 dangling 旧镜像
+- admin token 轮换 = 改 compose env + compose up（带 path）
+- minor 遗留：LoginView/TokensPage 两处 text-[11px] 超字号档位约定（下次顺手收敛）
+
+### Status
+
+[OK] **Completed**
