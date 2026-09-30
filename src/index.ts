@@ -15,6 +15,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { createServer as createHttpServer } from "node:http";
 import { createAdminApi, resolveStaticDir } from "./admin/api.js";
+import { createAuthGate } from "./auth/middleware.js";
+import { McpTokenStore } from "./auth/tokens.js";
 import path from "node:path";
 
 /** Parse minimal CLI args: --transport, --port, --host, --config, --log-level. */
@@ -119,22 +121,47 @@ async function startSse(
   config: ReturnType<typeof loadConfig> extends Promise<infer T> ? T : never,
   logger: ReturnType<typeof createLogger>
 ): Promise<void> {
-  // Security: warn when binding to a non-loopback address (no auth configured).
-  const isLoopback =
-    host === "127.0.0.1" || host === "localhost" || host === "::1";
-  if (!isLoopback) {
-    log(
-      `⚠️ 安全警告: SSE 绑定到非回环地址 ${host}。当前未配置任何认证,` +
-        `任何能访问该地址的客户端都可调用本服务。请确保处于受控网络或增加鉴权层。`
+  // experts.json 绝对路径（鉴权令牌池与 admin API 都相对它落位）。
+  const adminPath = path.resolve(configPath);
+
+  // ── 鉴权装配（fail-closed）──
+  // admin 静态令牌：env TALKIO_ADMIN_TOKEN；未设置时受保护面（/api/*、/sse、/messages）
+  // 一律 401，静态壳不受影响。stdio 模式不经过 HTTP 层，完全不受影响。
+  const adminToken = process.env.TALKIO_ADMIN_TOKEN;
+  if (!adminToken) {
+    logger.error(
+      "[auth] 未设置 TALKIO_ADMIN_TOKEN —— fail-closed 已生效：/api/*、/sse、/messages 对一切请求返回 401。" +
+        `请在部署环境（.env 或容器 environment）设置 TALKIO_ADMIN_TOKEN=<强随机字符串> 后重启；` +
+        `MCP 客户端另需在管理后台「访问令牌」页生成 MCP 令牌。静态页面不受影响，可打开首页确认。`
+    );
+  } else {
+    logger.info(
+      "[auth] 鉴权已启用：/api/* 校验 admin token，/sse 与 /messages 校验 MCP 访问令牌"
     );
   }
+
+  const isLoopback =
+    host === "127.0.0.1" || host === "localhost" || host === "::1";
+  if (!isLoopback && !adminToken) {
+    log(
+      `⚠️ 安全警告: SSE 绑定到非回环地址 ${host} 且未设置 TALKIO_ADMIN_TOKEN（fail-closed），` +
+        `外部访问将全部返回 401。请配置 TALKIO_ADMIN_TOKEN 后重启。`
+    );
+  }
+
+  // MCP 动态令牌池：默认 experts.json 同目录 mcp-tokens.json，TALKIO_MCP_TOKENS_FILE 可覆盖。
+  const mcpTokensPath = process.env.TALKIO_MCP_TOKENS_FILE
+    ? path.resolve(process.env.TALKIO_MCP_TOKENS_FILE)
+    : path.join(path.dirname(adminPath), "mcp-tokens.json");
+  const mcpTokens = new McpTokenStore(mcpTokensPath, logger);
+  await mcpTokens.load();
+  const authGate = createAuthGate({ adminToken, mcpTokens, logger });
 
 // Map of sessionId -> SSEServerTransport so POST /messages can route back.
   const transports = new Map<string, SSEServerTransport>();
 
   // Admin API: exposes /api/* for the management UI + serves the built frontend.
   // Only wired in SSE mode; stdio has no HTTP surface.
-  const adminPath = path.resolve(configPath);
   const staticDir = await resolveStaticDir(
     path.resolve(path.dirname(adminPath), "admin-web", "dist"),
   );
@@ -145,6 +172,7 @@ const handleAdmin = createAdminApi({
     recordsDir,
     config,
     logger,
+    mcpTokens,
   });
   if (staticDir) {
     log(`管理界面已启用: 访问 http://${host}:${port}/ 打开专家管理页面`);
@@ -157,6 +185,8 @@ const handleAdmin = createAdminApi({
 
   const httpServer = createHttpServer(async (req, res) => {
     const url = new URL(req.url ?? "", `http://${host}:${port}`);
+    // 鉴权门（fail-closed）：静态资源豁免；/sse|/messages 走 MCP 令牌池；/api/* 走 admin token。
+    if (await authGate(req, res, url)) return;
     // GET /sse — establish the SSE stream.
     if (req.method === "GET" && url.pathname === "/sse") {
       try {

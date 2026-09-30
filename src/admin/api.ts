@@ -15,6 +15,7 @@ import type { AppConfig } from "../types.js";
 import { handleBrainstorm } from "../tools/brainstorm.js";
 import { startSession, type RecordSession } from "../records/store.js";
 import type { Logger } from "../utils/log.js";
+import type { McpTokenStore } from "../auth/tokens.js";
 import {
   listSessions,
   readSession,
@@ -40,6 +41,11 @@ interface AdminApiOptions {
   config: AppConfig;
   /** 日志器（复用主循环 logger，避免 admin 层自建） */
   logger: Logger;
+  /**
+   * MCP 动态令牌池（与鉴权门共享同一实例，吊销即时生效）。
+   * 未注入时 tokens 路由返回 404（仅测试/纯 API 部署场景）。
+   */
+  mcpTokens?: McpTokenStore;
 }
 
 /** 群聊 SSE 频道端点前缀。 */
@@ -148,7 +154,7 @@ async function probeModels(baseUrl: string, apiKey: string): Promise<unknown[]> 
  * 返回 true 表示已处理（response 已结束），false 表示未匹配到 /api 路由。
  */
 export function createAdminApi(options: AdminApiOptions) {
-  const { configPath, staticDir, recordsDir, config: baseConfig, logger } = options;
+  const { configPath, staticDir, recordsDir, config: baseConfig, logger, mcpTokens } = options;
 
   // 群聊 SSE：按 sessionId 分频道的广播器（支持多点开 concurrent 群聊）。
   const chatBus = new EventEmitter();
@@ -472,6 +478,63 @@ export function createAdminApi(options: AdminApiOptions) {
         sendJson(res, 200, await aggregateUsage(recordsDir, days));
       } catch (err) {
         sendError(res, 500, err instanceof Error ? err.message : String(err));
+      }
+      return true;
+    }
+
+    // ── /api/auth/check（登录页自检；能到达这里说明 admin 鉴权门已放行）──
+    if (url.pathname === "/api/auth/check" && req.method === "GET") {
+      sendJson(res, 200, { role: "admin" });
+      return true;
+    }
+
+    // ── /api/tokens（MCP 动态令牌管理；明文仅创建响应出现一次）──
+    if (url.pathname === "/api/tokens" && req.method === "GET") {
+      if (!mcpTokens) {
+        sendError(res, 404, "令牌存储未启用");
+        return true;
+      }
+      sendJson(res, 200, mcpTokens.list());
+      return true;
+    }
+
+    if (url.pathname === "/api/tokens" && req.method === "POST") {
+      if (!mcpTokens) {
+        sendError(res, 404, "令牌存储未启用");
+        return true;
+      }
+      try {
+        const bodyText = await readBody(req);
+        const body = JSON.parse(bodyText) as { name?: unknown };
+        const name = String(body.name ?? "").trim();
+        if (!name) throw new Error("name 不能为空");
+        if (name.length > 50) throw new Error("name 过长（最多 50 字符）");
+        sendJson(res, 200, await mcpTokens.generate(name));
+      } catch (err) {
+        sendError(res, 400, err instanceof Error ? err.message : String(err));
+      }
+      return true;
+    }
+
+    if (
+      url.pathname.startsWith("/api/tokens/") &&
+      url.pathname.length > "/api/tokens/".length &&
+      req.method === "DELETE"
+    ) {
+      if (!mcpTokens) {
+        sendError(res, 404, "令牌存储未启用");
+        return true;
+      }
+      try {
+        const id = decodeURIComponent(url.pathname.slice("/api/tokens/".length));
+        const revoked = await mcpTokens.revoke(id);
+        if (!revoked) {
+          sendError(res, 404, "令牌不存在");
+          return true;
+        }
+        sendJson(res, 200, { ok: true });
+      } catch (err) {
+        sendError(res, 400, err instanceof Error ? err.message : String(err));
       }
       return true;
     }
