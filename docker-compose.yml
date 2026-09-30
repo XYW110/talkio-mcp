@@ -8,6 +8,11 @@ services:
     env_file:
       - path: .env
         required: false
+    # 鉴权（公网部署务必设置）：管理后台登录令牌。
+    # 未设置时 fail-closed：/api/*、/sse、/messages 全部返回 401。
+    # 注意：1Panel 的 compose API 会清掉 .env 文件——请直接在此内联注入：
+    # environment:
+    #   TALKIO_ADMIN_TOKEN: change-me-to-a-long-random-string
     # 配置挂载为可写：管理界面保存配置会回写该文件（重启容器后生效）。
     # 注意：容器以非 root 的 talkio 用户运行，若管理界面保存失败，
     # 请确保宿主机上该文件对容器用户可写（如 chmod 666 experts.json）。
@@ -15,6 +20,8 @@ services:
     # 注意：全新 clone 且宿主机尚无 experts.json 时，请先注释掉下面这行挂载，
     # 否则 Docker 会把缺失的挂载点创建成目录导致读配置失败；
     # 此时容器将使用镜像内置的脱敏默认配置（需 OPENAI_API_KEY 或 TALKIO_MOCK_PROVIDER=1）。
+    # MCP 访问令牌（管理后台生成）落盘在 experts.json 同目录 mcp-tokens.json，
+    # 与 experts.json 同一挂载层级，重建容器不丢。
     volumes:
       - ./experts.json:/app/experts.json
     restart: unless-stopped

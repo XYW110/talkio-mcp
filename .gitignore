@@ -3,6 +3,8 @@ dist/
 .env
 experts.local.json
 experts.json
+mcp-tokens.json
+mcp-tokens.json.tmp
 *.log
 .codebuddy/
 /records/

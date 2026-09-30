@@ -18,6 +18,7 @@
 - **三概念体系** — **专家**（人设/参数）与**模型**（引擎）解绑为独立一等概念，通过**角色卡**绑定专家+模型。`experts.json` 分三段存储。
 - **双传输模式** — Stdio（本地，默认）与 HTTP/SSE（远程）。
 - **密钥安全** — API Key 仅通过环境变量注入，绝不写入配置文件。
+- **HTTP 面鉴权** — 双 token 体系（管理后台静态令牌 + MCP 动态访问令牌），未配置时 fail-closed 全部 401，详见「鉴权与令牌」。
 - **容器化部署** — 多阶段 Dockerfile + docker-compose 一键启动。
 
 ## 快速开始
@@ -99,7 +100,8 @@ cp .env.example .env
 
 - 新增 Provider 时内置 **7 个预设**（Ollama / LM Studio / vLLM / OpenRouter / DeepSeek / Moonshot / 智谱），一键填充 `baseUrl` 与 `apiKeyEnv`；
 - 角色卡可勾选**信号组**（配合 MCP 侧 `select: "auto"` 路由选卡）；
-- 会话记录页面中 `runs > 1` 的多轮运行以 **R{n} 徽标**区分运行序号。
+- 会话记录页面中 `runs > 1` 的多轮运行以 **R{n} 徽标**区分运行序号；
+- **令牌管理**：内置登录页（`TALKIO_ADMIN_TOKEN`）与「访问令牌」页（MCP 动态令牌生成/吊销），见「鉴权与令牌」。
 
 ### 开发模式
 
@@ -188,9 +190,93 @@ Key 只通过环境变量提供，`experts.json` 中 `apiKeyEnv` 指定变量名
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 DEEPSEEK_API_KEY=sk-...
+
+# 管理后台登录令牌（SSE 模式必需；未设置时 /api/*、/sse、/messages 全部 401，fail-closed）
+TALKIO_ADMIN_TOKEN=change-me-to-a-long-random-string
 ```
 
 缺 key 的 Provider 在调用时惰性报错（`Provider X: missing env var Y`），不影响其他专家返回。
+
+## 鉴权与令牌
+
+HTTP 面（SSE 模式）采用**双 token 体系**，两个凭证池完全隔离、互不通用；stdio 模式为进程内传输，不经 HTTP 层，完全不受影响。
+
+| 面 | 端点 | 凭证 | 来源 |
+| --- | --- | --- | --- |
+| 管理后台 | `/api/*`（含 `/api/auth/check`、`/api/tokens`） | admin token | env `TALKIO_ADMIN_TOKEN`（静态，改 env + 重启即轮换） |
+| MCP 接入 | `/sse`、`/messages` | MCP 访问令牌 | 管理后台「访问令牌」页动态生成/吊销（可多个） |
+| 静态壳子 | 其余路径（SPA / 登录页） | 无需凭证 | — |
+
+**机制**：凭证解析 `Authorization: Bearer` 优先，`?token=` 查询参数兜底（浏览器 EventSource 无 header 能力；query 中的凭证可能进入代理/访问日志，**仅作降级手段**）。比对使用常量时间比较（timingSafeEqual），日志只记 `[auth] 401 path=… reason=…`，绝不输出 token 内容。
+
+**fail-closed**：`TALKIO_ADMIN_TOKEN` 未设置时，`/api/*`、`/sse`、`/messages` 对一切请求返回 401，启动日志输出 ERROR 与配置指引；静态登录页仍可访问。
+
+### 管理后台登录
+
+浏览器打开 `http://<host>:3100/` → 输入 `TALKIO_ADMIN_TOKEN` → 登录。令牌持久化在浏览器 localStorage，任何接口返回 401 会自动登出回登录页。
+
+### MCP 访问令牌（动态生成）
+
+登录后台 →「访问令牌」→ 生成：
+
+- 明文格式 `mtok_<随机串>`，**仅在生成响应展示一次**（关闭弹窗后不可再查看），请立即复制保存；
+- 服务端只存 SHA-256 哈希，落盘到 experts.json 同目录 `mcp-tokens.json`（可用 `TALKIO_MCP_TOKENS_FILE` 覆盖路径；该文件已 gitignore，重启不丢）；
+- 「最近使用」时间在令牌被使用时更新（60s 节流落盘）；吊销**即时生效**（使用该令牌的客户端立即 401）。
+
+### MCP 客户端带令牌接入
+
+远程 SSE 模式下，MCP 客户端必须携带 MCP 访问令牌：
+
+**Cursor**（支持自定义 headers）：
+
+```json
+{
+  "mcpServers": {
+    "talkio-mcp": {
+      "url": "http://<host>:3100/sse",
+      "headers": {
+        "Authorization": "Bearer mtok_xxxxxxxxxxxxxxxx"
+      }
+    }
+  }
+}
+```
+
+**mcp-remote**（`--header` 透传）：
+
+```bash
+npx mcp-remote http://<host>:3100/sse --header "Authorization: Bearer mtok_xxxxxxxxxxxxxxxx"
+```
+
+**Snow CLI**（远程接入；所用版本支持 headers 字段则优先 header，否则用 URL query 兜底）：
+
+```json
+{
+  "mcpServers": {
+    "talkio-mcp": {
+      "url": "http://<host>:3100/sse?token=mtok_xxxxxxxxxxxxxxxx"
+    }
+  }
+}
+```
+
+**URL query 兜底**（仅当客户端完全不支持 header 时使用）：
+
+```
+http://<host>:3100/sse?token=mtok_xxxxxxxxxxxxxxxx
+```
+
+> ⚠️ query 中的凭证可能进入反向代理 / 访问日志，优先使用 header 方式，query 仅作降级。
+
+### 本地开发
+
+```bash
+# .env 设一个开发 token 即可
+echo "TALKIO_ADMIN_TOKEN=dev" >> .env
+node dist/index.js --transport sse
+# 冒烟自检（自动起 mock 服务验证 401/放行/带令牌 list_cards）
+TALKIO_ADMIN_TOKEN=dev node scripts/smoke-sse.mjs
+```
 
 ## MCP 客户端配置
 
@@ -442,13 +528,13 @@ SSE 传输用于远程 / 多客户端接入，默认绑定 `127.0.0.1:3100`：
 node dist/index.js --transport sse --port 3100
 ```
 
-需要对外暴露时显式指定 `--host`（注意：SSE 模式无认证，请仅在可信网络中绑定非回环地址）：
+需要对外暴露时显式指定 `--host`（HTTP 面已启用鉴权：`/api/*` 校验 `TALKIO_ADMIN_TOKEN`，`/sse`、`/messages` 校验 MCP 访问令牌，未配置 admin token 时 fail-closed 全部 401，详见「鉴权与令牌」）：
 
 ```bash
 node dist/index.js --transport sse --port 3100 --host 0.0.0.0
 ```
 
-客户端连接地址：`http://127.0.0.1:3100/sse`
+客户端连接地址：`http://127.0.0.1:3100/sse`（远程需带令牌，见「MCP 客户端带令牌接入」）
 
 ## Docker 部署
 
@@ -481,16 +567,16 @@ docker build -t talkio-mcp .
 
 ### 运行容器
 
-注入 API 密钥（单环境变量）：
+注入 API 密钥与管理后台令牌（`TALKIO_ADMIN_TOKEN` 未设置时 HTTP 面 fail-closed，全部 401）：
 
 ```bash
-docker run -e OPENAI_API_KEY=sk-... -p 3100:3100 talkio-mcp
+docker run -e OPENAI_API_KEY=sk-... -e TALKIO_ADMIN_TOKEN=<强随机字符串> -p 3100:3100 talkio-mcp
 ```
 
 使用 env 文件（推荐，从 `.env.example` 复制后填真实密钥）：
 
 ```bash
-cp .env.example .env   # 填入真实密钥
+cp .env.example .env   # 填入真实密钥与 TALKIO_ADMIN_TOKEN
 docker run --env-file .env -p 3100:3100 talkio-mcp
 ```
 
@@ -519,7 +605,7 @@ docker run -i --env-file .env talkio-mcp --transport stdio
 ### docker compose
 
 ```bash
-cp .env.example .env   # 可选；不配密钥也可用 mock 模式
+cp .env.example .env   # 可选；不配密钥也可用 mock 模式，但务必设置 TALKIO_ADMIN_TOKEN
 docker compose up -d
 ```
 
@@ -528,6 +614,8 @@ docker compose up -d
 ```bash
 docker compose restart
 ```
+
+> ⚠️ 公网部署务必注入 `TALKIO_ADMIN_TOKEN`（写在 `.env` 或 compose 的 `environment:` 段；1Panel 的 compose API 会清掉 `.env` 文件时直接内联 `environment:`）。部署/升级与令牌注入应在**同一次变更**内完成，避免出现无凭证窗口。MCP 令牌落盘在 experts.json 同目录 `mcp-tokens.json`，与 experts.json 同一挂载层级，重建容器不丢。
 
 > 管理界面已打进镜像，部署时无需再构建或单独托管前端。
 
