@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadConfig, resolveProviderCredentials } from "../src/config.js";
+import type { KeysStore } from "../src/keys/store.js";
+import { fillKeys, installKeysStore } from "./helpers/keys.js";
 
 /**
  * config.ts 契约（见 design.md §3/§7 与任务书）：
@@ -12,7 +14,8 @@ import { loadConfig, resolveProviderCredentials } from "../src/config.js";
  *     写前复制 .bak 备份
  *   - 引用完整性：cards→experts/models、models→providers 缺失时 exit(1)
  *   - cards/models/experts 为空 → exit(1)
- *   - providers[name].apiKeyEnv 指定环境变量名，key 从 process.env 惰性解析
+ *   - 渠道密钥从进程级 keys store（keys.json）惰性解析；
+ *     experts.json 遗留 apiKeyEnv 字段宽容忽略（0.2.0 回滚兼容）
  */
 
 /** 构造一份合法的三段式 experts.json fixture（design.md §3 模板） */
@@ -137,23 +140,12 @@ function makeLegacyExpertsJson(): string {
 
 describe("loadConfig", () => {
   let workDir: string;
-  /** 本测试 touched 的环境变量，afterEach 统一还原 */
-  const touchedEnvKeys = new Set<string>();
-  const originalEnv = { ...process.env };
+  let keys: KeysStore;
 
   // loadConfig 校验失败时 process.exit(1)；测试中 mock 掉以避免杀死 vitest 进程
   const exitMock = vi.spyOn(process, "exit").mockImplementation((code) => {
     throw new Error(`process.exit(${code})`);
   });
-
-  function setEnv(key: string, value: string | undefined): void {
-    touchedEnvKeys.add(key);
-    if (value === undefined) {
-      delete process.env[key];
-    } else {
-      process.env[key] = value;
-    }
-  }
 
   function writeFixture(content: string, fileName = "experts.json"): string {
     const filePath = join(workDir, fileName);
@@ -161,24 +153,15 @@ describe("loadConfig", () => {
     return filePath;
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
     workDir = mkdtempSync(join(tmpdir(), "talkio-config-test-"));
-    // 保证测试所需的 key 环境变量存在
-    setEnv("OPENAI_API_KEY", "sk-test-openai");
-    setEnv("ANTHROPIC_API_KEY", "sk-**************");
+    // 注入空密钥池并预置两个渠道 key（替代旧的 env fixture）
+    keys = installKeysStore();
+    await fillKeys(keys, { openai: "sk-test-openai", anthropic: "sk-**************" });
   });
 
   afterEach(() => {
     rmSync(workDir, { recursive: true, force: true });
-    // 还原 env：删除本测试新增、恢复被覆盖的值
-    for (const key of touchedEnvKeys) {
-      if (key in originalEnv) {
-        process.env[key] = originalEnv[key];
-      } else {
-        delete process.env[key];
-      }
-    }
-    touchedEnvKeys.clear();
   });
 
   describe("合法三段配置", () => {
@@ -468,37 +451,50 @@ expect(config.cards[0]!.name).toBe("架构师 · gpt-4o");
     });
   });
 
-  describe("apiKeyEnv 环境变量解析", () => {
-    it("provider 的 apiKey 从 apiKeyEnv 指定的环境变量惰性解析", async () => {
-      setEnv("OPENAI_API_KEY", "sk-******************");
+  describe("渠道密钥解析（keys store）", () => {
+    it("provider 的 apiKey 从 keys store 惰性解析（不读环境变量）", async () => {
+      // fixture 的 apiKeyEnv 指向 "OPENAI_API_KEY"，但该环境变量不存在——
+      // 解析成功即证明新代码不读 env，密钥只来自 keys store
       const config = await loadConfig(writeFixture(makeValidExpertsJson()));
 
       // 契约：apiKey 不在 loadConfig 返回的 AppConfig 上暴露；
-      // 通过 resolveProviderCredentials(config, providerName) 惰性解析 apiKeyEnv → process.env
+      // 通过 resolveProviderCredentials(config, providerName) 惰性解析
       const creds = resolveProviderCredentials(config, "openai");
-      expect(creds.apiKey).toBe("sk-******************");
+      expect(creds.apiKey).toBe("sk-test-openai");
     });
 
-    it("修改环境变量后重新解析得到新值", async () => {
-      setEnv("OPENAI_API_KEY", "sk-first");
+    it("keys store 更新后重新解析得到新值（热生效）", async () => {
       const config = await loadConfig(writeFixture(makeValidExpertsJson()));
 
       expect(resolveProviderCredentials(config, "openai").apiKey).toBe(
-        "sk-first"
+        "sk-test-openai"
       );
 
-      setEnv("OPENAI_API_KEY", "sk-second");
+      await keys.set("openai", "sk-second");
       expect(resolveProviderCredentials(config, "openai").apiKey).toBe(
         "sk-second"
       );
     });
 
-    it("apiKeyEnv 对应的环境变量缺失时 resolveProviderCredentials 抛错", async () => {
-      setEnv("OPENAI_API_KEY", undefined);
+    it("渠道未配置 key 时 resolveProviderCredentials 抛错（missing key 指引后台）", async () => {
+      await keys.set("openai", ""); // 清除
       const config = await loadConfig(writeFixture(makeValidExpertsJson()));
 
       // 契约（design.md §7）：惰性解析缺失 key 时 throw（调用时 card 报错）
-      expect(() => resolveProviderCredentials(config, "openai")).toThrow();
+      expect(() => resolveProviderCredentials(config, "openai")).toThrow(
+        /missing key/
+      );
+    });
+
+    it("遗留 apiKeyEnv 字段宽容忽略：非法变量名也能加载", async () => {
+      const raw = JSON.parse(makeValidExpertsJson()) as {
+        providers: Record<string, { apiKeyEnv?: string }>;
+      };
+      raw.providers["openai"]!.apiKeyEnv = "not a valid env name";
+      const config = await loadConfig(writeFixture(JSON.stringify(raw)));
+      expect(resolveProviderCredentials(config, "openai").apiKey).toBe(
+        "sk-test-openai"
+      );
     });
   });
 });

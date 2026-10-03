@@ -35,7 +35,7 @@ function configWith(disabledTools?: string[]): AppConfig {
 }
 
 async function connect(config: AppConfig): Promise<Client> {
-  const server = createServer(config);
+  const server = createServer({ config });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "test-client", version: "0.0.0" });
   await Promise.all([
@@ -84,5 +84,40 @@ describe("createServer 工具注册（disabledTools）", () => {
     const text = JSON.stringify(result.content);
     expect(text).toContain("not found");
     expect(text).toContain("brainstorm_followup");
+  });
+});
+
+describe("热生效（R4，09-30-provider-keys-ui）", () => {
+  let client: Client | undefined;
+
+  afterEach(async () => {
+    await client?.close();
+    client = undefined;
+  });
+
+  it("原位替换 state.config 后 list_cards 立即反映新卡（无需重建 server）", async () => {
+    const state = { config: configWith() };
+    const server = createServer(state);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    client = new Client({ name: "test-client", version: "0.0.0" });
+    await Promise.all([
+      server.connect(serverTransport),
+      client.connect(clientTransport),
+    ]);
+
+    const before = await client.callTool({ name: "list_cards", arguments: {} });
+    const beforeText = JSON.stringify(before.content);
+    expect(beforeText).toContain("c-a");
+    expect(beforeText).not.toContain("c-new");
+
+    // 模拟 admin PUT /api/config 成功后的原位替换
+    state.config = {
+      ...configWith(),
+      cards: [makeCard("c-a"), makeCard("c-b"), makeCard("c-new")],
+    };
+
+    const after = await client.callTool({ name: "list_cards", arguments: {} });
+    const afterText = JSON.stringify(after.content);
+    expect(afterText).toContain("c-new");
   });
 });

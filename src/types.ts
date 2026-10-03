@@ -15,14 +15,18 @@ export type { ChatMessage, ChatParams, ChatResult, ProviderAdapter, ThinkingLeve
 /** provider 适配器类型名（registry 中注册的三个实现） */
 export type ProviderType = "openai" | "anthropic" | "openai-compatible";
 
-/** experts.json 中 providers.<name> 的运行时形态（apiKey 已从环境变量解析的结果见 ResolvedProvider） */
+/** experts.json 中 providers.<name> 的运行时形态（apiKey 已从 keys store 解析的结果见 ResolvedProvider） */
 export interface ProviderConfig {
   /** provider 适配器类型，决定使用哪个 adapter */
   type: ProviderType;
   /** API 基础地址（不含末尾斜杠的规范化由 adapter 处理） */
   baseUrl: string;
-  /** 环境变量名（间接引用，绝不存放真实密钥） */
-  apiKeyEnv: string;
+  /**
+   * @deprecated 遗留字段（0.2.0 及更早 env 方案的环境变量名），仅宽容接受、不再使用。
+   * 真实密钥现从 keys.json 解析（src/keys/store.ts，管理后台直配热生效）；
+   * 保留该可选字段是为了旧文件直接加载 + 字段透传，保住 0.2.0 回滚锚。
+   */
+  apiKeyEnv?: string;
 }
 
 /** 单个专家配置（defaults 已合并完成）—— 只定义「谁、怎么说话」，不含 model/provider */

@@ -41,6 +41,8 @@ import {
   exceedsBudget,
 } from "../src/orchestrator/context-compressor.js";
 import type { DialogueTurn } from "../src/orchestrator/dialogue.js";
+import type { KeysStore } from "../src/keys/store.js";
+import { installKeysStore } from "./helpers/keys.js";
 
 function makeStubAdapter(
   behavior: (params: ChatParams, callIndex: number) => Promise<ChatResult>
@@ -57,7 +59,6 @@ function makeStubAdapter(
 
 function makeConfig(adapter: ProviderAdapter): AppConfig {
   stubHolder.current = adapter;
-  process.env.TEST_KEY = "test-key";
   return {
     providers: {
       openai: { type: "openai" as const, baseUrl: "", apiKeyEnv: "TEST_KEY" },
@@ -103,8 +104,12 @@ function makeTurn(
   return { round, expertId: "a", expertName, icon, content };
 }
 
-beforeEach(() => {
+let keys: KeysStore;
+
+beforeEach(async () => {
   stubHolder.current = undefined;
+  keys = installKeysStore();
+  await keys.set("openai", "test-key");
 });
 
 describe("预算判定（estimateTranscriptChars / exceedsBudget）", () => {

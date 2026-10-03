@@ -248,7 +248,7 @@ describe("aggregateUsage 聚合纯函数", () => {
 
 describe("admin API GET /api/usage", () => {
   it("recordsDir 未配置返回 200 + 空结构（不是 404）", async () => {
-    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), config: stubConfig, logger });
+    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), configRef: { config: stubConfig }, logger });
     const res = makeReqRes("GET", "/api/usage");
     const handled = await handle(res.req, res.res);
     expect(handled).toBe(true);
@@ -266,7 +266,7 @@ describe("admin API GET /api/usage", () => {
   });
 
   it("days 参数钳制到 [1,90]，缺省 / 非数字 → 30", async () => {
-    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, config: stubConfig, logger });
+    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, configRef: { config: stubConfig }, logger });
 
     const res999 = makeReqRes("GET", "/api/usage?days=999");
     await handle(res999.req, res999.res);
@@ -298,7 +298,7 @@ describe("admin API GET /api/usage", () => {
     sess.finish({ status: "ok", usage: { promptTokens: 100, completionTokens: 50 } });
     await sess.flush();
 
-    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, config: stubConfig, logger });
+    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, configRef: { config: stubConfig }, logger });
     const res = makeReqRes("GET", "/api/usage?days=7");
     const handled = await handle(res.req, res.res);
     expect(handled).toBe(true);
@@ -331,7 +331,7 @@ describe("admin API GET /api/usage", () => {
     await sess.flush();
     await writeFile(path.join(dir, "20260912-000000-bad.jsonl"), "garbage{{{\n", "utf-8");
 
-    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, config: stubConfig, logger });
+    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, configRef: { config: stubConfig }, logger });
     const res = makeReqRes("GET", "/api/usage");
     await handle(res.req, res.res);
     expect(res.status()).toBe(200);

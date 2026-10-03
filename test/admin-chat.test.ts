@@ -97,7 +97,7 @@ describe("admin API /api/chat", () => {
     const handle = createAdminApi({
       configPath: path.join(dir, "experts.json"),
       recordsDir: dir,
-      config: stubConfig,
+      configRef: { config: stubConfig },
       logger,
     });
     const r = makeSseReqRes("POST", "/api/chat", JSON.stringify({}));
@@ -111,7 +111,7 @@ describe("admin API /api/chat", () => {
     const handle = createAdminApi({
       configPath: path.join(dir, "experts.json"),
       recordsDir: dir,
-      config: stubConfig,
+      configRef: { config: stubConfig },
       logger,
     });
     const r = makeSseReqRes("POST", "/api/chat", JSON.stringify({ topic: "测试话题" }));
@@ -126,7 +126,7 @@ describe("admin API /api/chat", () => {
     const handle = createAdminApi({
       configPath: path.join(dir, "experts.json"),
       recordsDir: dir,
-      config: stubConfig,
+      configRef: { config: stubConfig },
       logger,
     });
     const r = makeSseReqRes("GET", "/api/chat");
@@ -138,7 +138,7 @@ describe("admin API /api/chat", () => {
     const handle = createAdminApi({
       configPath: path.join(dir, "experts.json"),
       recordsDir: dir,
-      config: stubConfig,
+      configRef: { config: stubConfig },
       logger,
     });
     const r = makeSseReqRes("GET", "/api/chat?session=bad-id");
@@ -150,7 +150,7 @@ describe("admin API /api/chat", () => {
     const handle = createAdminApi({
       configPath: path.join(dir, "experts.json"),
       recordsDir: dir,
-      config: stubConfig,
+      configRef: { config: stubConfig },
       logger,
     });
     // 先 POST 拿到 sessionId

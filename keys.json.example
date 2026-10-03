@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "providers": {
+    "custom": {
+      "apiKey": "sk-xxxxxxxxxxxxxxxxxxxxxxxx（替换为真实 key）",
+      "updatedAt": "2026-09-30T12:00:00.000Z"
+    }
+  }
+}

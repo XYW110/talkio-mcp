@@ -22,6 +22,9 @@ vi.mock("../src/providers/registry.js", () => ({
   isMockProviderEnabled: () => process.env.TALKIO_MOCK_PROVIDER === "1",
 }));
 
+import type { KeysStore } from "../src/keys/store.js";
+import { installKeysStore } from "./helpers/keys.js";
+
 import { runConsultation } from "../src/orchestrator/parallel.js";
 import {
   runDialogue,
@@ -91,7 +94,6 @@ function makeEchoAdapter(
  */
 function makeConfig(adapter: ProviderAdapter): AppConfig {
   stubHolder.current = adapter;
-  process.env.TEST_KEY = "test-key";
   return {
     providers: {
       openai: { type: "openai" as const, baseUrl: "", apiKeyEnv: "TEST_KEY" },
@@ -153,6 +155,14 @@ function makeSpyLogger() {
   };
   return logger;
 }
+
+/** 渠道密钥 fixture：进程级 keys store（内存模式），替代旧 env 方案 */
+let keys: KeysStore;
+
+beforeEach(async () => {
+  keys = installKeysStore();
+  await keys.set("openai", "test-key");
+});
 
 describe("runConsultation 并行编排", () => {
   it("全部成功：每个 target 都有 content，无 error", async () => {
@@ -466,12 +476,9 @@ describe("PII 隐私脱敏（发往 LLM 前掩码）", () => {
 });
 
 describe("TALKIO_MOCK_PROVIDER 凭据短路", () => {
-  it("无 API Key 时 consult 仍成功（不抛 missing env var）", async () => {
-    const original = process.env.TALKIO_MOCK_PROVIDER;
-    const originalKey = process.env.TEST_KEY;
+  it("无 API Key 时 consult 仍成功（mock 短路凭据解析，不抛 missing key）", async () => {
+    installKeysStore(); // 覆盖为空密钥池：无任何渠道 key
     process.env.TALKIO_MOCK_PROVIDER = "1";
-    delete process.env.TEST_KEY;
-    delete process.env.OPENAI_API_KEY;
     try {
       const adapter = makeEchoAdapter("mock-ok");
       const targets = [makeTarget("a")];
@@ -485,10 +492,7 @@ describe("TALKIO_MOCK_PROVIDER 凭据短路", () => {
       expect(results[0]?.error).toBeUndefined();
       expect(results[0]?.content).toContain("mock-ok");
     } finally {
-      if (original === undefined) delete process.env.TALKIO_MOCK_PROVIDER;
-      else process.env.TALKIO_MOCK_PROVIDER = original;
-      if (originalKey === undefined) delete process.env.TEST_KEY;
-      else process.env.TEST_KEY = originalKey;
+      delete process.env.TALKIO_MOCK_PROVIDER;
     }
   });
 });
@@ -649,7 +653,7 @@ describe("流式增量通知（streaming）", () => {
 });
 
 describe("语义截断（task 08-28-semantic-truncation，方案 B 增量概要）", () => {
-  // 2 张角色卡（均走 openai provider，makeConfig 提供 TEST_KEY）
+  // 2 张角色卡（均走 openai provider，beforeEach 已在 keys store 预置 openai key）
   const targets = [makeTarget("a"), makeTarget("b")];
 
   it("debate 第 2 轮：注入概要前缀 + 压缩结果（替代硬截断）", async () => {

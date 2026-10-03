@@ -25,30 +25,11 @@ import {
   type BrainstormFollowupArgs,
 } from "../src/tools/brainstorm-followup.js";
 import type { DialogueTurn } from "../src/orchestrator/dialogue.js";
+import type { KeysStore } from "../src/keys/store.js";
+import { installKeysStore } from "./helpers/keys.js";
 
-const ENV_KEYS = [
-  "OPENAI_API_KEY",
-  "ANTHROPIC_API_KEY",
-  "TALKIO_MOCK_PROVIDER",
-] as const;
-
-const savedEnv: Record<string, string | undefined> = {};
-
-function snapshotEnv(): void {
-  for (const key of ENV_KEYS) savedEnv[key] = process.env[key];
-}
-
-function restoreEnv(): void {
-  for (const key of ENV_KEYS) {
-    const value = savedEnv[key];
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
-}
-
-function clearKeys(): void {
-  for (const key of ENV_KEYS) delete process.env[key];
-}
+/** 渠道密钥 fixture：进程级 keys store（内存模式），替代旧 env 方案 */
+let keys: KeysStore;
 
 function textOf(result: {
   content: Array<{ type: string; text?: string }>;
@@ -153,21 +134,20 @@ function baseArgs(overrides: Partial<BrainstormFollowupArgs> = {}): BrainstormFo
   return { question: "追问问题", turns: prevTurns, ...overrides };
 }
 
-snapshotEnv();
-
 beforeEach(() => {
   stubHolder.current = undefined;
+  keys = installKeysStore();
 });
 
+// mock 开关仍走 env（registry 读取）；用完即清，避免影响同 worker 后续文件
 afterEach(() => {
-  restoreEnv();
+  delete process.env.TALKIO_MOCK_PROVIDER;
 });
 
 describe("handleBrainstormFollowup", () => {
   it("all：全体选定卡并行追问，新 turn round=max+1=3", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
-    process.env.ANTHROPIC_API_KEY = "sk-a";
+    await keys.set("openai", "sk-o");
+    await keys.set("anthropic", "sk-a");
     process.env.TALKIO_MOCK_PROVIDER = "";
     const adapter = makeEchoAdapter();
     const result = await handleBrainstormFollowup(
@@ -189,8 +169,7 @@ describe("handleBrainstormFollowup", () => {
   });
 
   it("specific：传 card 单卡深化，1 次 LLM 调用、1 条新 turn", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
+    await keys.set("openai", "sk-o");
     const adapter = makeEchoAdapter();
     const result = await handleBrainstormFollowup(
       baseArgs({ card: "c-architect" }),
@@ -206,8 +185,7 @@ describe("handleBrainstormFollowup", () => {
   });
 
   it("降级：turns=[] 时标注降级、isError=false、round=1", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
+    await keys.set("openai", "sk-o");
     const adapter = makeEchoAdapter();
     const result = await handleBrainstormFollowup(
       baseArgs({ turns: [], cards: ["c-architect"] }),
@@ -220,8 +198,7 @@ describe("handleBrainstormFollowup", () => {
   });
 
   it("PII：question 含手机号被掩码，前序实录取自 turns", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
+    await keys.set("openai", "sk-o");
     const adapter = makeEchoAdapter();
     const result = await handleBrainstormFollowup(
       baseArgs({
@@ -240,8 +217,7 @@ describe("handleBrainstormFollowup", () => {
   });
 
   it("全员失败：聚合 1 条 ⚠️ 摘要 turn，isError=true", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-test";
+    await keys.set("openai", "sk-o");
     const adapter = makeStubAdapter(async () => {
       throw new Error("provider down");
     });
@@ -283,9 +259,8 @@ describe("handleBrainstormFollowup — 语义截断（任务 08-28-semantic-trun
   }
 
   it("debate：超预算 prevTurns 触发概要压缩，prompt 注入概要前缀而非完整实录", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
-    process.env.ANTHROPIC_API_KEY = "sk-a"; // c-security 走 anthropic，两个 key 都要
+    await keys.set("openai", "sk-o");
+    await keys.set("anthropic", "sk-a"); // c-security 走 anthropic，两个 key 都要
     // 调用 1 = 压缩器；调用 2/3 = 两张卡作答（回显注入文本以便断言）
     const adapter = makeStubAdapter(async (params, callIndex) => ({
       content:
@@ -316,9 +291,8 @@ describe("handleBrainstormFollowup — 语义截断（任务 08-28-semantic-trun
   });
 
 it("relay：缓存复用——压缩仅 1 次，后续专家不再重复压缩", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
-    process.env.ANTHROPIC_API_KEY = "sk-a"; // c-security 走 anthropic，两个 key 都要
+    await keys.set("openai", "sk-o");
+    await keys.set("anthropic", "sk-a"); // c-security 走 anthropic，两个 key 都要
     let callCount = 0;
     const adapter = makeStubAdapter(async () => {
       callCount += 1;
@@ -342,9 +316,8 @@ it("relay：缓存复用——压缩仅 1 次，后续专家不再重复压缩",
   });
 
 it("schema/报告不变：超预算下返回结构与短路径一致（question/turns/mode 原样）", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
-    process.env.ANTHROPIC_API_KEY = "sk-a"; // c-security 走 anthropic，两个 key 都要
+    await keys.set("openai", "sk-o");
+    await keys.set("anthropic", "sk-a"); // c-security 走 anthropic，两个 key 都要
     let callCount = 0;
     const adapter = makeStubAdapter(async () => {
       callCount += 1;
@@ -374,8 +347,7 @@ it("schema/报告不变：超预算下返回结构与短路径一致（question/
   });
 
 it("降级路径：turns 无效 → prevTurns=[] → 永不触发压缩（无压缩调用）", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
+    await keys.set("openai", "sk-o");
     const adapter = makeEchoAdapter();
     const result = await handleBrainstormFollowup(
       baseArgs({ turns: "不是数组" as unknown as DialogueTurn[], cards: ["c-architect"] }),
@@ -393,9 +365,8 @@ it("降级路径：turns 无效 → prevTurns=[] → 永不触发压缩（无压
   });
 
 it("压缩失败：硬截断兜底（isError=false，作答仍进行）", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
-    process.env.ANTHROPIC_API_KEY = "sk-a"; // c-security 走 anthropic，两个 key 都要
+    await keys.set("openai", "sk-o");
+    await keys.set("anthropic", "sk-a"); // c-security 走 anthropic，两个 key 都要
     let callCount = 0;
     const adapter = makeStubAdapter(async () => {
       callCount += 1;

@@ -2,14 +2,15 @@
  * 配置加载 —— 对应 design.md §3/§7。
  *
  * 流程：dotenv 加载 .env → 读取 experts.json → 检测旧格式并自动迁移（备份 .bak + 写回）
- *       → zod 校验三段结构（providers / experts / models / cards）→ 引用完整性校验
- *       → 解析 provider 引用与 API key 状态。
+ *       → zod 校验三段结构（providers / experts / models / cards）→ 引用完整性校验。
  *
- * 策略（design.md §3/§7）：
+ * 策略（design.md §3/§7 + 任务 09-30-provider-keys-ui）：
  * - 校验失败 / 引用不存在的 provider / 模型或专家 / cards 为空 → 打印所有无效条目后 process.exit(1)
- * - 某 provider 的 apiKeyEnv 环境变量缺失 → 仅警告，不退出；
- *   调用对应角色卡时由 resolveProviderCredentials 抛错（其他卡不受影响）
- * - API key 只从环境变量读取，experts.json 中只存环境变量名（apiKeyEnv 间接引用）
+ * - 渠道 API key 不再来自环境变量：resolveProviderCredentials 从 keys store
+ *   （keys.json，见 src/keys/store.ts）解析，缺失即抛 missing key（fail-closed，
+ *   其他卡不受影响）；experts.json 遗留 apiKeyEnv 字段宽容忽略（0.2.0 回滚兼容）
+ * - validateExpertsFile 是 loadConfig 的纯校验核心（无 IO / 无 exit），
+ *   admin PUT /api/config 写盘前用它校验（非法 → 400，磁盘不落脏数据）
  * - 迁移幂等：新格式文件不会被二次迁移
  */
 
@@ -20,6 +21,7 @@ import process from "node:process";
 import { config as dotenvConfig } from "dotenv";
 import { z } from "zod";
 
+import { getKeysStore } from "./keys/store.js";
 import type {
   AppConfig,
   CardConfig,
@@ -49,10 +51,10 @@ const providerTypeSchema = z.enum(["openai", "anthropic", "openai-compatible"]);
 const providerSchema = z.object({
   type: providerTypeSchema,
   baseUrl: z.string().url().min(1),
-  apiKeyEnv: z
-    .string()
-    .min(1)
-    .regex(/^[A-Z_][A-Z0-9_]*$/i, "apiKeyEnv 必须是合法的环境变量名"),
+  // 遗留字段（0.2.0 及更早 env 方案的环境变量名）：宽容接受、不再校验、不再使用。
+  // 真实密钥现从 keys.json 解析（src/keys/store.ts）；保留解析能力是为了
+  // 旧 experts.json 直接加载不报错，且字段原样透传保住 0.2.0 回滚锚。
+  apiKeyEnv: z.string().optional(),
 });
 
 const idRegex = /^[a-z0-9][a-z0-9_-]*$/i;
@@ -467,44 +469,94 @@ export async function loadConfig(
     process.exit(1);
   }
 
-  // ---- API key 状态检查（仅警告，不退出；design.md §7 惰性检测策略） ----
-  warnMissingApiKeys(file.providers, file.models, logger);
-
-  return {
-    providers: file.providers,
-    experts: file.experts,
-    models: file.models,
-    cards: file.cards,
-    // 缺省不出键（红线：旧 experts.json 直接加载，不写入新字段）
-    ...(file.disabledTools ? { disabledTools: file.disabledTools } : {}),
-  };
+  // ---- 校验核心（与 admin PUT /api/config 共用；无 IO / 无 exit） ----
+  const validation = validateExpertsFile(rawJson);
+  if (!validation.ok) {
+    logger.error(
+      `[config] 配置文件校验失败 ${resolvedPath}，共 ${validation.errors.length} 处问题：`
+    );
+    for (const msg of validation.errors) {
+      logger.error(`  - ${msg}`);
+    }
+    process.exit(1);
+  }
+  return validation.config;
 }
 
-/** 检查各 provider 的 API key 存在性；缺失仅警告（运行时惰性抛错）。 */
-function warnMissingApiKeys(
-  providers: Record<string, ProviderConfig>,
-  models: ModelConfig[],
-  logger: Logger
-): void {
-  const seen = new Set<string>();
-  for (const model of models) {
-    if (seen.has(model.providerId)) continue;
-    seen.add(model.providerId);
-    const provider = providers[model.providerId];
-    if (provider && !process.env[provider.apiKeyEnv]) {
-      logger.error(
-        `[config] 警告: provider "${model.providerId}" 的环境变量 ${provider.apiKeyEnv} 未设置，` +
-          `使用该 provider 的角色卡调用将失败（不影响其他卡）`
-      );
+// ---------------------------------------------------------------------------
+// 纯校验核心（admin PUT /api/config 写盘前校验复用）
+// ---------------------------------------------------------------------------
+
+export type ConfigValidationResult =
+  | { ok: true; config: AppConfig }
+  | { ok: false; errors: string[] };
+
+/**
+ * 校验 experts.json 内容并产出运行时 AppConfig（loadConfig 的纯校验核心）。
+ * 无文件 IO、无 process.exit —— admin PUT /api/config 用它做写盘前校验：
+ * 非法 → 400 + 磁盘不落脏数据；合法 → 用返回值替换进程内配置（热生效）。
+ */
+export function validateExpertsFile(rawJson: unknown): ConfigValidationResult {
+  // ---- zod 校验（收集所有无效条目） ----
+  const parsed = expertsFileSchema.safeParse(rawJson);
+  if (!parsed.success) {
+    const errors: string[] = [];
+    for (const issue of parsed.error.issues) {
+      const where = issue.path.length > 0 ? issue.path.join(".") : "(root)";
+      errors.push(`${where}: ${issue.message}`);
     }
+    return { ok: false, errors };
   }
+
+  const file = parsed.data;
+  const fatalErrors: string[] = [];
+
+  // ---- 非空检查（无卡则 MCP 无可用调用目标） ----
+  if (file.cards.length === 0) {
+    fatalErrors.push("cards 数组为空：至少需要定义一张角色卡");
+  }
+  if (file.models.length === 0) {
+    fatalErrors.push("models 数组为空：至少需要定义一个模型");
+  }
+  if (file.experts.length === 0) {
+    fatalErrors.push("experts 数组为空：至少需要定义一个专家");
+  }
+
+  // ---- id 唯一性 ----
+  checkUniqueIds(file.experts, "专家", fatalErrors);
+  checkUniqueIds(file.models, "模型", fatalErrors);
+  checkUniqueIds(file.cards, "角色卡", fatalErrors);
+
+  // ---- 引用完整性 ----
+  validateReferences(file, fatalErrors);
+
+  // ---- 工具开关内容校验（核心保护名单 / 未知工具名，fail fast） ----
+  validateDisabledTools(file.disabledTools, fatalErrors);
+
+  if (fatalErrors.length > 0) {
+    return { ok: false, errors: fatalErrors };
+  }
+
+  return {
+    ok: true,
+    config: {
+      providers: file.providers,
+      experts: file.experts,
+      models: file.models,
+      cards: file.cards,
+      // 缺省不出键（红线：旧 experts.json 直接加载，不写入新字段）
+      ...(file.disabledTools ? { disabledTools: file.disabledTools } : {}),
+    },
+  };
 }
 
 /**
  * 按 provider 名解析凭据（运行时惰性解析，design.md §7）。
  *
- * @throws {Error} provider 不存在或对应环境变量缺失：
- *   "Provider X: missing env var Y"
+ * 密钥来源：keys store（keys.json，网页后台直配、保存即热生效），不读环境变量。
+ *
+ * @throws {Error} provider 不存在或该渠道未配置 key：
+ *   "Provider X: missing key（管理后台-渠道页）"
  */
 export function resolveProviderCredentials(
   config: AppConfig,
@@ -517,9 +569,11 @@ export function resolveProviderCredentials(
     );
   }
 
-  const apiKey = process.env[provider.apiKeyEnv];
+  const apiKey = getKeysStore().get(providerName);
   if (!apiKey) {
-    throw new Error(`Provider ${providerName}: missing env var ${provider.apiKeyEnv}`);
+    throw new Error(
+      `Provider ${providerName}: missing key（管理后台-渠道页可配置）`
+    );
   }
 
   return { apiKey, baseUrl: provider.baseUrl };

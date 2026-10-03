@@ -1,5 +1,6 @@
 /**
- * admin HTTP API —— 供前端管理页读写 experts.json 与探测 provider 模型。
+ * admin HTTP API —— 供前端管理页读写 experts.json、管理渠道密钥（keys.json）
+ * 与探测 provider 模型。
  *
  * 只有 SSE 模式才启动这些接口（stdio 不适用）。
  * 安全提示：这些接口会修改/返回配置信息，绑定非回环地址时应小心。
@@ -12,10 +13,12 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { fetchWithRetry } from "../utils/retry.js";
 import type { AppConfig } from "../types.js";
+import { validateExpertsFile } from "../config.js";
 import { handleBrainstorm } from "../tools/brainstorm.js";
 import { startSession, type RecordSession } from "../records/store.js";
 import type { Logger } from "../utils/log.js";
 import type { McpTokenStore } from "../auth/tokens.js";
+import type { KeysStore } from "../keys/store.js";
 import {
   listSessions,
   readSession,
@@ -37,8 +40,6 @@ interface AdminApiOptions {
   configPath: string;
   /** 前端构建产物目录（admin-web/dist），用于静态托管 */
   staticDir?: string;
-  /** 是否需要重启 server 才生效（当前实现：配置在启动时闭合捕获，改完必须重启） */
-  restartHint?: boolean;
   /** 会话记录目录；未配置时 records 接口返回空列表 / 404，usage 返回空结构 */
   recordsDir?: string;
   /**
@@ -46,8 +47,18 @@ interface AdminApiOptions {
    * 404（与 mcpTokens 同语义：仅测试/纯 API 部署场景缺省）。
    */
   memoryDir?: string;
-  /** 启动时已校验的配置（用于网页版发起群聊，避免每次重读+重复校验） */
-  config: AppConfig;
+  /**
+   * 可变配置持有者（R4 热生效）：与 createServer 共享同一引用。
+   * PUT /api/config 校验通过后原位替换 `.config`，工具调用与 memory/chat
+   * 路由都读取当前值，改配置无需重启。
+   */
+  configRef: { config: AppConfig };
+  /**
+   * 渠道密钥池（09-30-provider-keys-ui）：与 index.ts initKeysStore 返回的
+   * 单例同一实例（凭据解析/选卡过滤读同一池，PUT /api/keys 写入即热生效）。
+   * 未注入时 keys 路由返回 404（仅测试/纯 API 部署场景缺省）。
+   */
+  keys?: KeysStore;
   /** 日志器（复用主循环 logger，避免 admin 层自建） */
   logger: Logger;
   /**
@@ -163,7 +174,7 @@ async function probeModels(baseUrl: string, apiKey: string): Promise<unknown[]> 
  * 返回 true 表示已处理（response 已结束），false 表示未匹配到 /api 路由。
  */
 export function createAdminApi(options: AdminApiOptions) {
-  const { configPath, staticDir, recordsDir, memoryDir, config: baseConfig, logger, mcpTokens } = options;
+  const { configPath, staticDir, recordsDir, memoryDir, configRef, keys, logger, mcpTokens } = options;
 
   // 群聊 SSE：按 sessionId 分频道的广播器（支持多点开 concurrent 群聊）。
   const chatBus = new EventEmitter();
@@ -235,8 +246,22 @@ export function createAdminApi(options: AdminApiOptions) {
               }
             }
           }
+          // ── 写盘前校验（R4 热生效，09-30-provider-keys-ui）──
+          // 复用 loadConfig 的纯校验核心：非法 → 400 且不写盘（磁盘不落脏数据，
+          // 也就无需「写盘成功但校验失败回写旧文件」的回滚路径）。
+          const validation = validateExpertsFile(incoming);
+          if (!validation.ok) {
+            sendError(
+              res,
+              400,
+              `配置校验失败（未写盘）：${validation.errors.join("；")}`
+            );
+            return true;
+          }
           await writeFile(configPath, bodyText, "utf-8");
-          sendJson(res, 200, { ok: true, restartRequired: options.restartHint ?? false });
+          // 磁盘 ≈ 内存：用校验产物原位替换持有者，工具调用/群聊即取新配置。
+          configRef.config = validation.config;
+          sendJson(res, 200, { ok: true });
         } catch (err) {
           sendError(res, 400, err instanceof Error ? err.message : String(err));
         }
@@ -263,22 +288,68 @@ export function createAdminApi(options: AdminApiOptions) {
       return true;
     }
 
-    // ── /api/env/status ──（告知前端哪些 key 已配置，避免展示 key 明文）
-    if (url.pathname === "/api/env/status" && req.method === "GET") {
+    // ── /api/keys（渠道密钥管理，09-30-provider-keys-ui）──
+    // GET：掩码列表（providerId + hasKey + 指纹尾4位 + updatedAt）——无明文无哈希。
+    // PUT /api/keys/:pid：{ apiKey }，空串=清除；写入即热生效（内存+落盘）。
+    if (url.pathname === "/api/keys" && req.method === "GET") {
+      if (!keys) {
+        sendError(res, 404, "密钥存储未启用");
+        return true;
+      }
+      // 只列当前配置内的渠道（keys.json 中已删渠道的残留条目不回显）。
+      const payload = Object.keys(configRef.config.providers).map((pid) => {
+        const fp = keys.fingerprint(pid);
+        return {
+          providerId: pid,
+          hasKey: fp !== undefined,
+          ...(fp ? { fingerprint: fp.fingerprint, updatedAt: fp.updatedAt } : {}),
+        };
+      });
+      sendJson(res, 200, payload);
+      return true;
+    }
+
+    if (
+      url.pathname.startsWith("/api/keys/") &&
+      url.pathname.length > "/api/keys/".length &&
+      req.method === "PUT"
+    ) {
+      if (!keys) {
+        sendError(res, 404, "密钥存储未启用");
+        return true;
+      }
       try {
-        const raw = await readFile(configPath, "utf-8");
-        const cfg = JSON.parse(raw) as { providers?: Record<string, { apiKeyEnv?: string }> };
-        const names = new Set<string>();
-        for (const p of Object.values(cfg.providers ?? {})) {
-          if (p.apiKeyEnv) names.add(p.apiKeyEnv);
-        }
-        sendJson(
-          res,
-          200,
-          [...names].map((name) => ({ name, configured: Boolean(process.env[name]) })),
+        const pid = decodeURIComponent(
+          url.pathname.slice("/api/keys/".length)
         );
+        if (!configRef.config.providers[pid]) {
+          sendError(res, 404, `渠道 "${pid}" 不存在`);
+          return true;
+        }
+        const bodyText = await readBody(req);
+        const body = JSON.parse(bodyText) as { apiKey?: unknown };
+        if (typeof body.apiKey !== "string") {
+          sendError(res, 400, "apiKey 必须是字符串（空串表示清除该渠道密钥）");
+          return true;
+        }
+        await keys.set(pid, body.apiKey);
+        const fp = keys.fingerprint(pid);
+        // 日志红线：只记指纹尾 4 位与动作，绝不出现明文。
+        logger.info(
+          fp
+            ? `[keys] 渠道 ${pid} 的 API Key 已更新（尾4位 ${fp.fingerprint}），即时生效`
+            : `[keys] 渠道 ${pid} 的 API Key 已清除，即时生效`
+        );
+        sendJson(res, 200, {
+          ok: true,
+          providerId: pid,
+          hasKey: fp !== undefined,
+          ...(fp
+            ? { fingerprint: fp.fingerprint, updatedAt: fp.updatedAt }
+            : {}),
+        });
       } catch (err) {
-        sendError(res, 500, err instanceof Error ? err.message : String(err));
+        sendError(res, 400, err instanceof Error ? err.message : String(err));
       }
       return true;
     }
@@ -369,7 +440,7 @@ export function createAdminApi(options: AdminApiOptions) {
             try {
               const result = await handleBrainstorm(
                 { topic, mode, rounds, summarize, cards, interjections },
-                baseConfig,
+                configRef.config,
                 { notifier: notifier as never, record, memoryDir },
               );
               const text =
@@ -522,7 +593,7 @@ export function createAdminApi(options: AdminApiOptions) {
           if (!/^[a-z0-9][a-z0-9_-]*$/i.test(expertId)) continue;
           const entries = loadExpertMemories(memoryDir, expertId, logger);
           if (entries.length === 0) continue;
-          const cfg = baseConfig.experts.find((e) => e.id === expertId);
+          const cfg = configRef.config.experts.find((e) => e.id === expertId);
           payload.push({
             expertId,
             expertName: cfg?.name ?? expertId,
@@ -532,7 +603,7 @@ export function createAdminApi(options: AdminApiOptions) {
           });
         }
         // 有配置但暂无记忆的专家也列出（count=0），前端可渲染空态。
-        for (const e of baseConfig.experts) {
+        for (const e of configRef.config.experts) {
           if (payload.some((p) => p.expertId === e.id)) continue;
           payload.push({
             expertId: e.id,

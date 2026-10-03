@@ -11,6 +11,8 @@
 import { createServer } from "./server.js";
 import { loadConfig } from "./config.js";
 import { createLogger, normalizeLevel } from "./utils/log.js";
+import { initKeysStore } from "./keys/store.js";
+import { isMockProviderEnabled } from "./providers/registry.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { createServer as createHttpServer } from "node:http";
@@ -18,6 +20,7 @@ import { createAdminApi, resolveStaticDir } from "./admin/api.js";
 import { createAuthGate } from "./auth/middleware.js";
 import { McpTokenStore } from "./auth/tokens.js";
 import path from "node:path";
+import type { AppConfig } from "./types.js";
 
 /** Parse minimal CLI args: --transport, --port, --host, --config, --log-level. */
 interface CliArgs {
@@ -118,7 +121,8 @@ async function startSse(
   host: string,
   configPath: string,
   recordsDir: string | undefined,
-  config: ReturnType<typeof loadConfig> extends Promise<infer T> ? T : never,
+  configRef: { config: AppConfig },
+  keys: Awaited<ReturnType<typeof initKeysStore>>,
   logger: ReturnType<typeof createLogger>,
   memoryDir?: string,
 ): Promise<void> {
@@ -169,10 +173,10 @@ async function startSse(
 const handleAdmin = createAdminApi({
     configPath: adminPath,
     staticDir,
-    restartHint: true,
     recordsDir,
     memoryDir,
-    config,
+    configRef,
+    keys,
     logger,
     mcpTokens,
   });
@@ -301,10 +305,35 @@ async function main(): Promise<void> {
     logger.warn(`[cli] 未知的 --log-level "${args.logLevel}"，已降级为 info`);
   }
 
-// Load config (may throw with a clear message on invalid experts.json).
-  const config = await loadConfig(args.config, { logger });
-  // 会话记录目录：<experts.json 所在目录>/records（可被 TALKIO_RECORDS_DIR 覆盖）。
   const cfgPath = args.config ?? process.env.TALKIO_EXPERTS_CONFIG ?? "experts.json";
+
+// Load config (may throw with a clear message on invalid experts.json).
+  const config = await loadConfig(cfgPath, { logger });
+
+  // 渠道密钥池（09-30-provider-keys-ui）：keys.json 默认 experts.json 同目录，
+  // TALKIO_KEYS_FILE 可覆盖；进程级单例，凭据解析/选卡过滤/admin keys 路由共用。
+  const keysPath = process.env.TALKIO_KEYS_FILE?.trim()
+    ? path.resolve(process.env.TALKIO_KEYS_FILE.trim())
+    : path.join(path.dirname(path.resolve(cfgPath)), "keys.json");
+  const keys = await initKeysStore(keysPath, logger);
+
+  // 启动 [keys] 检查：提示尚未配置密钥的渠道（fail-closed，仅提示不退出；
+  // mock 模式无需真实密钥，跳过提示避免噪音）。
+  if (!isMockProviderEnabled()) {
+    const seen = new Set<string>();
+    for (const model of config.models) {
+      if (seen.has(model.providerId)) continue;
+      seen.add(model.providerId);
+      if (config.providers[model.providerId] && !keys.get(model.providerId)) {
+        logger.error(
+          `[keys] 渠道 "${model.providerId}" 尚未配置 API Key，使用该渠道的角色卡调用将失败` +
+            `（管理后台-渠道页可配置，保存即生效；不影响其他渠道）`
+        );
+      }
+    }
+  }
+
+  // 会话记录目录：<experts.json 所在目录>/records（可被 TALKIO_RECORDS_DIR 覆盖）。
   const recordsDir = path.resolve(
     path.dirname(path.resolve(cfgPath)),
     "records",
@@ -315,13 +344,15 @@ async function main(): Promise<void> {
     process.env.TALKIO_MEMORY_DIR && process.env.TALKIO_MEMORY_DIR.trim() !== ""
       ? path.resolve(process.env.TALKIO_MEMORY_DIR.trim())
       : path.resolve(path.dirname(path.resolve(cfgPath)), "memory");
-  server = createServer(config, { recordsDir, memoryDir });
+  // 可变配置持有者（R4 热生效）：createServer 与 createAdminApi 共享同一引用，
+  // admin PUT /api/config 校验通过后原位替换 .config，工具调用取当前值免重启。
+  const configRef = { config };
+  server = createServer(configRef, { recordsDir, memoryDir });
 
 if (args.transport === "stdio") {
     await startStdio();
   } else {
-const cfgPath = args.config ?? process.env.TALKIO_EXPERTS_CONFIG ?? "experts.json";
-    await startSse(args.port, args.host, cfgPath, recordsDir, config, logger, memoryDir);
+    await startSse(args.port, args.host, cfgPath, recordsDir, configRef, keys, logger, memoryDir);
   }
 }
 

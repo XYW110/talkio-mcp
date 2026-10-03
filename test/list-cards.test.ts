@@ -1,34 +1,25 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AppConfig, CardConfig, ExpertConfig, ModelConfig } from "../src/types.js";
+import type { KeysStore } from "../src/keys/store.js";
+import { MISSING_KEY_HINT } from "../src/tools/select-cards.js";
 import {
   handleListCards,
   selectListedCards,
   summarizeCard,
 } from "../src/tools/list-cards.js";
+import { installKeysStore } from "./helpers/keys.js";
 
-const ENV_KEYS = [
-  "OPENAI_API_KEY",
-  "ANTHROPIC_API_KEY",
-  "TALKIO_MOCK_PROVIDER",
-] as const;
+/** 渠道密钥 fixture：进程级 keys store（内存模式），替代旧 env 方案 */
+let keys: KeysStore;
 
-const savedEnv: Record<string, string | undefined> = {};
+beforeEach(() => {
+  keys = installKeysStore();
+});
 
-function snapshotEnv(): void {
-  for (const key of ENV_KEYS) savedEnv[key] = process.env[key];
-}
-
-function restoreEnv(): void {
-  for (const key of ENV_KEYS) {
-    const value = savedEnv[key];
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
-}
-
-function clearKeys(): void {
-  for (const key of ENV_KEYS) delete process.env[key];
-}
+// mock 开关仍走 env（registry 读取）；用完即清，避免影响同 worker 后续文件
+afterEach(() => {
+  delete process.env.TALKIO_MOCK_PROVIDER;
+});
 
 function makeExpert(id: string, overrides: Partial<ExpertConfig> = {}): ExpertConfig {
   return {
@@ -115,7 +106,7 @@ function parsePayload(text: string): {
   cards: Array<{
     id: string;
     ready: boolean;
-    missingEnv?: string;
+    missingReason?: string;
     enabled: boolean;
     provider: string;
     model: string;
@@ -128,12 +119,6 @@ function parsePayload(text: string): {
   const start = text.indexOf('{\n  "cards"');
   return JSON.parse(text.slice(start)) as ReturnType<typeof parsePayload>;
 }
-
-snapshotEnv();
-
-afterEach(() => {
-  restoreEnv();
-});
 
 /** 标准 fixture：architect→openai/model-test，legacy 卡 disabled，security→anthropic */
 function standardConfig(): AppConfig {
@@ -159,8 +144,7 @@ makeCard("legacy-m-openai-legacy", "legacy", "m-anthropic", {
 
 describe("list_cards 发现工具", () => {
   it("默认只返回启用角色卡，且不含 systemPrompt，展示专家名与模型名", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-test";
+    await keys.set("openai", "sk-test");
     const config = standardConfig();
     const selected = selectListedCards(config);
     expect(selected.map((c) => c.id)).toEqual([
@@ -187,8 +171,7 @@ describe("list_cards 发现工具", () => {
   });
 
   it("includeDisabled=true 时包含未启用角色卡", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-test";
+    await keys.set("openai", "sk-test");
     const config = standardConfig();
     const result = await handleListCards({ includeDisabled: true }, config);
     const text = textOf(result);
@@ -196,9 +179,8 @@ describe("list_cards 发现工具", () => {
     expect(text).toContain("disabled");
   });
 
-  it("只设 OPENAI_API_KEY 时标注缺 key 的卡，不从列表删除", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-**********************";
+  it("只给 openai 配 key 时标注缺 key 的卡，不从列表删除", async () => {
+    await keys.set("openai", "sk-**********************");
     const config = standardConfig();
     const result = await handleListCards({}, config);
     const text = textOf(result);
@@ -218,16 +200,15 @@ describe("list_cards 发现工具", () => {
     });
     expect(payload.cards.find((c) => c.id === "security-m-anthropic")).toMatchObject({
       ready: false,
-      missingEnv: "ANTHROPIC_API_KEY",
+      missingReason: MISSING_KEY_HINT,
     });
-    expect(text).toContain("缺 ANTHROPIC_API_KEY");
+    expect(text).toContain(MISSING_KEY_HINT);
     expect(text).not.toContain("legacy-m-openai-legacy");
     expect(text).not.toContain("sk-**********************");
   });
 
   it("includeDisabled=true 时可同时有 disabled 与缺 key 标注", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-test";
+    await keys.set("openai", "sk-test");
     const config = standardConfig();
     const result = await handleListCards({ includeDisabled: true }, config);
     const text = textOf(result);
@@ -236,21 +217,20 @@ const legacy = payload.cards.find((c) => c.id === "legacy-m-openai-legacy");
     expect(legacy).toMatchObject({
       enabled: false,
       ready: false,
-      missingEnv: "ANTHROPIC_API_KEY",
+      missingReason: MISSING_KEY_HINT,
     });
     expect(text).toContain("disabled");
-    expect(text).toContain("缺 ANTHROPIC_API_KEY");
+    expect(text).toContain(MISSING_KEY_HINT);
   });
 
-  it("mock 模式下全部 ready 且无 missingEnv", async () => {
-    clearKeys();
+  it("mock 模式下全部 ready 且无 missingReason", async () => {
     process.env.TALKIO_MOCK_PROVIDER = "1";
     const config = standardConfig();
     const result = await handleListCards({}, config);
     const payload = parsePayload(textOf(result));
     expect(payload.readyCount).toBe(2);
     expect(payload.cards.every((c) => c.ready)).toBe(true);
-    expect(payload.cards.every((c) => c.missingEnv === undefined)).toBe(true);
-    expect(textOf(result)).not.toContain(" · 缺 ");
+    expect(payload.cards.every((c) => c.missingReason === undefined)).toBe(true);
+    expect(textOf(result)).not.toContain(" · 未配置 API Key");
   });
 });

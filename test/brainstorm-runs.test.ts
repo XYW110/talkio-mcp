@@ -18,6 +18,8 @@ import type {
 } from "../src/providers/adapter.js";
 import type { AppConfig, CardConfig, ExpertConfig, ModelConfig } from "../src/types.js";
 import { startSession, type RecordSession } from "../src/records/store.js";
+import type { KeysStore } from "../src/keys/store.js";
+import { installKeysStore } from "./helpers/keys.js";
 import { brainstormSchema } from "../src/tools/brainstorm.js";
 import { SUMMARIZER_SYSTEM } from "../src/orchestrator/dialogue.js";
 
@@ -37,25 +39,8 @@ vi.mock("../src/providers/registry.js", () => ({
 
 import { handleBrainstorm } from "../src/tools/brainstorm.js";
 
-const ENV_KEYS = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY"] as const;
-
-const savedEnv: Record<string, string | undefined> = {};
-
-function snapshotEnv(): void {
-  for (const key of ENV_KEYS) savedEnv[key] = process.env[key];
-}
-
-function restoreEnv(): void {
-  for (const key of ENV_KEYS) {
-    const value = savedEnv[key];
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
-}
-
-function clearKeys(): void {
-  for (const key of ENV_KEYS) delete process.env[key];
-}
+/** 渠道密钥 fixture：进程级 keys store（内存模式），替代旧 env 方案 */
+let keys: KeysStore;
 
 function textOf(result: {
   content: Array<{ type: string; text?: string }>;
@@ -154,14 +139,14 @@ function councilConfig(adapter: ProviderAdapter): AppConfig {
   };
 }
 
-snapshotEnv();
-
 beforeEach(() => {
   stubHolder.current = undefined;
+  keys = installKeysStore();
 });
 
+// mock 开关仍走 env（registry 读取）；用完即清，避免影响同 worker 后续文件
 afterEach(() => {
-  restoreEnv();
+  delete process.env.TALKIO_MOCK_PROVIDER;
 });
 
 /**
@@ -193,9 +178,8 @@ describe("AC1：runs=1（或缺省）与现状逐字节一致", () => {
   async function runAndRecord(
     args: Parameters<typeof handleBrainstorm>[0]
   ): Promise<{ report: string; events: Array<Record<string, unknown>> }> {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
-    process.env.ANTHROPIC_API_KEY = "sk-a";
+    await keys.set("openai", "sk-o");
+    await keys.set("anthropic", "sk-a");
     const adapter = makeEchoAdapter();
     const sess = (await startSession({ tool: "brainstorm", prompt: "x" }, recDir))!;
     const result = await handleBrainstorm(
@@ -243,9 +227,8 @@ describe("AC2：runs=2 多轮执行 + 合并", () => {
   });
 
   it("两次 runDialogue、别名轮换、事件带 run 字段、合并调用在两次运行之后", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
-    process.env.ANTHROPIC_API_KEY = "sk-a";
+    await keys.set("openai", "sk-o");
+    await keys.set("anthropic", "sk-a");
     const adapter = makeKindedAdapter();
     const sess = (await startSession({ tool: "brainstorm", prompt: "x" }, recDir))!;
     const result = await handleBrainstorm(
@@ -327,9 +310,8 @@ describe("AC2：runs=2 多轮执行 + 合并", () => {
   });
 
   it("runs=3 + 合并调用失败：回退逐运行并列展示，isError 不翻转", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
-    process.env.ANTHROPIC_API_KEY = "sk-a";
+    await keys.set("openai", "sk-o");
+    await keys.set("anthropic", "sk-a");
     const adapter = makeStubAdapter(async (params) => {
       const sys = params.messages.find((m) => m.role === "system")?.content ?? "";
       if (sys.startsWith("你是多轮议事合并器")) throw new Error("merge boom");

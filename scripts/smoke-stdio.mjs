@@ -4,7 +4,9 @@
  *
  * 前置条件：已执行 `npm run build` 生成 dist/index.js。
  * 行为：
- *   1. 以 TALKIO_MOCK_PROVIDER=1 spawn `node dist/index.js`
+ *   1. 以 TALKIO_MOCK_PROVIDER=1 spawn `node dist/index.js`，并注入临时 keys.json
+ *      （TALKIO_KEYS_FILE，按 experts.json 的 provider 列表写入 dummy key，
+ *      覆盖 keys store 加载路径；mock 模式下密钥不参与凭据解析）
  *   2. 通过 @modelcontextprotocol/sdk Client + StdioClientTransport 建立连接
  *   3. 断言 listTools() 包含 list_cards / consult_experts / brainstorm
  *   4. 调用 list_cards，断言返回启用角色卡 id 与专家/模型展示名
@@ -15,9 +17,11 @@
  *      每轮 brainstorm 的流式增量通知
  *   9. 打印 PASS / FAIL，以 0 / 1 退出
  */
- 
+
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { LoggingMessageNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -30,6 +34,33 @@ const DEFAULT_CARD = "card-security-deepseek";
 const DEFAULT_EXPERT_NAME = "安全专家";
 const DEFAULT_EXPERT_ID = "security";
 const DEFAULT_MODEL_NAME = "deepseek-v4-flash";
+
+// ── 临时 keys.json 注入（09-30-provider-keys-ui）──
+// 按 experts.json 的 provider 列表写 dummy key，覆盖 keys store 的磁盘加载路径。
+const repoRoot = resolve(__dirname, "..");
+const expertsPath = resolve(repoRoot, "experts.json");
+let providers = {};
+try {
+  const cfg = JSON.parse(await readFile(expertsPath, "utf8"));
+  providers = cfg.providers ?? {};
+} catch {
+  providers = {}; // mock 模式下密钥不参与解析，读不到配置也能跑
+}
+const tmpKeysDir = await mkdtemp(resolve(tmpdir(), "talkio-smoke-keys-"));
+const keysFile = resolve(tmpKeysDir, "keys.json");
+await writeFile(
+  keysFile,
+  JSON.stringify({
+    version: 1,
+    providers: Object.fromEntries(
+      Object.keys(providers).map((pid) => [
+        pid,
+        { apiKey: `sk-smoke-dummy-${pid}`, updatedAt: new Date().toISOString() },
+      ]),
+    ),
+  }),
+  "utf8",
+);
 
 let failures = 0;
 
@@ -55,6 +86,7 @@ const transport = new StdioClientTransport({
   env: {
     ...process.env,
     TALKIO_MOCK_PROVIDER: "1",
+    TALKIO_KEYS_FILE: keysFile,
   },
   stderr: "pipe",
 });
@@ -198,6 +230,7 @@ check(
   } catch {
     // 忽略关闭阶段的异常，不影响判定
   }
+  await rm(tmpKeysDir, { recursive: true, force: true }).catch(() => {});
 }
 
 if (failures === 0) {

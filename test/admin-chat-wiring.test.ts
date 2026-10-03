@@ -104,7 +104,7 @@ describe("/api/chat → handleBrainstorm 接线（groupchat-p4 R1）", () => {
       configPath: path.join(dir, "experts.json"),
       recordsDir: dir,
       memoryDir,
-      config: stubConfig,
+      configRef: { config: stubConfig },
       logger,
     });
 
@@ -136,7 +136,7 @@ describe("/api/chat → handleBrainstorm 接线（groupchat-p4 R1）", () => {
       configPath: path.join(dir, "experts.json"),
       recordsDir: dir,
       memoryDir,
-      config: stubConfig,
+      configRef: { config: stubConfig },
       logger,
     });
     const res = makeSseReqRes(
@@ -155,7 +155,7 @@ describe("/api/chat → handleBrainstorm 接线（groupchat-p4 R1）", () => {
       configPath: path.join(dir, "experts.json"),
       recordsDir: dir,
       memoryDir,
-      config: stubConfig,
+      configRef: { config: stubConfig },
       logger,
     });
     const res = makeSseReqRes(
@@ -178,7 +178,7 @@ describe("/api/chat → handleBrainstorm 接线（groupchat-p4 R1）", () => {
       configPath: path.join(dir, "experts.json"),
       recordsDir: dir,
       memoryDir,
-      config: stubConfig,
+      configRef: { config: stubConfig },
       logger,
     });
     const res = makeSseReqRes(
@@ -200,7 +200,7 @@ describe("/api/chat → handleBrainstorm 接线（groupchat-p4 R1）", () => {
       configPath: path.join(dir, "experts.json"),
       recordsDir: dir,
       memoryDir,
-      config: stubConfig,
+      configRef: { config: stubConfig },
       logger,
     });
     const res = makeSseReqRes(

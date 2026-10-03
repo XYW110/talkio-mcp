@@ -8,7 +8,11 @@
 import { z } from "zod";
 import type { AppConfig, CardConfig } from "../types.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { hasProviderKey, missingKeyEnv, resolveCard } from "./select-cards.js";
+import {
+  hasProviderKey,
+  missingKeyReason,
+  resolveCard,
+} from "./select-cards.js";
 
 /** Zod raw shape for list_cards arguments (passed as inputSchema). */
 export const listCardsSchema = {
@@ -32,7 +36,8 @@ export interface CardSummary {
   temperature: number;
   enabled: boolean;
   ready: boolean;
-  missingEnv?: string;
+  /** 未就绪原因与指引（已就绪时缺省；绝不包含密钥任何形态）。 */
+  missingReason?: string;
 }
 
 /** Project a card config into the discovery payload (resolved names, no systemPrompt). */
@@ -53,7 +58,7 @@ export function summarizeCard(
     temperature: resolved?.expert.temperature ?? 0,
     enabled: card.enabled !== false,
     ready,
-    ...(ready ? {} : { missingEnv: missingKeyEnv(config, providerName) }),
+    ...(ready ? {} : { missingReason: missingKeyReason(config, providerName) }),
   };
 }
 
@@ -88,14 +93,14 @@ export async function handleListCards(
   };
   const lines = cards.map((c) => {
     const disabled = c.enabled ? "" : " · disabled";
-    const missing = c.ready ? "" : ` · 缺 ${c.missingEnv}`;
+    const missing = c.ready ? "" : ` · ${c.missingReason}`;
     return `- ${c.expertIcon} **${c.name}** (\`${c.id}\`) · ${c.provider}/${c.model} · temperature=${c.temperature}${disabled}${missing}`;
   });
   const header = includeDisabled
     ? `当前共 ${payload.totalCount} 张角色卡（含未启用）：`
     : `当前启用 ${payload.enabledCount} 张角色卡：`;
   const hint =
-    "调用 consult_experts / brainstorm 时，将 id 填入 cards 参数即可。缺 key 的卡仍可显式指定，但该项会失败。";
+    "调用 consult_experts / brainstorm 时，将 id 填入 cards 参数即可。未配置 API Key 的卡仍可显式指定，但该项会失败；在管理后台「渠道」页配置密钥后即时生效，无需重启。";
 
   return {
     content: [

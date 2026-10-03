@@ -20,7 +20,7 @@
  * 输出 PASS / FAIL，以 0 / 1 退出。
  */
 
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -166,6 +166,30 @@ if (baseUrlArg && mcpTokenArg) {
     ? resolve(repoRoot, "experts.json")
     : resolve(repoRoot, "experts.default.json");
 
+  // 临时 keys.json 注入（09-30-provider-keys-ui）：按 provider 列表写 dummy key，
+  // 覆盖 keys store 磁盘加载路径；mock 模式下密钥不参与凭据解析。
+  let providers = {};
+  try {
+    const cfg = JSON.parse(await readFile(expertsPath, "utf8"));
+    providers = cfg.providers ?? {};
+  } catch {
+    providers = {};
+  }
+  const keysFile = resolve(tmpDir, "keys.json");
+  await writeFile(
+    keysFile,
+    JSON.stringify({
+      version: 1,
+      providers: Object.fromEntries(
+        Object.keys(providers).map((pid) => [
+          pid,
+          { apiKey: `sk-smoke-dummy-${pid}`, updatedAt: new Date().toISOString() },
+        ]),
+      ),
+    }),
+    "utf8",
+  );
+
   const base = `http://127.0.0.1:${LOCAL_PORT}`;
   const child = spawn(
     process.execPath,
@@ -176,6 +200,7 @@ if (baseUrlArg && mcpTokenArg) {
         TALKIO_MOCK_PROVIDER: "1",
         TALKIO_ADMIN_TOKEN: adminToken,
         TALKIO_MCP_TOKENS_FILE: tokensFile,
+        TALKIO_KEYS_FILE: keysFile,
       },
       stdio: ["ignore", "ignore", "pipe"],
     },
@@ -213,6 +238,47 @@ if (baseUrlArg && mcpTokenArg) {
     } catch {
       /* 忽略 */
     }
+
+    // /api/keys：admin 门禁 401 + 掩码无明文（09-30-provider-keys-ui 红线）
+    const keysNoAuth = await fetch(new URL("/api/keys", base));
+    check("本地：无凭证 GET /api/keys → 401", keysNoAuth.status === 401, `实际 ${keysNoAuth.status}`);
+    try {
+      await keysNoAuth.text();
+    } catch {
+      /* 忽略 */
+    }
+    const keysAdmin = await fetch(new URL("/api/keys", base), {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    const keysBody = keysAdmin.status === 200 ? await keysAdmin.text() : "";
+    check(
+      "本地：带 admin token GET /api/keys → 200",
+      keysAdmin.status === 200,
+      `实际 ${keysAdmin.status}`,
+    );
+    const keysJson = (() => {
+      try {
+        return JSON.parse(keysBody);
+      } catch {
+        return [];
+      }
+    })();
+    check(
+      "本地：GET /api/keys 返回数组且每项含 providerId/hasKey",
+      Array.isArray(keysJson) &&
+        keysJson.every((k) => typeof k.providerId === "string" && typeof k.hasKey === "boolean"),
+      keysBody.slice(0, 200),
+    );
+    // 掩码红线（片段级）：dummy key 的固定头部 "sk-smoke-dummy-" 不出现在合法响应
+    // 字段（providerId/hasKey/指纹尾4位/updatedAt）中，其任何 ≥5 字符片段命中即泄漏。
+    const KEY_HEAD = "sk-smoke-dummy-";
+    const leaked = Object.keys(providers).filter((pid) => {
+      for (let i = 0; i + 5 <= KEY_HEAD.length; i++) {
+        if (keysBody.includes(KEY_HEAD.slice(i, i + 5))) return true;
+      }
+      return false;
+    });
+    check("本地：GET /api/keys 响应不含明文密钥（掩码红线）", leaked.length === 0, `泄漏渠道: ${leaked.join(",")}`);
 
     await checkListCards(base, mcpPlaintext);
   } finally {

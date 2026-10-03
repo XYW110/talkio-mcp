@@ -103,7 +103,7 @@ function makeHandle(memoryDir?: string) {
   return createAdminApi({
     configPath: path.join(dir, "experts.json"),
     memoryDir,
-    config,
+    configRef: { config },
     logger,
   });
 }

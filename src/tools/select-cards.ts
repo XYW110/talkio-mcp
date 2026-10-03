@@ -7,6 +7,7 @@
  */
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { isMockProviderEnabled } from "../providers/registry.js";
+import { getKeysStore } from "../keys/store.js";
 import type {
   AppConfig,
   CardConfig,
@@ -18,6 +19,9 @@ import { selectCardsBySignals } from "./signal-routing.js";
 
 /** Default cap for unattended consult / brainstorm. */
 export const DEFAULT_CARD_LIMIT = 3;
+
+/** 缺 key 统一指引文案（list_cards missingReason 与选卡跳过注记共用）。 */
+export const MISSING_KEY_HINT = "未配置 API Key（管理后台-渠道页）";
 
 /** 卡解析后的调用目标：卡 + 专家 + 真实模型名。 */
 export interface ResolvedCard {
@@ -52,7 +56,8 @@ export function toCardRefs(targets: ResolvedCard[]): Array<{
 
 export interface SkippedMissingKey {
   card: CardConfig;
-  apiKeyEnv: string;
+  /** 缺 key 原因与指引（MISSING_KEY_HINT 或 provider 未定义说明）。 */
+  missingReason: string;
 }
 
 export interface CardSelection {
@@ -76,7 +81,10 @@ export interface SelectCardsOptions {
   text?: string;
 }
 
-/** True when mock mode is on, or the provider's env var is non-empty. */
+/**
+ * True when mock mode is on, or the provider has a key in the keys store.
+ * 密钥来源 = keys store（keys.json，管理后台直配热生效），不读环境变量。
+ */
 export function hasProviderKey(
   config: AppConfig,
   providerName: string
@@ -84,16 +92,16 @@ export function hasProviderKey(
   if (isMockProviderEnabled()) return true;
   const provider = config.providers[providerName];
   if (!provider) return false;
-  const apiKey = process.env[provider.apiKeyEnv];
-  return Boolean(apiKey);
+  return Boolean(getKeysStore().get(providerName));
 }
 
-export function missingKeyEnv(
+/** 缺 key 原因文案：渠道未配置 key 的指引，或 provider 未定义的说明。 */
+export function missingKeyReason(
   config: AppConfig,
   providerName: string
 ): string {
   const provider = config.providers[providerName];
-  return provider?.apiKeyEnv ?? `未配置 provider "${providerName}"`;
+  return provider ? MISSING_KEY_HINT : `未配置 provider "${providerName}"`;
 }
 
 /** 通过 name 找到模型（不存在则 undefined）。 */
@@ -169,7 +177,7 @@ function selectDefault(
     } else {
       skippedMissingKey.push({
         card,
-        apiKeyEnv: missingKeyEnv(config, resolved.providerName),
+        missingReason: missingKeyReason(config, resolved.providerName),
       });
     }
   }
@@ -212,7 +220,7 @@ function selectBySignals(
     } else {
       skippedMissingKey.push({
         card,
-        apiKeyEnv: missingKeyEnv(config, resolved.providerName),
+        missingReason: missingKeyReason(config, resolved.providerName),
       });
     }
   }
@@ -291,7 +299,7 @@ export function formatSelectionNotes(
   }
   if (selection.skippedMissingKey.length > 0) {
     const items = selection.skippedMissingKey
-      .map((s) => `${s.card.name}（缺 ${s.apiKeyEnv}）`)
+      .map((s) => `${s.card.name}：${s.missingReason}`)
       .join("、");
     parts.push(`> 已跳过 ${items}`);
   }
@@ -338,7 +346,7 @@ export function noSelectedCardsResult(
   const skipped =
     selection.skippedMissingKey.length > 0
       ? selection.skippedMissingKey
-          .map((s) => `${s.card.name}（缺 ${s.apiKeyEnv}）`)
+          .map((s) => `${s.card.name}：${s.missingReason}`)
           .join("、")
       : "";
   const reason = skipped

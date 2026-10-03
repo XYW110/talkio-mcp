@@ -310,7 +310,7 @@ describe("鉴权门（真实 listener 集成）", () => {
     // 接入真实 admin API，验证 gate 放行后的完整链路
     const handleAdmin = createAdminApi({
       configPath: path.join(dir, "experts.json"),
-      config: stubConfig,
+      configRef: { config: stubConfig },
       logger,
       mcpTokens: store,
     });
@@ -362,7 +362,7 @@ describe("admin API tokens CRUD + auth/check", () => {
   it("GET /api/auth/check 返回 {role:admin}", async () => {
     const handle = createAdminApi({
       configPath: path.join(dir, "experts.json"),
-      config: stubConfig,
+      configRef: { config: stubConfig },
       logger,
       mcpTokens: store,
     });
@@ -375,7 +375,7 @@ describe("admin API tokens CRUD + auth/check", () => {
   it("POST 生成返回明文一次；GET 列表不含明文/哈希；DELETE 后立即失效", async () => {
     const handle = createAdminApi({
       configPath: path.join(dir, "experts.json"),
-      config: stubConfig,
+      configRef: { config: stubConfig },
       logger,
       mcpTokens: store,
     });
@@ -440,7 +440,7 @@ describe("admin API tokens CRUD + auth/check", () => {
   it("POST name 缺失/过长 → 400", async () => {
     const handle = createAdminApi({
       configPath: path.join(dir, "experts.json"),
-      config: stubConfig,
+      configRef: { config: stubConfig },
       logger,
       mcpTokens: store,
     });
@@ -458,7 +458,7 @@ describe("admin API tokens CRUD + auth/check", () => {
   it("mcpTokens 未注入 → tokens 路由 404", async () => {
     const handle = createAdminApi({
       configPath: path.join(dir, "experts.json"),
-      config: stubConfig,
+      configRef: { config: stubConfig },
       logger,
     });
     const list = makeReqRes("GET", "/api/tokens");

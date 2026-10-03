@@ -88,7 +88,7 @@ afterEach(async () => {
 describe("admin API /api/records", () => {
 
   it("带 run 字段的事件可正常读取；旧 JSONL（无 run 字段）回归不变", async () => {
-    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, config: stubConfig, logger });
+    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, configRef: { config: stubConfig }, logger });
 
     // 新版（P3-A runs=2）：turn/round_end/vote/summary 事件带 run 字段
     const sess = (await startSession({ tool: "brainstorm", prompt: "多轮" }, dir))!;
@@ -134,7 +134,7 @@ describe("admin API /api/records", () => {
     sess.finish({ status: "ok", report: "R" });
     await sess.flush();
 
-    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, config: stubConfig, logger });
+    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, configRef: { config: stubConfig }, logger });
 
     // 列表
     const listRes = makeReqRes("GET", "/api/records");
@@ -158,7 +158,7 @@ describe("admin API /api/records", () => {
   });
 
   it("未知 id 返回 404", async () => {
-    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, config: stubConfig, logger });
+    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, configRef: { config: stubConfig }, logger });
     const res = makeReqRes("GET", "/api/records/20260101-000000-ffff");
     const handled = await handle(res.req, res.res);
     expect(handled).toBe(true);
@@ -166,7 +166,7 @@ describe("admin API /api/records", () => {
   });
 
   it("路径穿越 id 返回 404，不读文件", async () => {
-    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, config: stubConfig, logger });
+    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, configRef: { config: stubConfig }, logger });
     const res = makeReqRes("GET", "/api/records/..%2F..%2Fexperts.json");
     const handled = await handle(res.req, res.res);
     expect(handled).toBe(true);
@@ -174,7 +174,7 @@ describe("admin API /api/records", () => {
   });
 
   it("recordsDir 未配置时列表返回空数组、详情 404", async () => {
-    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), config: stubConfig, logger });
+    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), configRef: { config: stubConfig }, logger });
 
     const listRes = makeReqRes("GET", "/api/records");
     await handle(listRes.req, listRes.res);
@@ -194,7 +194,7 @@ describe("admin API /api/records", () => {
     await a.flush();
     await b.flush();
 
-    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, config: stubConfig, logger });
+    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, configRef: { config: stubConfig }, logger });
     const res = makeReqRes("GET", "/api/records?limit=1");
     await handle(res.req, res.res);
     const list = JSON.parse(res.body()) as unknown[];
@@ -209,7 +209,7 @@ describe("admin API /api/records", () => {
     await a.flush();
     await b.flush();
 
-    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, config: stubConfig, logger });
+    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, configRef: { config: stubConfig }, logger });
     const res = makeReqRes("DELETE", "/api/records");
     (res.req as { body?: unknown }).body = JSON.stringify({
       ids: [a.id, "20260101-000000-ffff", "..%2F..%2Fexperts.json"],
@@ -234,7 +234,7 @@ describe("admin API /api/records", () => {
     await a.flush();
     await b.flush();
 
-    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, config: stubConfig, logger });
+    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, configRef: { config: stubConfig }, logger });
     const res = makeReqRes("DELETE", "/api/records");
     const handled = await handle(res.req, res.res);
     expect(handled).toBe(true);
@@ -247,14 +247,14 @@ describe("admin API /api/records", () => {
   });
 
   it("DELETE /api/records 空 ids 数组视为清空；recordsDir 未配置返回 404", async () => {
-    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, config: stubConfig, logger });
+    const handle = createAdminApi({ configPath: path.join(dir, "experts.json"), recordsDir: dir, configRef: { config: stubConfig }, logger });
     const res = makeReqRes("DELETE", "/api/records");
     (res.req as { body?: unknown }).body = JSON.stringify({ ids: [] });
     await handle(res.req, res.res);
     expect(res.status()).toBe(200);
     expect(JSON.parse(res.body())).toEqual({ ok: true, deleted: 0 });
 
-    const noDir = createAdminApi({ configPath: path.join(dir, "experts.json"), config: stubConfig, logger });
+    const noDir = createAdminApi({ configPath: path.join(dir, "experts.json"), configRef: { config: stubConfig }, logger });
     const res404 = makeReqRes("DELETE", "/api/records");
     await noDir(res404.req, res404.res);
     expect(res404.status()).toBe(404);

@@ -1,40 +1,26 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AppConfig, CardConfig, ExpertConfig, ModelConfig } from "../src/types.js";
+import type { KeysStore } from "../src/keys/store.js";
 import {
   DEFAULT_CARD_LIMIT,
+  MISSING_KEY_HINT,
   formatSelectionNotes,
   resolveCard,
   selectCardsForTool,
 } from "../src/tools/select-cards.js";
+import { installKeysStore } from "./helpers/keys.js";
 
-const ENV_KEYS = [
-  "OPENAI_API_KEY",
-  "ANTHROPIC_API_KEY",
-  "DEEPSEEK_API_KEY",
-  "TALKIO_MOCK_PROVIDER",
-] as const;
+/** 渠道密钥 fixture：进程级 keys store（内存模式），替代旧 env 方案 */
+let keys: KeysStore;
 
-const savedEnv: Record<string, string | undefined> = {};
+beforeEach(() => {
+  keys = installKeysStore();
+});
 
-function snapshotEnv(): void {
-  for (const key of ENV_KEYS) {
-    savedEnv[key] = process.env[key];
-  }
-}
-
-function restoreEnv(): void {
-  for (const key of ENV_KEYS) {
-    const value = savedEnv[key];
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
-}
-
-function clearKeys(): void {
-  for (const key of ENV_KEYS) {
-    delete process.env[key];
-  }
-}
+// mock 开关仍走 env（registry 读取）；用完即清，避免影响同 worker 后续文件
+afterEach(() => {
+  delete process.env.TALKIO_MOCK_PROVIDER;
+});
 
 function makeExpert(id: string, overrides: Partial<ExpertConfig> = {}): ExpertConfig {
   return {
@@ -126,12 +112,6 @@ function councilConfig(): AppConfig {
   };
 }
 
-snapshotEnv();
-
-afterEach(() => {
-  restoreEnv();
-});
-
 describe("resolveCard", () => {
   it("卡解析出专家,provider 名与真实模型名", () => {
     const config = councilConfig();
@@ -151,9 +131,8 @@ describe("resolveCard", () => {
 });
 
 describe("selectCardsForTool 默认路径", () => {
-  it("只保留 enabled ∩ 有 key，再按原顺序截到 defaultLimit", () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-test";
+  it("只保留 enabled ∩ 有 key，再按原顺序截到 defaultLimit", async () => {
+    await keys.set("openai", "sk-test");
     const selection = selectCardsForTool(councilConfig(), undefined, {
       defaultLimit: DEFAULT_CARD_LIMIT,
     });
@@ -166,20 +145,17 @@ describe("selectCardsForTool 默认路径", () => {
       "c-performance",
       "c-product",
     ]);
-    expect(selection.skippedMissingKey.map((s) => s.apiKeyEnv)).toEqual([
-      "ANTHROPIC_API_KEY",
-      "DEEPSEEK_API_KEY",
-      "DEEPSEEK_API_KEY",
-    ]);
+    expect(
+      selection.skippedMissingKey.map((s) => s.missingReason)
+    ).toEqual([MISSING_KEY_HINT, MISSING_KEY_HINT, MISSING_KEY_HINT]);
     expect(selection.truncated).toEqual([]);
     expect(selection.ignored).toEqual([]);
   });
 
-  it("五卡全有 key 时默认只取前 3，truncated 含后 2", () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
-    process.env.ANTHROPIC_API_KEY = "sk-a";
-    process.env.DEEPSEEK_API_KEY = "sk-d";
+  it("五卡全有 key 时默认只取前 3，truncated 含后 2", async () => {
+    await keys.set("openai", "sk-o");
+    await keys.set("anthropic", "sk-a");
+    await keys.set("deepseek", "sk-d");
     const selection = selectCardsForTool(councilConfig(), undefined, {
       defaultLimit: DEFAULT_CARD_LIMIT,
     });
@@ -195,9 +171,8 @@ describe("selectCardsForTool 默认路径", () => {
     expect(selection.skippedMissingKey).toEqual([]);
   });
 
-  it("空数组与省略 ids 走同一默认路径", () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-test";
+  it("空数组与省略 ids 走同一默认路径", async () => {
+    await keys.set("openai", "sk-test");
     const omitted = selectCardsForTool(councilConfig(), undefined, {
       defaultLimit: DEFAULT_CARD_LIMIT,
     });
@@ -210,7 +185,6 @@ describe("selectCardsForTool 默认路径", () => {
   });
 
   it("mock 模式把全部 enabled 视为有 key，再截 3 卡", () => {
-    clearKeys();
     process.env.TALKIO_MOCK_PROVIDER = "1";
     const selection = selectCardsForTool(councilConfig(), undefined, {
       defaultLimit: DEFAULT_CARD_LIMIT,
@@ -229,9 +203,8 @@ describe("selectCardsForTool 默认路径", () => {
 });
 
 describe("selectCardsForTool 显式路径", () => {
-  it("显式 4 个 id 不截成 3，也不因缺 key 剔除", () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-test";
+  it("显式 4 个 id 不截成 3，也不因缺 key 剔除", async () => {
+    await keys.set("openai", "sk-test");
     const selection = selectCardsForTool(
       councilConfig(),
       ["c-architect", "c-security", "c-performance", "c-reviewer"],
@@ -247,9 +220,8 @@ describe("selectCardsForTool 显式路径", () => {
     expect(selection.truncated).toEqual([]);
   });
 
-  it("未知或未启用 id 进入 ignored", () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-test";
+  it("未知或未启用 id 进入 ignored", async () => {
+    await keys.set("openai", "sk-test");
     const config = councilConfig();
     config.cards[1] = makeCard("c-security", "security", "m-anthropic", {
       enabled: false,
@@ -267,10 +239,9 @@ describe("selectCardsForTool 显式路径", () => {
 });
 
 describe("formatSelectionNotes", () => {
-  it("缺 key 与截断注记同时出现（角色卡）", () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
-    process.env.ANTHROPIC_API_KEY = "sk-a";
+  it("缺 key 与截断注记同时出现（角色卡）", async () => {
+    await keys.set("openai", "sk-o");
+    await keys.set("anthropic", "sk-a");
     // deepseek 缺 key → c-performance/c-product 跳过
     // 有 key: c-architect, c-security, c-reviewer；limit=2 → 截掉 c-reviewer
     const selection = selectCardsForTool(councilConfig(), undefined, {
@@ -278,7 +249,7 @@ describe("formatSelectionNotes", () => {
     });
     const notes = formatSelectionNotes(selection, 2);
     expect(notes).toContain(
-      "已跳过 c-performance（缺 DEEPSEEK_API_KEY）、c-product（缺 DEEPSEEK_API_KEY）"
+      `已跳过 c-performance：${MISSING_KEY_HINT}、c-product：${MISSING_KEY_HINT}`
     );
     expect(notes).toContain("默认最多 2 张角色卡，未包含: c-reviewer");
   });

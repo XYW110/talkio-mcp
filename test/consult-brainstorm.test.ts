@@ -9,6 +9,8 @@ import type {
 } from "../src/providers/adapter.js";
 import type { AppConfig, CardConfig, ExpertConfig, ModelConfig } from "../src/types.js";
 import { startSession, type RecordSession } from "../src/records/store.js";
+import type { KeysStore } from "../src/keys/store.js";
+import { installKeysStore } from "./helpers/keys.js";
 
 const { stubHolder } = vi.hoisted(() => ({
   stubHolder: { current: undefined as ProviderAdapter | undefined },
@@ -36,30 +38,8 @@ import {
   VOTE_INSTRUCTION,
 } from "../src/orchestrator/dialogue.js";
 
-const ENV_KEYS = [
-  "OPENAI_API_KEY",
-  "ANTHROPIC_API_KEY",
-  "DEEPSEEK_API_KEY",
-  "TALKIO_MOCK_PROVIDER",
-] as const;
-
-const savedEnv: Record<string, string | undefined> = {};
-
-function snapshotEnv(): void {
-  for (const key of ENV_KEYS) savedEnv[key] = process.env[key];
-}
-
-function restoreEnv(): void {
-  for (const key of ENV_KEYS) {
-    const value = savedEnv[key];
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
-}
-
-function clearKeys(): void {
-  for (const key of ENV_KEYS) delete process.env[key];
-}
+/** 渠道密钥 fixture：进程级 keys store（内存模式），替代旧 env 方案 */
+let keys: KeysStore;
 
 function textOf(result: {
   content: Array<{ type: string; text?: string }>;
@@ -167,14 +147,14 @@ function councilConfig(adapter: ProviderAdapter): AppConfig {
   };
 }
 
-snapshotEnv();
-
 beforeEach(() => {
   stubHolder.current = undefined;
+  keys = installKeysStore();
 });
 
+// mock 开关仍走 env（registry 读取）；用完即清，避免影响同 worker 后续文件
 afterEach(() => {
-  restoreEnv();
+  delete process.env.TALKIO_MOCK_PROVIDER;
 });
 
 describe("handleConsultExperts", () => {
@@ -190,8 +170,7 @@ describe("handleConsultExperts", () => {
   });
 
   it("只有 OPENAI_API_KEY 时默认不打缺 key 卡，报告含跳过说明", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-test";
+    await keys.set("openai", "sk-test");
     const adapter = makeEchoAdapter();
     const result = await handleConsultExperts(
       { question: "如何扩展？" },
@@ -201,17 +180,16 @@ describe("handleConsultExperts", () => {
     const text = textOf(result);
     expect(text).toContain("c-architect");
     expect(text).toContain("c-reviewer");
-    expect(text).not.toMatch(/missing env var/);
-    expect(text).toContain("已跳过 c-security（缺 ANTHROPIC_API_KEY）");
-    expect(text).toContain("c-performance（缺 DEEPSEEK_API_KEY）");
+    expect(text).not.toMatch(/missing key/);
+    expect(text).toContain("已跳过 c-security：未配置 API Key（管理后台-渠道页）");
+    expect(text).toContain("c-performance：未配置 API Key（管理后台-渠道页）");
     expect(adapter.calls).toHaveLength(2);
   });
 
   it("五卡全有 key 时默认只打前 3 卡", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
-    process.env.ANTHROPIC_API_KEY = "sk-a";
-    process.env.DEEPSEEK_API_KEY = "sk-d";
+    await keys.set("openai", "sk-o");
+    await keys.set("anthropic", "sk-a");
+    await keys.set("deepseek", "sk-d");
     const adapter = makeEchoAdapter();
     const result = await handleConsultExperts(
       { question: "x" },
@@ -225,8 +203,7 @@ describe("handleConsultExperts", () => {
   });
 
   it("显式 4 个 id 仍打 4 卡；点到缺 key 的卡该项失败且全部失败才 isError", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-test";
+    await keys.set("openai", "sk-test");
     const adapter = makeEchoAdapter();
     const config = councilConfig(adapter);
 
@@ -246,8 +223,8 @@ describe("handleConsultExperts", () => {
     expect(partialText).toContain("c-performance");
     expect(partialText).toContain("c-reviewer");
     expect(partialText).not.toContain("默认最多 3 张角色卡");
-    expect(partialText).toMatch(/missing env var ANTHROPIC_API_KEY/);
-    expect(partialText).toMatch(/missing env var DEEPSEEK_API_KEY/);
+    expect(partialText).toMatch(/Provider anthropic: missing key/);
+    expect(partialText).toMatch(/Provider deepseek: missing key/);
 
     adapter.calls.length = 0;
     const onlyMissing = await handleConsultExperts(
@@ -259,7 +236,6 @@ describe("handleConsultExperts", () => {
   });
 
   it("默认无人可调用时 isError 并说明缺 key，不打 adapter", async () => {
-    clearKeys();
     const adapter = makeEchoAdapter();
     const result = await handleConsultExperts(
       { question: "x" },
@@ -267,7 +243,7 @@ describe("handleConsultExperts", () => {
     );
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain("没有可调用的角色卡");
-    expect(textOf(result)).toContain("缺 OPENAI_API_KEY");
+    expect(textOf(result)).toContain("未配置 API Key（管理后台-渠道页）");
     expect(adapter.calls).toHaveLength(0);
   });
 });
@@ -285,10 +261,9 @@ describe("handleBrainstorm", () => {
   });
 
   it("未传参时 rounds=1 且默认总结：三把 key 齐时 3 次作答 + 1 次总结", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
-    process.env.ANTHROPIC_API_KEY = "sk-a";
-    process.env.DEEPSEEK_API_KEY = "sk-d";
+    await keys.set("openai", "sk-o");
+    await keys.set("anthropic", "sk-a");
+    await keys.set("deepseek", "sk-d");
     const adapter = makeEchoAdapter();
     const result = await handleBrainstorm(
       { topic: "落地路径" },
@@ -301,8 +276,7 @@ describe("handleBrainstorm", () => {
   });
 
 it("显式 rounds=2 summarize=true 仍按用户指定跑", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-test";
+    await keys.set("openai", "sk-test");
     const adapter = makeEchoAdapter();
     const result = await handleBrainstorm(
       {
@@ -341,8 +315,7 @@ describe("会话记录落盘（record wiring）", () => {
   }
 
   it("consult 生成的记录含 meta/cards/card_result/done，且 done 带 usage", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-test";
+    await keys.set("openai", "sk-test");
     const adapter = makeEchoAdapter();
     const sess = (await startSession(
       { tool: "consult_experts", prompt: "如何扩展？" },
@@ -368,8 +341,7 @@ expect(result.isError).not.toBe(true);
   });
 
   it("brainstorm 记录含全轮次 turn/round_end 与可选 summary", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-test";
+    await keys.set("openai", "sk-test");
     const adapter = makeEchoAdapter();
     const sess = (await createSession("brainstorm", recDir))!;
     const result = await handleBrainstorm(
@@ -398,8 +370,7 @@ expect(result.isError).not.toBe(true);
   });
 
   it("vote=true 时记录含一条按轮聚合的 vote 事件（round_end 后、summary 前）", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-test";
+    await keys.set("openai", "sk-test");
     const adapter = makeEchoAdapter();
     const sess = (await createSession("brainstorm", recDir))!;
     const result = await handleBrainstorm(
@@ -449,9 +420,8 @@ expect(result.isError).not.toBe(true);
 
 describe("互评投票与裁决者（task 09-13-peer-review-judge）", () => {
   it("vote=true：报告含互评投票段与代号对照，投票不占内容轮次", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
-    process.env.ANTHROPIC_API_KEY = "sk-a";
+    await keys.set("openai", "sk-o");
+    await keys.set("anthropic", "sk-a");
     const adapter = makeEchoAdapter();
     const result = await handleBrainstorm(
       {
@@ -479,9 +449,8 @@ describe("互评投票与裁决者（task 09-13-peer-review-judge）", () => {
   });
 
   it("vote=true + relay：忽略 vote，行为同现状", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
-    process.env.ANTHROPIC_API_KEY = "sk-a";
+    await keys.set("openai", "sk-o");
+    await keys.set("anthropic", "sk-a");
     const adapter = makeEchoAdapter();
     const result = await handleBrainstorm(
       {
@@ -500,9 +469,8 @@ describe("互评投票与裁决者（task 09-13-peer-review-judge）", () => {
   });
 
   it("judgeCard 有效：裁决卡退出议事并由其综合，报告标注裁决者", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
-    process.env.ANTHROPIC_API_KEY = "sk-a";
+    await keys.set("openai", "sk-o");
+    await keys.set("anthropic", "sk-a");
     const adapter = makeEchoAdapter();
     const result = await handleBrainstorm(
       {
@@ -522,9 +490,8 @@ describe("互评投票与裁决者（task 09-13-peer-review-judge）", () => {
   });
 
   it("judgeCard 无效：回退第一张卡并在报告注明", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
-    process.env.ANTHROPIC_API_KEY = "sk-a";
+    await keys.set("openai", "sk-o");
+    await keys.set("anthropic", "sk-a");
     const adapter = makeEchoAdapter();
     const result = await handleBrainstorm(
       {
@@ -554,10 +521,9 @@ describe("信号路由选卡（task 09-13-council-enhancement-p2）", () => {
   }
 
   it("consult select:auto：问题命中 sql-data 时只调用对应信号卡，notes 注明命中", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
-    process.env.ANTHROPIC_API_KEY = "sk-a";
-    process.env.DEEPSEEK_API_KEY = "sk-d";
+    await keys.set("openai", "sk-o");
+    await keys.set("anthropic", "sk-a");
+    await keys.set("deepseek", "sk-d");
     const adapter = makeEchoAdapter();
     const result = await handleConsultExperts(
       { question: "这个 SQL 查询优化怎么做？", select: "auto" },
@@ -573,10 +539,9 @@ describe("信号路由选卡（task 09-13-council-enhancement-p2）", () => {
   });
 
   it("consult select:auto：零命中回退默认卡并在 notes 注明", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
-    process.env.ANTHROPIC_API_KEY = "sk-a";
-    process.env.DEEPSEEK_API_KEY = "sk-d";
+    await keys.set("openai", "sk-o");
+    await keys.set("anthropic", "sk-a");
+    await keys.set("deepseek", "sk-d");
     const adapter = makeEchoAdapter();
     const result = await handleConsultExperts(
       { question: "今天天气怎么样", select: "auto" },
@@ -589,9 +554,8 @@ describe("信号路由选卡（task 09-13-council-enhancement-p2）", () => {
   });
 
   it("显式 cards + select:auto：auto 被忽略并在 notes 注明", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
-    process.env.ANTHROPIC_API_KEY = "sk-a";
+    await keys.set("openai", "sk-o");
+    await keys.set("anthropic", "sk-a");
     const adapter = makeEchoAdapter();
     const result = await handleConsultExperts(
       {
@@ -610,10 +574,9 @@ describe("信号路由选卡（task 09-13-council-enhancement-p2）", () => {
   });
 
   it("红线 AC1 回归：不传 select 时信号标签不参与选卡，报告无 auto 注记", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
-    process.env.ANTHROPIC_API_KEY = "sk-a";
-    process.env.DEEPSEEK_API_KEY = "sk-d";
+    await keys.set("openai", "sk-o");
+    await keys.set("anthropic", "sk-a");
+    await keys.set("deepseek", "sk-d");
     const adapter = makeEchoAdapter();
     const result = await handleConsultExperts(
       { question: "这个 SQL 查询优化怎么做？" },
@@ -628,9 +591,8 @@ describe("信号路由选卡（task 09-13-council-enhancement-p2）", () => {
   });
 
   it("brainstorm select:auto：主题命中 security 时只调用对应信号卡", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
-    process.env.ANTHROPIC_API_KEY = "sk-a";
+    await keys.set("openai", "sk-o");
+    await keys.set("anthropic", "sk-a");
     const adapter = makeEchoAdapter();
     const result = await handleBrainstorm(
       { topic: "安全鉴权方案评审", select: "auto" },
@@ -670,8 +632,7 @@ describe("推理策略注入（task 09-13-council-enhancement P1-B）", () => {
   });
 
   it("consult：strategy=adversarial 的专家 system prompt 含对抗式指令", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-test";
+    await keys.set("openai", "sk-test");
     const adapter = makeEchoAdapter();
     const config = councilConfig(adapter);
     config.experts[0] = makeExpert("architect", { reasoningStrategy: "adversarial" });
@@ -689,8 +650,7 @@ describe("推理策略注入（task 09-13-council-enhancement P1-B）", () => {
   });
 
   it("consult：缺省专家 system prompt 与基线逐字节一致（快照断言）", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-test";
+    await keys.set("openai", "sk-test");
     // 无策略
     const plain = makeEchoAdapter();
     await handleConsultExperts(
@@ -714,8 +674,7 @@ describe("推理策略注入（task 09-13-council-enhancement P1-B）", () => {
   });
 
   it("brainstorm：strategy=systematic 的专家各轮 system prompt 均注入指令", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-test";
+    await keys.set("openai", "sk-test");
     const adapter = makeEchoAdapter();
     const config = councilConfig(adapter);
     config.experts[0] = makeExpert("architect", { reasoningStrategy: "systematic" });
@@ -752,8 +711,7 @@ describe("claim-0 注入与报告（task 09-26-debate-evidence-grounding）", ()
   });
 
   it("brainstorm + context（debate）：第 1 轮盲答不含 context，第 2 轮注入 claim-0，报告含小节（AC2/AC6）", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-test";
+    await keys.set("openai", "sk-test");
     const adapter = makeEchoAdapter();
     const result = await handleBrainstorm(
       {
@@ -792,8 +750,7 @@ describe("claim-0 注入与报告（task 09-26-debate-evidence-grounding）", ()
   });
 
   it("brainstorm 无 context：报告不含 claim-0 小节（字节不变红线）", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-test";
+    await keys.set("openai", "sk-test");
     const adapter = makeEchoAdapter();
     const result = await handleBrainstorm(
       { topic: "落地路径", cards: ["c-architect"], rounds: 1, summarize: false },
@@ -804,8 +761,7 @@ describe("claim-0 注入与报告（task 09-26-debate-evidence-grounding）", ()
   });
 
   it("brainstorm context 为纯空白：等价于未传（无 claim-0 小节）", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-test";
+    await keys.set("openai", "sk-test");
     const adapter = makeEchoAdapter();
     const result = await handleBrainstorm(
       {
@@ -824,8 +780,7 @@ describe("claim-0 注入与报告（task 09-26-debate-evidence-grounding）", ()
 
 describe("魔鬼代言人轮换与自投标记（task 09-27-debate-quality-p3）", () => {
   it("debate rounds=2：第2轮恰一位专家 prompt 含指令，报告含轮换小节（AC3/AC4）", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-test";
+    await keys.set("openai", "sk-test");
     const seen: string[] = [];
     const adapter = makeStubAdapter(async (params) => {
       seen.push(String(params.messages.at(-1)?.content ?? ""));
@@ -854,8 +809,7 @@ describe("魔鬼代言人轮换与自投标记（task 09-27-debate-quality-p3）
   });
 
   it("relay：无轮换小节、无指令注入（缺省零字节）", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-test";
+    await keys.set("openai", "sk-test");
     const adapter = makeEchoAdapter();
     const result = await handleBrainstorm(
       {
@@ -872,8 +826,7 @@ describe("魔鬼代言人轮换与自投标记（task 09-27-debate-quality-p3）
   });
 
   it("自投票文：报告显式标记自投（无效票），vote 事件携带 selfVote=true（AC2）", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-test";
+    await keys.set("openai", "sk-test");
     // 投票阶段票文只提及本人别名 → 自投；种子阶段正常作答
     const adapter = makeStubAdapter(async (params) => {
       const sys = String(params.messages[0]?.content ?? "");
@@ -953,8 +906,7 @@ describe("evidence 参数与 SP 聚合（task 09-27-sp-evidence-aggregation）",
   });
 
   it("evidence 端到端：debate 各轮 prompt 注入证据库（空白项跳过），报告含证据库小节（AC1/AC2）", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-test";
+    await keys.set("openai", "sk-test");
     const adapter = makeEchoAdapter();
     const result = await handleBrainstorm(
       {
@@ -984,10 +936,9 @@ describe("evidence 参数与 SP 聚合（task 09-27-sp-evidence-aggregation）",
   });
 
   it("SP 聚合端到端：报告一致态，vote 事件携带 predictions 与顶层 spWinner（additive，AC3/AC5）", async () => {
-    clearKeys();
-    process.env.OPENAI_API_KEY = "sk-o";
-    process.env.ANTHROPIC_API_KEY = "sk-a";
-    process.env.DEEPSEEK_API_KEY = "sk-d";
+    await keys.set("openai", "sk-o");
+    await keys.set("anthropic", "sk-a");
+    await keys.set("deepseek", "sk-d");
     // 3 卡投票：A→B、B→C、C→B（多数=B）；预测 A:[B,C] B:[A,C] C:[A,B]
     // actual: A=0, B=2/3, C=1/3；predicted: 各 1/3 → SP=专家B = 多数赢家
     const adapter = makeStubAdapter(async (params) => {
@@ -1067,7 +1018,7 @@ describe("evidence 参数与 SP 聚合（task 09-27-sp-evidence-aggregation）",
 // ============================================================
 describe("handleBrainstorm interjections 校验（groupchat-strengths AC3）", () => {
   it("rounds=1 时任何插话都被拒绝（无可注入的下一轮），零 LLM 调用", async () => {
-    process.env.OPENAI_API_KEY = "k";
+    await keys.set("openai", "k");
     const adapter = makeEchoAdapter();
     const config = councilConfig(adapter);
 
@@ -1087,7 +1038,7 @@ describe("handleBrainstorm interjections 校验（groupchat-strengths AC3）", (
   });
 
   it("afterRound 超出 [1, rounds-1] → 校验错误并指出合法范围", async () => {
-    process.env.OPENAI_API_KEY = "k";
+    await keys.set("openai", "k");
     const adapter = makeEchoAdapter();
     const config = councilConfig(adapter);
 
@@ -1107,7 +1058,7 @@ describe("handleBrainstorm interjections 校验（groupchat-strengths AC3）", (
   });
 
   it("空 message → 校验错误", async () => {
-    process.env.OPENAI_API_KEY = "k";
+    await keys.set("openai", "k");
     const adapter = makeEchoAdapter();
     const config = councilConfig(adapter);
 
@@ -1128,7 +1079,7 @@ describe("handleBrainstorm interjections 校验（groupchat-strengths AC3）", (
 
 describe("handleBrainstorm 记忆接线（groupchat-strengths AC4/AC5）", () => {
   it("deps.memoryDir + remember 缺省：末轮收获落盘 memory/<expertId>.jsonl（redactPII 生效）", async () => {
-    process.env.OPENAI_API_KEY = "k";
+    await keys.set("openai", "k");
     const dir = await mkdtemp(path.join(tmpdir(), "talkio-mem-"));
     try {
       // 2 轮 × 1 卡：轮 2（末轮）回答带记忆行（含 PII，验证脱敏）
@@ -1159,7 +1110,7 @@ describe("handleBrainstorm 记忆接线（groupchat-strengths AC4/AC5）", () =>
   });
 
   it("memory:false 或无 memoryDir → 不读不写，行为与旧版一致", async () => {
-    process.env.OPENAI_API_KEY = "k";
+    await keys.set("openai", "k");
     const dir = await mkdtemp(path.join(tmpdir(), "talkio-mem-"));
     try {
       const adapter = makeStubAdapter(async () => ({
@@ -1184,7 +1135,7 @@ describe("handleBrainstorm 记忆接线（groupchat-strengths AC4/AC5）", () =>
   });
 
   it("已有记忆文件时注入该专家 prompt 头部（consult 同链路）", async () => {
-    process.env.OPENAI_API_KEY = "k";
+    await keys.set("openai", "k");
     const dir = await mkdtemp(path.join(tmpdir(), "talkio-mem-"));
     try {
       const { appendMemory } = await import("../src/experts/memory.js");

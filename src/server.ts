@@ -26,11 +26,22 @@ export const SERVER_NAME = "talkio-mcp-expert-council";
 export const SERVER_VERSION = "0.1.0";
 
 /**
- * Create and configure the MCP server. The config is captured in the closure
- * of each tool handler so the handlers receive it without globals.
+ * 可变配置持有者（R4 热生效）：index.ts 构建后传给 createServer 与 createAdminApi，
+ * admin PUT /api/config 校验通过后原位替换 `.config` 属性——工具 handler
+ * 每次调用都取当前值，改配置无需重启。密钥热生效走 keys store 单例
+ * （src/keys/store.ts），不经过本持有者。
+ */
+export interface ServerConfigRef {
+  config: AppConfig;
+}
+
+/**
+ * Create and configure the MCP server. The config holder is captured in the
+ * closure of each tool handler; handlers read `state.config` on every call so
+ * config swaps (admin PUT /api/config) take effect without a restart.
  */
 export function createServer(
-  config: AppConfig,
+  state: ServerConfigRef,
   options?: { recordsDir?: string; memoryDir?: string }
 ): McpServer {
   const server = new McpServer(
@@ -48,8 +59,10 @@ export function createServer(
   // 工具开关（P2-B）：disabledTools 列出的工具不注册（tools/list 不可见、调用
   // 返回未知工具）。核心保护名单在 loadConfig 校验（禁用核心/未知工具启动即报错），
   // 这里逐个工具注册前再兜底检查一次。
+  // 注意：注册发生在启动时，读取的是 state.config 的启动快照——disabledTools
+  // 的修改仍需重启才反映到工具注册面（其余配置/密钥改动均热生效）。
   const isToolDisabled = (name: string): boolean =>
-    config.disabledTools?.includes(name) ?? false;
+    state.config.disabledTools?.includes(name) ?? false;
 
   // list_cards: discover configured role-card ids before consulting.
   if (!isToolDisabled("list_cards")) {
@@ -62,7 +75,7 @@ export function createServer(
       inputSchema: listCardsSchema,
     },
     async (args) => {
-      const result = await handleListCards(args, config);
+      const result = await handleListCards(args, state.config);
       return result;
     }
     );
@@ -85,7 +98,7 @@ export function createServer(
           { tool: "consult_experts", prompt: args.question, context: args.context },
           recordsDir
         )) ?? undefined;
-      const result = await handleConsultExperts(args, config, {
+      const result = await handleConsultExperts(args, state.config, {
         notifier,
         record,
         memoryDir,
@@ -117,7 +130,7 @@ export function createServer(
           },
           recordsDir
         )) ?? undefined;
-      const result = await handleBrainstorm(args, config, { notifier, record, memoryDir });
+      const result = await handleBrainstorm(args, state.config, { notifier, record, memoryDir });
       finishOnError(record, result);
       return result;
     }
@@ -146,7 +159,7 @@ export function createServer(
           },
           recordsDir,
         )) ?? undefined;
-      const result = await handleBrainstormFollowup(args, config, { record, memoryDir });
+      const result = await handleBrainstormFollowup(args, state.config, { record, memoryDir });
       finishOnError(record, result);
       return result;
     },

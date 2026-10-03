@@ -3,6 +3,8 @@ dist/
 .env
 experts.local.json
 experts.json
+keys.json
+keys.json.tmp
 mcp-tokens.json
 mcp-tokens.json.tmp
 *.log
