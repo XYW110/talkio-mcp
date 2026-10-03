@@ -80,7 +80,14 @@ export type RecordEvent =
       /** P3-A runs：多轮运行的序号（从 1 开始）；单轮路径缺省不写键。 */
       run?: number;
     }
-  | { type: "summary"; content: string; /** P3-A runs：同上。 */ run?: number };
+  | { type: "summary"; content: string; /** P3-A runs：同上。 */ run?: number }
+  /**
+   * 主持人插话（groupchat-strengths R2）：round = 插话注入的目标轮
+   * （afterRound + 1），message 为插话原文。落盘位置在 afterRound 的
+   * round_end 之后、目标轮 turn 之前（时间线镜像）。additive：不使用
+   * interjections 的会话零新增行。
+   */
+  | { type: "interjection"; round: number; message: string; run?: number };
 
 /** Terminal event payload. */
 export interface RecordFinish {

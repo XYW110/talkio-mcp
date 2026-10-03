@@ -21,6 +21,10 @@ import {
   selectCardsForTool,
   toCardRefs,
 } from "./select-cards.js";
+import {
+  loadExpertMemories,
+  type MemoryEntry,
+} from "../experts/memory.js";
 
 /** Zod raw shape for consult_experts arguments (passed as inputSchema). */
 export const consultExpertsSchema = {
@@ -47,6 +51,12 @@ export const consultExpertsSchema = {
     .describe(
       "选卡策略：auto=按问题内容信号路由自动选卡；缺省按 cards/默认卡逻辑",
     ),
+  memory: z
+    .boolean()
+    .optional()
+    .describe(
+      "是否注入各专家的历史记忆(brainstorm 末轮沉淀的经验,最多 3 条):注入后专家能引用此前经验(默认 true;设 false 获得与旧版逐字节一致的 prompt)"
+    ),
 };
 
 /** Inferred argument type for the handler. */
@@ -56,6 +66,8 @@ export type ConsultExpertsArgs = {
   cards?: string[];
   parallel?: boolean;
   select?: "auto";
+  /** 历史记忆注入开关（groupchat-strengths P3，缺省 true）。 */
+  memory?: boolean;
 };
 
 /**
@@ -66,7 +78,12 @@ export type ConsultExpertsArgs = {
 export async function handleConsultExperts(
   args: ConsultExpertsArgs,
   config: AppConfig,
-  deps?: { notifier?: StreamNotifier; record?: RecordSession },
+  deps?: {
+    notifier?: StreamNotifier;
+    record?: RecordSession;
+    /** 记忆目录（P3）；缺省时记忆注入降级为零（不报错）。 */
+    memoryDir?: string;
+  },
 ): Promise<CallToolResult> {
   if (args.question.trim() === "") {
     return blankInputError("question");
@@ -85,10 +102,22 @@ export async function handleConsultExperts(
   const record = deps?.record;
   record?.append({ type: "cards", cards: toCardRefs(selection.selected) });
 
+  // 记忆预读（P3）：memory !== false 且提供 memoryDir 时注入；IO 在工具层。
+  const memories = new Map<string, MemoryEntry[]>();
+  if (args.memory !== false && deps?.memoryDir) {
+    for (const t of selection.selected) {
+      memories.set(
+        t.expert.id,
+        loadExpertMemories(deps.memoryDir, t.expert.id)
+      );
+    }
+  }
+
   const items = await runConsultation(args.question, selection.selected, config, {
     context: args.context,
     parallel: args.parallel ?? true,
     notifier: deps?.notifier,
+    ...(memories.size > 0 ? { memories } : {}),
   });
 
   // 记录每张卡的原始回答/失败原因，语义与报告一致（含全失败聚合项）。

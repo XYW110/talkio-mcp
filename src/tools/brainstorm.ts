@@ -32,6 +32,11 @@ import {
 } from "./select-cards.js";
 import type { ResolvedCard } from "./select-cards.js";
 import type { StreamNotifier } from "../utils/notify.js";
+import {
+  appendMemory,
+  loadExpertMemories,
+  type MemoryEntry,
+} from "../experts/memory.js";
 
 /** Zod raw shape for brainstorm arguments (passed as inputSchema). */
 export const brainstormSchema = {
@@ -94,6 +99,33 @@ export const brainstormSchema = {
     .describe(
       "多轮运行次数:对同一主题完整重跑 N 次对话(每次轮换匿名别名)并去重合并结论,每条结论标注稳定性 [K/N RUNS];>1 时成本按倍数增长,建议配合 vote+debate 使用(默认 1)",
     ),
+  interjections: z
+    .array(
+      z.object({
+        afterRound: z
+          .number()
+          .int()
+          .describe("插话发生在哪一轮结束后(1 ≤ afterRound ≤ rounds-1)"),
+        message: z.string().describe("主持人插话内容(方向修正/补充约束/追问)"),
+      })
+    )
+    .max(4)
+    .optional()
+    .describe(
+      "主持人插话:借鉴群聊可干预体验——在第 afterRound 轮结束后插入主持人的话,注入下一轮全体专家的 prompt 并要求优先回应;不进入第 1 轮(保盲答)与投票轮。每次插话须绑定轮次,afterRound 必须在 [1, rounds-1] 内(如 rounds=2 时只能取 1)"
+    ),
+  remember: z
+    .boolean()
+    .optional()
+    .describe(
+      "是否在末轮收获专家记忆:每位专家可在发言末尾以「记忆：」行沉淀一条 ≤50 字经验,经脱敏后存入本地 memory/ 供后续讨论注入(默认 true;设 false 关闭)"
+    ),
+  memory: z
+    .boolean()
+    .optional()
+    .describe(
+      "是否注入各专家的历史记忆(过往讨论沉淀,最多 3 条):注入后专家能引用此前经验(默认 true;设 false 获得与旧版逐字节一致的 prompt)"
+    ),
 };
 
 /** Inferred argument type for the handler. */
@@ -109,6 +141,12 @@ export type BrainstormArgs = {
   judgeCard?: string;
   select?: "auto";
   runs?: 1 | 2 | 3;
+  /** 主持人插话（groupchat-strengths P2）。 */
+  interjections?: Array<{ afterRound: number; message: string }>;
+  /** 末轮记忆收获开关（P3，缺省 true）。 */
+  remember?: boolean;
+  /** 历史记忆注入开关（P3，缺省 true）。 */
+  memory?: boolean;
 };
 
 /**
@@ -117,7 +155,12 @@ export type BrainstormArgs = {
 export async function handleBrainstorm(
   args: BrainstormArgs,
   config: AppConfig,
-  deps?: { notifier?: StreamNotifier; record?: RecordSession },
+  deps?: {
+    notifier?: StreamNotifier;
+    record?: RecordSession;
+    /** 记忆目录（P3）；缺省时记忆功能降级为无注入无收获（不报错）。 */
+    memoryDir?: string;
+  },
 ): Promise<CallToolResult> {
   if (args.topic.trim() === "") {
     return blankInputError("topic");
@@ -126,6 +169,33 @@ export async function handleBrainstorm(
   const mode = args.mode ?? "debate";
   const rounds = args.rounds ?? 1;
   const summarize = args.summarize ?? true;
+
+  // 主持人插话校验（P2/AC3）：afterRound 必须落在 [1, rounds-1]（存在可注入
+  // 的下一轮）；消息非空白。rounds=1 时区间为空 → 任何插话都拒绝。
+  const interjections = args.interjections ?? [];
+  if (interjections.length > 0) {
+    for (const inj of interjections) {
+      const ok =
+        Number.isInteger(inj.afterRound) &&
+        inj.afterRound >= 1 &&
+        inj.afterRound <= rounds - 1 &&
+        inj.message.trim() !== "";
+      if (!ok) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text:
+                rounds <= 1
+                  ? `interjections 无效：rounds=${rounds} 时没有可插话的轮间隙（afterRound 需满足 1 ≤ afterRound ≤ rounds-1）。请增大 rounds 或去掉 interjections。`
+                  : `interjections 无效：afterRound 必须为 [1, ${rounds - 1}] 内的整数且 message 非空。`,
+            },
+          ],
+        };
+      }
+    }
+  }
 
   const selection = selectCardsForTool(config, args.cards, {
     defaultLimit: DEFAULT_CARD_LIMIT,
@@ -164,6 +234,19 @@ export async function handleBrainstorm(
     if (filtered.length > 0) debateTargets = filtered;
   }
 
+  // 专家记忆预读（P3）：memory !== false 且提供 memoryDir 时注入；无文件 →
+  // 空 Map（零注入）。IO 全部在工具层，编排层保持纯函数（design §3）。
+  const memoryEnabled = args.memory !== false && deps?.memoryDir !== undefined;
+  const memories = new Map<string, MemoryEntry[]>();
+  if (memoryEnabled) {
+    for (const t of debateTargets) {
+      memories.set(
+        t.expert.id,
+        loadExpertMemories(deps!.memoryDir!, t.expert.id)
+      );
+    }
+  }
+
   const opts: DialogueOptions = {
     topic: args.topic,
     context: args.context,
@@ -176,6 +259,10 @@ export async function handleBrainstorm(
     vote: args.vote === true,
     judge,
     judgeFallbackInfo,
+    // groupchat-strengths：P2 插话（已校验）/ P3 记忆注入与收获。
+    ...(interjections.length > 0 ? { interjections } : {}),
+    remember: args.remember !== false && memoryEnabled,
+    ...(memoryEnabled ? { memories } : {}),
   };
 
   const record = deps?.record;
@@ -198,7 +285,14 @@ export async function handleBrainstorm(
 
     // 事件落盘：runsTotal>1 时四类事件带 run 字段（缺省不写键，对齐惯例）。
     const runField = runsTotal > 1 ? run : undefined;
-    recordTurns(record, result.turns, rounds, runField);
+    recordTurns(record, result.turns, rounds, runField, interjections);
+    // 记忆收获落盘（P3）：appendMemory 内部 redactPII + 截断 + 吞错；
+    // 每次 run 独立收获（同 expertId 追加多行为合法语义——记忆是流水）。
+    if (result.harvestedMemories && deps?.memoryDir) {
+      for (const m of result.harvestedMemories) {
+        appendMemory(deps.memoryDir, m.expertId, m.text);
+      }
+    }
     if (result.roundVotes && result.roundVotes.ballots.length > 0) {
       record?.append({
         type: "vote",
@@ -277,6 +371,7 @@ export async function handleBrainstorm(
       spWinner: first.spWinner,
       judgeInfo: first.judgeInfo,
       devilsAdvocates: first.devilsAdvocates,
+      ...(interjections.length > 0 ? { interjections } : {}),
       ...(runsTotal > 1 ? { runsTotal } : {}),
     }) +
     (runsTotal > 1
@@ -318,12 +413,15 @@ function sumTurnsUsage(
 /**
  * 逐轮写 turn 行 + round_end 行（对齐 notifier 的轮粒度）。
  * run 传入时（P3-A runs>1）四类事件追加 run 字段；缺省不写键（AC1 红线）。
+ * interjections（groupchat-strengths P2）：在 afterRound 的 round_end 之后、
+ * 下一轮 turn 之前写 interjection 事件（时间线镜像）；缺省零新增行。
  */
 function recordTurns(
   record: RecordSession | undefined,
   turns: DialogueTurn[],
   rounds: number,
-  run?: number
+  run?: number,
+  interjections?: Array<{ afterRound: number; message: string }>
 ): void {
   if (!record) return;
   const runField = run !== undefined ? { run } : {};
@@ -348,5 +446,15 @@ function recordTurns(
       });
     }
     record.append({ type: "round_end", round: r, total: rounds, ...runField });
+    // 插话事件（P2）：round = 注入目标轮（afterRound + 1）。
+    const inj = (interjections ?? []).find((i) => i.afterRound === r);
+    if (inj && r < rounds) {
+      record.append({
+        type: "interjection",
+        round: r + 1,
+        message: inj.message,
+        ...runField,
+      });
+    }
   }
 }

@@ -119,7 +119,8 @@ async function startSse(
   configPath: string,
   recordsDir: string | undefined,
   config: ReturnType<typeof loadConfig> extends Promise<infer T> ? T : never,
-  logger: ReturnType<typeof createLogger>
+  logger: ReturnType<typeof createLogger>,
+  memoryDir?: string,
 ): Promise<void> {
   // experts.json 绝对路径（鉴权令牌池与 admin API 都相对它落位）。
   const adminPath = path.resolve(configPath);
@@ -170,6 +171,7 @@ const handleAdmin = createAdminApi({
     staticDir,
     restartHint: true,
     recordsDir,
+    memoryDir,
     config,
     logger,
     mcpTokens,
@@ -307,13 +309,19 @@ async function main(): Promise<void> {
     path.dirname(path.resolve(cfgPath)),
     "records",
   );
-  server = createServer(config, { recordsDir });
+  // 专家记忆目录（groupchat-strengths P3）：TALKIO_MEMORY_DIR 覆盖 >
+  // <experts.json 所在目录>/memory（与 records 同约定，容器内同层 bind mount）。
+  const memoryDir =
+    process.env.TALKIO_MEMORY_DIR && process.env.TALKIO_MEMORY_DIR.trim() !== ""
+      ? path.resolve(process.env.TALKIO_MEMORY_DIR.trim())
+      : path.resolve(path.dirname(path.resolve(cfgPath)), "memory");
+  server = createServer(config, { recordsDir, memoryDir });
 
 if (args.transport === "stdio") {
     await startStdio();
   } else {
 const cfgPath = args.config ?? process.env.TALKIO_EXPERTS_CONFIG ?? "experts.json";
-    await startSse(args.port, args.host, cfgPath, recordsDir, config, logger);
+    await startSse(args.port, args.host, cfgPath, recordsDir, config, logger, memoryDir);
   }
 }
 

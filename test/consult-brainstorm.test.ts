@@ -1061,3 +1061,149 @@ describe("evidence 参数与 SP 聚合（task 09-27-sp-evidence-aggregation）",
     }
   });
 });
+
+// ============================================================
+// groupchat-strengths：interjections 参数校验（AC3）+ 记忆接线（AC4/AC5）
+// ============================================================
+describe("handleBrainstorm interjections 校验（groupchat-strengths AC3）", () => {
+  it("rounds=1 时任何插话都被拒绝（无可注入的下一轮），零 LLM 调用", async () => {
+    process.env.OPENAI_API_KEY = "k";
+    const adapter = makeEchoAdapter();
+    const config = councilConfig(adapter);
+
+    const result = await handleBrainstorm(
+      {
+        topic: "主题",
+        rounds: 1,
+        cards: ["c-architect"],
+        interjections: [{ afterRound: 1, message: "聚焦成本" }],
+      },
+      config
+    );
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("没有可插话的轮间隙");
+    expect(adapter.calls).toHaveLength(0);
+  });
+
+  it("afterRound 超出 [1, rounds-1] → 校验错误并指出合法范围", async () => {
+    process.env.OPENAI_API_KEY = "k";
+    const adapter = makeEchoAdapter();
+    const config = councilConfig(adapter);
+
+    const result = await handleBrainstorm(
+      {
+        topic: "主题",
+        rounds: 2,
+        cards: ["c-architect"],
+        interjections: [{ afterRound: 2, message: "越界" }],
+      },
+      config
+    );
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("[1, 1]");
+    expect(adapter.calls).toHaveLength(0);
+  });
+
+  it("空 message → 校验错误", async () => {
+    process.env.OPENAI_API_KEY = "k";
+    const adapter = makeEchoAdapter();
+    const config = councilConfig(adapter);
+
+    const result = await handleBrainstorm(
+      {
+        topic: "主题",
+        rounds: 2,
+        cards: ["c-architect"],
+        interjections: [{ afterRound: 1, message: "   " }],
+      },
+      config
+    );
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("message 非空");
+  });
+});
+
+describe("handleBrainstorm 记忆接线（groupchat-strengths AC4/AC5）", () => {
+  it("deps.memoryDir + remember 缺省：末轮收获落盘 memory/<expertId>.jsonl（redactPII 生效）", async () => {
+    process.env.OPENAI_API_KEY = "k";
+    const dir = await mkdtemp(path.join(tmpdir(), "talkio-mem-"));
+    try {
+      // 2 轮 × 1 卡：轮 2（末轮）回答带记忆行（含 PII，验证脱敏）
+      const adapter = makeStubAdapter(async (_p, i) =>
+        i === 0
+          ? { content: "第一轮观点" }
+          : { content: "最终观点\n记忆：联系我 13800138000 拿数据" }
+      );
+      const config = councilConfig(adapter);
+
+      const result = await handleBrainstorm(
+        { topic: "主题", rounds: 2, cards: ["c-architect"], summarize: false },
+        config,
+        { memoryDir: dir }
+      );
+
+      expect(result.isError).toBe(false);
+      // 报告与正文已剥离记忆行
+      expect(textOf(result)).not.toContain("记忆：");
+      // 落盘文件存在且已脱敏
+      const raw = await readFile(path.join(dir, "architect.jsonl"), "utf-8");
+      expect(raw).toContain("[手机号]");
+      expect(raw).not.toContain("13800138000");
+      expect(raw).toContain("联系我");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("memory:false 或无 memoryDir → 不读不写，行为与旧版一致", async () => {
+    process.env.OPENAI_API_KEY = "k";
+    const dir = await mkdtemp(path.join(tmpdir(), "talkio-mem-"));
+    try {
+      const adapter = makeStubAdapter(async () => ({
+        content: "观点\n记忆：应该被忽略的收获",
+      }));
+      const config = councilConfig(adapter);
+
+      // memory:false → remember 也关闭（opts.remember = false）
+      const result = await handleBrainstorm(
+        { topic: "主题", rounds: 1, cards: ["c-architect"], memory: false },
+        config,
+        { memoryDir: dir }
+      );
+      expect(result.isError).toBe(false);
+      // 无 harvest 指令 → 回答原样保留（记忆行未剥离）
+      expect(textOf(result)).toContain("记忆：");
+      const names = await readdir(dir);
+      expect(names).toHaveLength(0); // 无落盘
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("已有记忆文件时注入该专家 prompt 头部（consult 同链路）", async () => {
+    process.env.OPENAI_API_KEY = "k";
+    const dir = await mkdtemp(path.join(tmpdir(), "talkio-mem-"));
+    try {
+      const { appendMemory } = await import("../src/experts/memory.js");
+      appendMemory(dir, "architect", "上次结论：选 B 方案");
+
+      const adapter = makeEchoAdapter();
+      const config = councilConfig(adapter);
+
+      await handleConsultExperts(
+        { question: "问题", cards: ["c-architect"] },
+        config,
+        { memoryDir: dir }
+      );
+
+      const prompt = adapter.calls[0]?.messages.at(-1)?.content ?? "";
+      expect(prompt).toContain("【你的历史记忆");
+      expect(prompt).toContain("上次结论：选 B 方案");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

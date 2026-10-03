@@ -19,6 +19,7 @@ import { defaultLogger, type Logger } from "../utils/log.js";
 import type { StreamNotifier } from "../utils/notify.js";
 import type { ResolvedCard } from "../tools/select-cards.js";
 import { applyReasoningStrategy } from "./strategy.js";
+import { buildMemoryBlock, type MemoryEntry } from "../experts/memory.js";
 
 /** Per-card outcome of a single-round consultation. */
 export interface ConsultationItem {
@@ -45,7 +46,9 @@ export interface ConsultationItem {
 export function buildTargetMessages(
   target: ResolvedCard,
   question: string,
-  context?: string
+  context?: string,
+  /** 专家记忆块前缀（groupchat-strengths P3）：置于 userContent 头部；空串零改动。 */
+  memoryPrefix?: string
 ): ChatMessage[] {
   const messages: ChatMessage[] = [];
   // 推理策略（P1-B）：default/缺省时返回原串引用，prompt 逐字节不变。
@@ -58,10 +61,12 @@ export function buildTargetMessages(
   }
   // claim-0 框架（R5）：发起方 context 不再以「背景信息」权威背书呈现，
   // 明示其可能有误、需独立判断；拼接结构与现状一致（仅标签文案变化）。
+  // 记忆前缀（P3）：私有上下文，置于最前（context / question 之前）。
+  const mem = memoryPrefix ? `${memoryPrefix}\n\n` : "";
   const userContent =
     context && context.trim().length > 0
-      ? `主理 AI 提供的初步分析（可能有误，请独立判断，欢迎质疑）:\n${context.trim()}\n\n问题:\n${question}`
-      : question;
+      ? `${mem}主理 AI 提供的初步分析（可能有误，请独立判断，欢迎质疑）:\n${context.trim()}\n\n问题:\n${question}`
+      : `${mem}${question}`;
   messages.push({ role: "user", content: redactPII(userContent) });
   return messages;
 }
@@ -102,7 +107,9 @@ export async function callExpert(
   target: ResolvedCard,
   question: string,
   config: AppConfig,
-  context?: string
+  context?: string,
+  /** 专家记忆块前缀（P3）：透传 buildTargetMessages。 */
+  memoryPrefix?: string
 ): Promise<ConsultationItem> {
   try {
     const resolved = resolveProvider(target.providerName, config);
@@ -116,7 +123,7 @@ export async function callExpert(
     const { adapter, creds } = resolved;
     const params: ChatParams = {
       model: target.modelId,
-      messages: buildTargetMessages(target, question, context),
+      messages: buildTargetMessages(target, question, context, memoryPrefix),
       temperature: target.expert.temperature,
       maxTokens: target.expert.maxTokens,
       timeoutMs: target.expert.timeoutMs,
@@ -157,7 +164,14 @@ export async function runConsultation(
   question: string,
   targets: ResolvedCard[],
   config: AppConfig,
-  options: { context?: string; parallel?: boolean; logger?: Logger; notifier?: StreamNotifier } = {}
+  options: {
+    context?: string;
+    parallel?: boolean;
+    logger?: Logger;
+    notifier?: StreamNotifier;
+    /** 专家记忆注入（groupchat-strengths P3）：expertId → 条目；缺省零注入。 */
+    memories?: Map<string, MemoryEntry[]>;
+  } = {}
 ): Promise<ConsultationItem[]> {
   const { context, parallel = true, notifier } = options;
   const logger = options.logger ?? defaultLogger;
@@ -167,9 +181,23 @@ export async function runConsultation(
     return [];
   }
 
+  // 记忆前缀（P3）：逐专家构造（buildMemoryBlock 空条目 → 空串零注入）。
+  const memoryPrefixFor = (expertId: string): string => {
+    const block = buildMemoryBlock(options.memories?.get(expertId) ?? []);
+    return block;
+  };
+
   if (parallel) {
     const settled = await Promise.allSettled(
-      targets.map((target) => callExpert(target, question, config, context))
+      targets.map((target) =>
+        callExpert(
+          target,
+          question,
+          config,
+          context,
+          memoryPrefixFor(target.expert.id)
+        )
+      )
     );
     // allSettled on a function that already catches means every result is
     // "fulfilled"; map back to the item. A rejected result here would indicate
@@ -200,7 +228,13 @@ export async function runConsultation(
   // Serial path: call each target one after another in configured order.
   const items: ConsultationItem[] = [];
   for (const target of targets) {
-    const item = await callExpert(target, question, config, context);
+    const item = await callExpert(
+      target,
+      question,
+      config,
+      context,
+      memoryPrefixFor(target.expert.id)
+    );
     items.push(item);
     // 串行路径天然逐卡，发一条再调下一张（即时性更好）。
     notifier?.({

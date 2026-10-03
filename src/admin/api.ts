@@ -24,6 +24,10 @@ import {
   isValidSessionId,
   aggregateUsage,
 } from "../records/store.js";
+import {
+  loadExpertMemories,
+  clearExpertMemory,
+} from "../experts/memory.js";
 
 /** 探测模型时单次超时（ms） */
 const PROBE_TIMEOUT_MS = 10000;
@@ -37,6 +41,11 @@ interface AdminApiOptions {
   restartHint?: boolean;
   /** 会话记录目录；未配置时 records 接口返回空列表 / 404，usage 返回空结构 */
   recordsDir?: string;
+  /**
+   * 专家记忆目录（groupchat-strengths P3）；未注入时 memory 接口返回
+   * 404（与 mcpTokens 同语义：仅测试/纯 API 部署场景缺省）。
+   */
+  memoryDir?: string;
   /** 启动时已校验的配置（用于网页版发起群聊，避免每次重读+重复校验） */
   config: AppConfig;
   /** 日志器（复用主循环 logger，避免 admin 层自建） */
@@ -154,7 +163,7 @@ async function probeModels(baseUrl: string, apiKey: string): Promise<unknown[]> 
  * 返回 true 表示已处理（response 已结束），false 表示未匹配到 /api 路由。
  */
 export function createAdminApi(options: AdminApiOptions) {
-  const { configPath, staticDir, recordsDir, config: baseConfig, logger, mcpTokens } = options;
+  const { configPath, staticDir, recordsDir, memoryDir, config: baseConfig, logger, mcpTokens } = options;
 
   // 群聊 SSE：按 sessionId 分频道的广播器（支持多点开 concurrent 群聊）。
   const chatBus = new EventEmitter();
@@ -287,6 +296,7 @@ export function createAdminApi(options: AdminApiOptions) {
             rounds?: unknown;
             summarize?: unknown;
             cards?: unknown;
+            interjections?: unknown;
           };
           const topic = String(body.topic ?? "").trim();
           if (!topic) {
@@ -300,6 +310,41 @@ export function createAdminApi(options: AdminApiOptions) {
           const cards = Array.isArray(body.cards)
             ? body.cards.map((c) => String(c)).filter((c) => c.length > 0)
             : undefined;
+          // 主持人插话（groupchat-p4 R1）：形态校验与工具层 handleBrainstorm 同规则
+          // （1 ≤ afterRound ≤ rounds-1、message 非空白；rounds=1 无轮间隙直接拒绝）。
+          let interjections: Array<{ afterRound: number; message: string }> | undefined;
+          if (body.interjections !== undefined) {
+            if (!Array.isArray(body.interjections)) {
+              sendError(res, 400, "interjections 必须是数组");
+              return true;
+            }
+            const parsed = body.interjections
+              .filter(
+                (i): i is { afterRound: number; message: string } =>
+                  typeof i === "object" &&
+                  i !== null &&
+                  Number.isInteger((i as { afterRound?: unknown }).afterRound) &&
+                  typeof (i as { message?: unknown }).message === "string",
+              )
+              .map((i) => ({ afterRound: i.afterRound, message: i.message }));
+            const bad = parsed.find(
+              (i) =>
+                i.afterRound < 1 ||
+                i.afterRound > rounds - 1 ||
+                i.message.trim() === "",
+            );
+            if (bad || parsed.length !== body.interjections.length) {
+              sendError(
+                res,
+                400,
+                rounds <= 1
+                  ? `interjections 无效：rounds=${rounds} 时没有可插话的轮间隙（afterRound 需满足 1 ≤ afterRound ≤ rounds-1）`
+                  : `interjections 无效：afterRound 必须为 [1, ${rounds - 1}] 内的整数且 message 非空`,
+              );
+              return true;
+            }
+            if (parsed.length > 0) interjections = parsed;
+          }
 
           // 复用会话记录链路（与 MCP 工具一致，落盘到同一 records 目录）。
           let record: RecordSession | undefined;
@@ -323,9 +368,9 @@ export function createAdminApi(options: AdminApiOptions) {
             };
             try {
               const result = await handleBrainstorm(
-                { topic, mode, rounds, summarize, cards },
+                { topic, mode, rounds, summarize, cards, interjections },
                 baseConfig,
-                { notifier: notifier as never, record },
+                { notifier: notifier as never, record, memoryDir },
               );
               const text =
                 result.content
@@ -446,6 +491,90 @@ export function createAdminApi(options: AdminApiOptions) {
           return true;
         }
         sendJson(res, 200, { id, events });
+      } catch (err) {
+        sendError(res, 500, err instanceof Error ? err.message : String(err));
+      }
+      return true;
+    }
+
+    // ── /api/memory（专家记忆总览，groupchat-strengths P3）──
+    // 返回全部有记忆文件的专家：[{ expertId, expertName, count, entries }]。
+    // expertName 从启动时配置解析（id 不在配置中时回退 id——专家可能已删除）。
+    if (url.pathname === "/api/memory" && req.method === "GET") {
+      try {
+        if (!memoryDir) {
+          sendError(res, 404, "记忆未启用");
+          return true;
+        }
+        // 目录不存在（从未写过记忆）→ 视为空列表，配置内专家仍列空态。
+        let names: string[] = [];
+        try {
+          names = await readdir(memoryDir);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!msg.includes("ENOENT")) throw err;
+        }
+        const payload = [];
+        for (const name of names) {
+          if (!name.endsWith(".jsonl")) continue;
+          const expertId = name.slice(0, -".jsonl".length);
+          // 防路径穿越回显：与 config.ts idRegex 同形态（文件本就由该约束保证）。
+          if (!/^[a-z0-9][a-z0-9_-]*$/i.test(expertId)) continue;
+          const entries = loadExpertMemories(memoryDir, expertId, logger);
+          if (entries.length === 0) continue;
+          const cfg = baseConfig.experts.find((e) => e.id === expertId);
+          payload.push({
+            expertId,
+            expertName: cfg?.name ?? expertId,
+            icon: cfg?.icon ?? "",
+            count: entries.length,
+            entries,
+          });
+        }
+        // 有配置但暂无记忆的专家也列出（count=0），前端可渲染空态。
+        for (const e of baseConfig.experts) {
+          if (payload.some((p) => p.expertId === e.id)) continue;
+          payload.push({
+            expertId: e.id,
+            expertName: e.name,
+            icon: e.icon,
+            count: 0,
+            entries: [],
+          });
+        }
+        sendJson(res, 200, payload);
+      } catch (err) {
+        sendError(res, 500, err instanceof Error ? err.message : String(err));
+      }
+      return true;
+    }
+
+    // ── DELETE /api/memory/:expertId（清空单个专家记忆）──
+    if (
+      url.pathname.startsWith("/api/memory/") &&
+      url.pathname.length > "/api/memory/".length &&
+      req.method === "DELETE"
+    ) {
+      try {
+        if (!memoryDir) {
+          sendError(res, 404, "记忆未启用");
+          return true;
+        }
+        const expertId = decodeURIComponent(
+          url.pathname.slice("/api/memory/".length)
+        );
+        // 路径安全：与 config.ts idRegex 同形态，防 ../ 穿越。
+        if (!/^[a-z0-9][a-z0-9_-]*$/i.test(expertId)) {
+          sendError(res, 404, "专家不存在");
+          return true;
+        }
+        const ok = clearExpertMemory(memoryDir, expertId);
+        if (!ok) {
+          sendError(res, 404, "该专家暂无记忆");
+          return true;
+        }
+        logger.info(`[memory] 已清空专家 ${expertId} 的记忆（admin DELETE）`);
+        sendJson(res, 200, { ok: true, expertId });
       } catch (err) {
         sendError(res, 500, err instanceof Error ? err.message : String(err));
       }

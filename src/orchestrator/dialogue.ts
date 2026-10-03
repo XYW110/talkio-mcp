@@ -32,6 +32,11 @@ import {
   type SummaryState,
 } from "./context-compressor.js";
 import { applyReasoningStrategy } from "./strategy.js";
+import {
+  buildMemoryBlock,
+  parseMemoryLine,
+  type MemoryEntry,
+} from "../experts/memory.js";
 
 /** A single turn in the dialogue transcript. */
 export interface DialogueTurn {
@@ -88,6 +93,26 @@ export interface DialogueOptions {
    * 投票轮不注入。缺省/全空白项 = 不注入，prompt 组装形状与现状逐字节一致。
    */
   evidence?: string[];
+  /**
+   * 主持人插话（groupchat-strengths P2）：afterRound = 插话发生在哪轮结束后
+   * （注入目标轮 = afterRound + 1，工具层已校验 1 ≤ afterRound ≤ rounds-1）。
+   * 借鉴 AgentMore 群聊"人可中途干预方向"体验：插话块注入下一轮全体专家
+   * prompt（置于 claim-0 与实录之间），要求优先回应；不进第 1 轮（保盲答
+   * 语义）、不进投票轮。缺省/空数组 = 零注入，prompt 逐字节还原现状。
+   */
+  interjections?: Array<{ afterRound: number; message: string }>;
+  /**
+   * 末轮记忆收获（groupchat-strengths P3）：true 时末轮每个发言追加收获
+   * 指令，settle 后从回答中解析「记忆：」行（剥离正文、去「无」），
+   * 结果进 DialogueResult.harvestedMemories（由工具层落盘）。缺省 false。
+   */
+  remember?: boolean;
+  /**
+   * 预读的专家记忆注入（P3）：expertId → 记忆条目（工具层从 memory/<id>.jsonl
+   * 预读，编排层不做 IO）。每轮每专家 prompt 头部注入 buildMemoryBlock 结果
+   * （私有上下文，匿名化不触碰）；缺省/无条目 = 零字节注入。
+   */
+  memories?: Map<string, MemoryEntry[]>;
 }
 
 /** 匿名化代号映射（R2）：按 targets 顺序分配 专家A/B/…。 */
@@ -142,6 +167,12 @@ export interface DialogueResult {
   /** SP 赢家（R1.5）：surprisinglyPopular 唯一 argmax 时的别名；未计算/并列/
    * 预测不足时不写键（JSONL additive，design §3.4）。 */
   spWinner?: string;
+  /**
+   * 末轮记忆收获（groupchat-strengths P3）：remember=true 且末轮回答含
+   * 「记忆：」行时返回（正文已剥离该行）；空数组/缺省 = 无收获。
+   * 落盘由工具层负责（appendMemory，redactPII 在该层内完成）。
+   */
+  harvestedMemories?: Array<{ expertId: string; expertName: string; text: string }>;
 }
 
 /** 单张选票（P1-A 结构化中间结果；voterCardId 仅落盘用，展示一律走别名）。 */
@@ -275,6 +306,23 @@ export function buildEvidenceLibrary(evidence: string[] | undefined): string {
 /** 多轮 runs 合并调用系统提示（P3-A）：对 N 次运行的结论去重合并。 */
 export const RUNS_MERGE_SYSTEM =
   "你是多轮议事合并器。你会收到同一主题的多次独立运行结论。请去重合并：语义相同的结论只保留一条，并在其前缀标注 [K/N RUNS]（K=该结论被提及的运行次数，N=总运行数）；仅出现一次的结论同样保留并标注。直接输出 Markdown 结论列表，不要额外解释。";
+
+/** 主持人插话块头（groupchat-strengths P2）：prompt 注入块的统一标题。
+ * 形态刻意区别于别名「专家[A-Z]」与 claim-0/证据库标题，
+ * parseVotedForAlias 天然不会命中（票文解析白名单安全）。 */
+export const INTERJECTION_HEADER = "【主持人插话（发起方追加）】";
+
+/** 主持人插话说明行（P2）：紧跟插话原文之后，声明优先回应语义。 */
+export const INTERJECTION_NOTE =
+  "以上是主持人在上一轮结束后插入的话，不是专家发言，不参与互评投票。若它与你的观点冲突，请先回应它的要求（补充信息、修正方向或说明理由），再继续你的论述。";
+
+/**
+ * 末轮记忆收获指令（P3）：remember=true 时追加在末轮每位专家 userContent
+ * 末尾。行首「记忆：」标记由 parseMemoryLine 解析（最后行优先、未命中零
+ * 改动）；「无」视为无收获（不落盘）。软约束：模型不写该行 = 无记忆。
+ */
+export const MEMORY_HARVEST_INSTRUCTION =
+  "最后，请在本轮发言的最末尾另起一行，以「记忆：」开头，用不超过 50 字沉淀一条你认为值得跨次记住的经验（如：本次讨论的关键结论、发起方的偏好或约束、踩过的坑）。没有值得记的就省略这一行，不要为了写而写。";
 
 /** 一次运行的结论（P3-A 合并调用输入项）。 */
 export interface RunSummaryEntry {
@@ -751,6 +799,56 @@ export async function runDialogue(
   const evidenceBlock = buildEvidenceLibrary(opts.evidence);
   const evidencePrefix = evidenceBlock ? `${evidenceBlock}\n\n` : "";
 
+  // 主持人插话前缀（P2）：注入目标轮 = afterRound + 1；消息纯空白视为无插话。
+  // 位置固定在 claim-0 之后、发言实录之前（公开块链：evidence → claim-0 →
+  // 插话 → 实录）；投票轮与种子轮不取值（盲答语义红线）。
+  const interjectionPrefixFor = (nextRound: number): string => {
+    const hit = (opts.interjections ?? []).find(
+      (i) => i.afterRound === nextRound - 1
+    );
+    if (!hit || hit.message.trim() === "") return "";
+    return `${INTERJECTION_HEADER}\n${hit.message.trim()}\n\n${INTERJECTION_NOTE}\n\n`;
+  };
+
+  // 专家记忆前缀（P3）：私有上下文，注入各专家 prompt 头部（topic 之前）。
+  // 无记忆 → 空串零注入（逐字节红线）；匿名化不触碰该块（记忆属于阅读者本人）。
+  const memoryPrefixFor = (expertId: string): string => {
+    const block = buildMemoryBlock(opts.memories?.get(expertId) ?? []);
+    return block ? `${block}\n\n` : "";
+  };
+
+  // 末轮记忆收获（P3）：在 absorbRound 之前剥离「记忆：」行，避免其进入
+  // 增量概要 / 投票注入。⚠️ 缺席 turn 跳过；「无」视为无收获。
+  const harvestedMemories: Array<{
+    expertId: string;
+    expertName: string;
+    text: string;
+  }> = [];
+  const harvestRoundMemories = (roundNo: number): void => {
+    if (opts.remember !== true || roundNo !== rounds) return;
+    for (const t of turns) {
+      if (t.round !== roundNo || t.content.startsWith("⚠️")) continue;
+      const parsed = parseMemoryLine(t.content);
+      if (parsed.memory === null) continue;
+      // 指令行一律剥离（无论是否收获）——「记忆：无」是执行指令的痕迹，
+      // 不应留在报告/实录；「无」仅意味着不落盘。
+      t.content = parsed.content;
+      if (parsed.memory !== "无") {
+        harvestedMemories.push({
+          expertId: t.expertId,
+          expertName: t.expertName,
+          text: parsed.memory,
+        });
+      }
+    }
+  };
+
+  // 末轮收获指令后缀（P3）：remember=true 且本轮为末轮时追加在 userContent 末尾。
+  const harvestSuffix = (roundNo: number): string =>
+    opts.remember === true && roundNo === rounds
+      ? `\n\n${MEMORY_HARVEST_INSTRUCTION}`
+      : "";
+
   if (targets.length === 0 || rounds === 0) {
     return { turns };
   }
@@ -847,11 +945,12 @@ export async function runDialogue(
       // 证据库（R2.3）：种子轮即注入（置于 topic 之后、指令之前），顺序
       // evidence → claim-0（relay）→ SEED_INSTRUCTION。
       const seedClaim0Prefix = opts.mode === "relay" ? claim0Prefix : "";
+      const seedSuffix = harvestSuffix(round);
       const results = await Promise.allSettled(
         targets.map((target) =>
           askExpert(
             target,
-            `${opts.topic}\n\n${evidencePrefix}${seedClaim0Prefix}${SEED_INSTRUCTION}`,
+            `${memoryPrefixFor(target.expert.id)}${opts.topic}\n\n${evidencePrefix}${seedClaim0Prefix}${SEED_INSTRUCTION}${seedSuffix}`,
             config
           )
         )
@@ -868,6 +967,14 @@ export async function runDialogue(
             content: res.value.content,
             usage: res.value.usage,
           });
+          notifier?.({
+            type: "brainstorm.turn",
+            round,
+            total: rounds,
+            card: target.card.id,
+            expertName: target.expert.name,
+            ok: true,
+          });
         } else {
           const msg =
             res.reason instanceof Error
@@ -881,8 +988,18 @@ export async function runDialogue(
             // Privacy: sanitize provider error echoes.
             content: `⚠️ (${target.expert.name} 本轮缺席: ${redactPII(msg)})`,
           });
+          notifier?.({
+            type: "brainstorm.turn",
+            round,
+            total: rounds,
+            card: target.card.id,
+            expertName: target.expert.name,
+            ok: false,
+          });
         }
       });
+      // 末轮记忆收获（P3）：rounds=1 时种子轮即末轮；先于通知与 continue。
+      harvestRoundMemories(round);
       // 流式增量（R2）：本轮种子发言全部 settle 后通知一轮边界（Q2 粒度=轮）。
       notifier?.({ type: "brainstorm.round", round, total: rounds });
       continue;
@@ -912,13 +1029,17 @@ export async function runDialogue(
           expertName: daTarget.expert.name,
         });
       }
+      const interjPrefix = interjectionPrefixFor(round);
+      const suffix = harvestSuffix(round);
       const userContents = targets.map((target, i) => {
         // 证据库（R2.3）：插在现有 claim0Prefix 之前（顺序 = evidence、
         // claim-0、实录；design §2.2），无 evidence 时 evidencePrefix 为空串。
-        const base = `${opts.topic}\n\n${DEBATE_INSTRUCTION}\n\n${evidencePrefix}${claim0Prefix}上一轮发言:\n${render(target.expert.id)}`;
-        return i === daIdx
-          ? `${base}\n\n${DEVILS_ADVOCATE_INSTRUCTION}`
-          : base;
+        // 主持人插话（P2）：置于 claim-0 之后、实录之前；记忆前缀（P3）
+        // 置于整条 prompt 头部（私有上下文）。均为空串时逐字节还原现状。
+        const base = `${memoryPrefixFor(target.expert.id)}${opts.topic}\n\n${DEBATE_INSTRUCTION}\n\n${evidencePrefix}${claim0Prefix}${interjPrefix}上一轮发言:\n${render(target.expert.id)}`;
+        const daSuffix =
+          i === daIdx ? `\n\n${DEVILS_ADVOCATE_INSTRUCTION}` : "";
+        return `${base}${daSuffix}${suffix}`;
       });
       const results = await Promise.allSettled(
         targets.map((target, i) =>
@@ -937,6 +1058,14 @@ export async function runDialogue(
             content: res.value.content,
             usage: res.value.usage,
           });
+          notifier?.({
+            type: "brainstorm.turn",
+            round,
+            total: rounds,
+            card: target.card.id,
+            expertName: target.expert.name,
+            ok: true,
+          });
         } else {
           const msg =
             res.reason instanceof Error
@@ -950,20 +1079,31 @@ export async function runDialogue(
             // Privacy: sanitize provider error echoes.
             content: `⚠️ (${target.expert.name} 本轮缺席: ${redactPII(msg)})`,
           });
+          notifier?.({
+            type: "brainstorm.turn",
+            round,
+            total: rounds,
+            card: target.card.id,
+            expertName: target.expert.name,
+            ok: false,
+          });
         }
       });
     } else {
       // Relay: experts speak sequentially; each sees the full running transcript.
       // relay 不匿名（D3）：renderer 不传渲染选项，注入行为与现状一致。
+      const interjPrefix = interjectionPrefixFor(round);
+      const suffix = harvestSuffix(round);
       for (const target of targets) {
         const render = await resolveRenderer(turns, turns);
         const transcript = render();
         // claim-0（R4）：relay 无盲答语义，各轮 topic 后都带发起方初步判断。
         // 证据库（R2.3）：各轮 topic 后注入，顺序 evidence → claim-0。
+        // 插话（P2）/记忆前缀（P3）位置与 debate 分支一致。
         const userContent =
           transcript.length > 0
-            ? `${opts.topic}\n\n${evidencePrefix}${claim0Prefix}${RELAY_INSTRUCTION}\n\n此前发言:\n${transcript}`
-            : `${opts.topic}\n\n${evidencePrefix}${claim0Prefix}${SEED_INSTRUCTION}`;
+            ? `${memoryPrefixFor(target.expert.id)}${opts.topic}\n\n${evidencePrefix}${claim0Prefix}${interjPrefix}${RELAY_INSTRUCTION}\n\n此前发言:\n${transcript}${suffix}`
+            : `${memoryPrefixFor(target.expert.id)}${opts.topic}\n\n${evidencePrefix}${claim0Prefix}${SEED_INSTRUCTION}${suffix}`;
         try {
           const answer = await askExpert(target, userContent, config);
           turns.push({
@@ -973,6 +1113,14 @@ export async function runDialogue(
             icon: target.expert.icon,
             content: answer.content,
             usage: answer.usage,
+          });
+          notifier?.({
+            type: "brainstorm.turn",
+            round,
+            total: rounds,
+            card: target.card.id,
+            expertName: target.expert.name,
+            ok: true,
           });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -984,9 +1132,20 @@ export async function runDialogue(
             // Privacy: sanitize provider error echoes.
             content: `⚠️ (${target.expert.name} 本轮缺席: ${redactPII(msg)})`,
           });
+          notifier?.({
+            type: "brainstorm.turn",
+            round,
+            total: rounds,
+            card: target.card.id,
+            expertName: target.expert.name,
+            ok: false,
+          });
         }
       }
     }
+    // 末轮记忆收获（P3）：先于 absorbRound——「记忆：」行不得进入增量概要
+    // 与后续注入（含投票轮）。
+    harvestRoundMemories(round);
     // 轮末增量并入：启用概要后把本轮新内容并入增量概要（best-effort，吞错）。
     await absorbRound(round);
     // 流式增量（R2）：每轮结束后通知（debate / relay 均在此收敛，seed 分支已在 continue 前发）。
@@ -1117,6 +1276,10 @@ export async function runDialogue(
   );
 
   const result: DialogueResult = { turns, summary };
+  // 末轮记忆收获（P3）：仅非空时写键（JSONL additive 契约）。
+  if (harvestedMemories.length > 0) {
+    result.harvestedMemories = harvestedMemories;
+  }
   if (devilsAdvocates.length > 0) {
     result.devilsAdvocates = devilsAdvocates;
   }

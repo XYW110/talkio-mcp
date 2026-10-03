@@ -16,3 +16,4 @@ admin-web/tsconfig.tsbuildinfo
 temp/
 .mimosa/
 experts.json.bak*
+/memory/

@@ -642,8 +642,9 @@ describe("流式增量通知（streaming）", () => {
     expect(
       roundEvents.every((e) => e.type === "brainstorm.round" && e.total === 2)
     ).toBe(true);
-    // Q2 粒度=轮：总结调用不算一轮，不产生事件
-    expect(events).toHaveLength(2);
+    // Q2 粒度=轮：总结调用不算一轮，不产生 round 事件
+    // （groupchat-strengths R1：轮内另有 brainstorm.turn 卡粒度事件，故总数 >2）
+    expect(events).toHaveLength(6);
   });
 });
 
@@ -1940,5 +1941,249 @@ describe("证据锚定协议（task 09-27-sp-evidence-aggregation）", () => {
     const noEvidence = formatBrainstormReport("主题", "debate", 1, refTurns);
     expect(noEvidence).not.toContain("### 证据库");
     expect(noEvidence).not.toContain("证据引用统计");
+  });
+});
+
+// ============================================================
+// groupchat-strengths（吸收 AgentMore 群聊优点）：R1 卡粒度通知 /
+// R2 主持人插话 / R3 专家记忆注入与收获
+// ============================================================
+describe("groupchat-strengths：卡粒度流式通知（R1）", () => {
+  function makeFakeNotifier() {
+    const events: StreamEvent[] = [];
+    return { events, notifier: (e: StreamEvent) => void events.push(e) };
+  }
+
+  it("debate 2 轮 2 卡：brainstorm.turn 4 条，(round, card) 与 turns 一一对应，round 事件保持轮粒度", async () => {
+    const adapter = makeEchoAdapter();
+    const targets = [makeTarget("a"), makeTarget("b")];
+    const { events, notifier } = makeFakeNotifier();
+
+    const result = await runDialogue(
+      { topic: "主题", targets, mode: "debate", rounds: 2, summarize: false, notifier },
+      makeConfig(adapter)
+    );
+
+    const turnEvents = events.filter((e) => e.type === "brainstorm.turn");
+    expect(turnEvents).toHaveLength(4); // 2 轮 × 2 卡
+    // 轮 1：卡 a、b（并行 settle 顺序即 targets 顺序）
+    expect(
+      turnEvents.slice(0, 2).map((e) => (e.type === "brainstorm.turn" ? `${e.round}:${e.card}` : ""))
+    ).toEqual(["1:card-a", "1:card-b"]);
+    // 轮 2 同理
+    expect(
+      turnEvents.slice(2).map((e) => (e.type === "brainstorm.turn" ? `${e.round}:${e.card}` : ""))
+    ).toEqual(["2:card-a", "2:card-b"]);
+    // 全部 ok=true、total=2、expertName 正确
+    expect(
+      turnEvents.every(
+        (e) =>
+          e.type === "brainstorm.turn" &&
+          e.ok === true &&
+          e.total === 2 &&
+          e.expertName.startsWith("专家-")
+      )
+    ).toBe(true);
+    // round 事件仍为轮粒度（每轮 1 条）
+    const roundEvents = events.filter((e) => e.type === "brainstorm.round");
+    expect(roundEvents).toHaveLength(2);
+    // turn 事件先于同轮的 round 事件（序列：turn,turn,round,turn,turn,round）
+    expect(events[0]?.type).toBe("brainstorm.turn");
+    expect(events[2]?.type).toBe("brainstorm.round");
+    expect(events[3]?.type).toBe("brainstorm.turn");
+    expect(events[5]?.type).toBe("brainstorm.round");
+    // turns 与事件对齐
+    expect(result.turns).toHaveLength(4);
+  });
+
+  it("relay 2 轮：turn 事件按发言顺序逐卡发出；缺席卡 ok=false", async () => {
+    // 让 a 卡永远失败（第一次调用抛错），b 卡正常 → 缺席标记验证
+    const adapter = makeStubAdapter(async (params, i) => {
+      if (params.model === "fail-model") throw new Error("provider 超时");
+      return { content: `回答${i}` };
+    });
+    const targets = [
+      makeTarget("a", { modelId: "fail-model" }),
+      makeTarget("b"),
+    ];
+    const { events, notifier } = makeFakeNotifier();
+
+    await runDialogue(
+      { topic: "主题", targets, mode: "relay", rounds: 2, summarize: false, notifier },
+      makeConfig(adapter)
+    );
+
+    const turnEvents = events.filter((e) => e.type === "brainstorm.turn");
+    expect(turnEvents).toHaveLength(4);
+    const aEvents = turnEvents.filter(
+      (e) => e.type === "brainstorm.turn" && e.card === "card-a"
+    );
+    expect(aEvents).toHaveLength(2);
+    expect(aEvents.every((e) => e.type === "brainstorm.turn" && e.ok === false)).toBe(true);
+    const bEvents = turnEvents.filter(
+      (e) => e.type === "brainstorm.turn" && e.card === "card-b"
+    );
+    expect(bEvents.every((e) => e.type === "brainstorm.turn" && e.ok === true)).toBe(true);
+  });
+});
+
+describe("groupchat-strengths：主持人插话（R2）", () => {
+  it("interjections 注入下一轮 prompt：块头+原文+说明行出现在轮 2 各专家 prompt，轮 1 盲答不含", async () => {
+    const adapter = makeEchoAdapter();
+    const targets = [makeTarget("a"), makeTarget("b")];
+
+    await runDialogue(
+      {
+        topic: "主题",
+        targets,
+        mode: "debate",
+        rounds: 2,
+        summarize: false,
+        interjections: [{ afterRound: 1, message: "请聚焦成本维度" }],
+      },
+      makeConfig(adapter)
+    );
+
+    // debate 轮 1 是并行种子轮（calls 0-1），轮 2 是 calls 2-3
+    const round2Prompts = [
+      adapter.calls[2]?.messages.at(-1)?.content ?? "",
+      adapter.calls[3]?.messages.at(-1)?.content ?? "",
+    ];
+    for (const p of round2Prompts) {
+      expect(p).toContain("【主持人插话（发起方追加）】");
+      expect(p).toContain("请聚焦成本维度");
+      expect(p).toContain("不是专家发言，不参与互评投票");
+    }
+    // 轮 1 盲答不受插话影响
+    const round1Prompts = [
+      adapter.calls[0]?.messages.at(-1)?.content ?? "",
+      adapter.calls[1]?.messages.at(-1)?.content ?? "",
+    ];
+    for (const p of round1Prompts) {
+      expect(p).not.toContain("主持人插话");
+    }
+  });
+
+  it("插话块不产生投票候选：VOTE_INSTRUCTION 注入的匿名实录场景安全（块头无专家代号形态）", () => {
+    // parseVotedForAlias 白名单：块头「【主持人插话（发起方追加）】」不含
+    // 专家[A-Z] 代号，票文解析不会命中（静态断言契约）
+    const ballot = "我投专家A：论据充分";
+    const parsed = parseVotedForAlias(ballot, "专家B", ["专家A", "专家B"]);
+    expect(parsed).toBe("专家A");
+    // 块头本身作为票文时不应解析出任何别名
+    expect(
+      parseVotedForAlias("【主持人插话（发起方追加）】请聚焦成本", "专家B", ["专家A", "专家B"])
+    ).toBe("");
+  });
+
+  it("报告实录渲染 🎙️ 主持人块（afterRound 轮之后、下一轮之前）；无插话零输出", () => {
+    const turns: DialogueTurn[] = [
+      { round: 1, expertId: "a", expertName: "专家-a", icon: "🤖", content: "观点A" },
+      { round: 2, expertId: "a", expertName: "专家-a", icon: "🤖", content: "观点B" },
+    ];
+    const withInterj = formatBrainstormReport("主题", "debate", 2, turns, undefined, {
+      interjections: [{ afterRound: 1, message: "请聚焦成本维度" }],
+    });
+    const idxR1 = withInterj.indexOf("### 第 1 轮");
+    const idxR2 = withInterj.indexOf("### 第 2 轮");
+    const idxHost = withInterj.indexOf("🎙️ **主持人（第 1 轮后插话）**");
+    expect(idxHost).toBeGreaterThan(idxR1);
+    expect(idxHost).toBeLessThan(idxR2);
+    expect(withInterj).toContain("请聚焦成本维度");
+    // 无插话 → 零输出
+    const without = formatBrainstormReport("主题", "debate", 2, turns);
+    expect(without).not.toContain("主持人");
+  });
+});
+
+describe("groupchat-strengths：专家记忆（R3）", () => {
+  it("末轮收获：回答含「记忆：」行时剥离正文并返回 harvestedMemories；「无」不收获", async () => {
+    const adapter = makeStubAdapter(async (params, i) => {
+      // debate 2 轮：轮 1 (calls 0-1)，轮 2 = 末轮 (calls 2-3) 带 harvest 指令
+      if (i >= 2) {
+        if (params.model === "no-mem-model") return { content: "正常观点\n记忆：无" };
+        return { content: "我的观点\n记忆：这个团队成本敏感" };
+      }
+      return { content: `观点${i}` };
+    });
+    const targets = [
+      makeTarget("a"),
+      makeTarget("b", { modelId: "no-mem-model" }),
+    ];
+
+    const result = await runDialogue(
+      { topic: "主题", targets, mode: "debate", rounds: 2, summarize: false, remember: true },
+      makeConfig(adapter)
+    );
+
+    // a 专家收获一条；b 专家写了「无」→ 不收获
+    expect(result.harvestedMemories).toHaveLength(1);
+    expect(result.harvestedMemories?.[0]).toMatchObject({
+      expertId: "a",
+      text: "这个团队成本敏感",
+    });
+    // 正文已剥离记忆行
+    const aTurn2 = result.turns.find((t) => t.round === 2 && t.expertId === "a");
+    expect(aTurn2?.content).toBe("我的观点");
+    const bTurn2 = result.turns.find((t) => t.round === 2 && t.expertId === "b");
+    expect(bTurn2?.content).toBe("正常观点");
+    // 末轮 prompt 含收获指令
+    expect(adapter.calls[2]?.messages.at(-1)?.content).toContain("「记忆：」");
+  });
+
+  it("记忆注入：memories Map 提供条目时注入该专家 prompt 头部；缺席专家零注入", async () => {
+    const adapter = makeEchoAdapter();
+    const targets = [makeTarget("a"), makeTarget("b")];
+
+    await runDialogue(
+      {
+        topic: "主题",
+        targets,
+        mode: "debate",
+        rounds: 1,
+        summarize: false,
+        memories: new Map([
+          ["a", [{ ts: "2026-10-01T00:00:00.000Z", text: "上次结论：选 B 方案" }]],
+        ]),
+      },
+      makeConfig(adapter)
+    );
+
+    const promptA = adapter.calls[0]?.messages.at(-1)?.content ?? "";
+    const promptB = adapter.calls[1]?.messages.at(-1)?.content ?? "";
+    expect(promptA.startsWith("【你的历史记忆")).toBe(true);
+    expect(promptA).toContain("上次结论：选 B 方案");
+    expect(promptB).not.toContain("历史记忆");
+    // 记忆块在 prompt 头部（topic 之前）
+    expect(promptA.indexOf("【你的历史记忆")).toBeLessThan(promptA.indexOf("主题"));
+  });
+
+  it("零改动红线：不传新参数时 prompt 逐字节等于旧版形状", async () => {
+    const adapter = makeEchoAdapter();
+    const targets = [makeTarget("a")];
+
+    await runDialogue(
+      { topic: "主题", targets, mode: "debate", rounds: 1, summarize: false },
+      makeConfig(adapter)
+    );
+
+    // 旧版 prompt 形状：topic + 空行 + SEED_INSTRUCTION，无任何新块
+    const prompt = adapter.calls[0]?.messages.at(-1)?.content ?? "";
+    expect(prompt).toBe(`主题\n\n${SEED_INSTRUCTION}`);
+  });
+
+  it("remember=true 但轮次非末轮（rounds=2 轮 1）：不追加收获指令", async () => {
+    const adapter = makeEchoAdapter();
+    const targets = [makeTarget("a")];
+
+    await runDialogue(
+      { topic: "主题", targets, mode: "debate", rounds: 2, summarize: false, remember: true },
+      makeConfig(adapter)
+    );
+
+    const round1Prompt = adapter.calls[0]?.messages.at(-1)?.content ?? "";
+    const round2Prompt = adapter.calls[1]?.messages.at(-1)?.content ?? "";
+    expect(round1Prompt).not.toContain("「记忆：」");
+    expect(round2Prompt).toContain("「记忆：」");
   });
 });

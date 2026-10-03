@@ -31,13 +31,16 @@ export const SERVER_VERSION = "0.1.0";
  */
 export function createServer(
   config: AppConfig,
-  options?: { recordsDir?: string }
+  options?: { recordsDir?: string; memoryDir?: string }
 ): McpServer {
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { capabilities: { logging: {} } }
   );
   const recordsDir = options?.recordsDir;
+  // 专家记忆目录（groupchat-strengths P3）：装配层一次解析，三个工具闭包
+  // 共享；缺省（stdio 单测/无目录）时记忆功能静默降级为零注入零收获。
+  const memoryDir = options?.memoryDir;
 
   // 流式增量通知（design §1）：logging notifications 统一由闭包内注入。
   const notifier = createMcpNotifier(server);
@@ -85,6 +88,7 @@ export function createServer(
       const result = await handleConsultExperts(args, config, {
         notifier,
         record,
+        memoryDir,
       });
       finishOnError(record, result);
       return result;
@@ -113,7 +117,7 @@ export function createServer(
           },
           recordsDir
         )) ?? undefined;
-      const result = await handleBrainstorm(args, config, { notifier, record });
+      const result = await handleBrainstorm(args, config, { notifier, record, memoryDir });
       finishOnError(record, result);
       return result;
     }
@@ -142,7 +146,7 @@ export function createServer(
           },
           recordsDir,
         )) ?? undefined;
-      const result = await handleBrainstormFollowup(args, config, { record });
+      const result = await handleBrainstormFollowup(args, config, { record, memoryDir });
       finishOnError(record, result);
       return result;
     },

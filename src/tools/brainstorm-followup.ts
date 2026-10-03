@@ -29,6 +29,7 @@ import {
 } from "../orchestrator/context-compressor.js";
 import { formatTranscript } from "../utils/format.js";
 import { redactPII } from "../utils/redact.js";
+import { buildMemoryBlock, loadExpertMemories } from "../experts/memory.js";
 import type { StreamNotifier } from "../utils/notify.js";
 import type { RecordSession } from "../records/store.js";
 import { sumUsage } from "../records/store.js";
@@ -85,6 +86,12 @@ export const brainstormFollowupSchema = {
     .describe(
       "对话风格（仅全体追问时有效: debate=并行, relay=接龙;缺省 relay）",
     ),
+  memory: z
+    .boolean()
+    .optional()
+    .describe(
+      "是否注入各专家的历史记忆(brainstorm 末轮沉淀的经验,最多 3 条):注入后专家能引用此前经验(默认 true;设 false 获得与旧版逐字节一致的 prompt)"
+    ),
 };
 
 /** Inferred argument type for the handler. */
@@ -94,6 +101,8 @@ export type BrainstormFollowupArgs = {
   cards?: string[];
   card?: string;
   mode?: "debate" | "relay";
+  /** 历史记忆注入开关（groupchat-strengths P3，缺省 true）。 */
+  memory?: boolean;
 };
 
 /**
@@ -148,11 +157,23 @@ function formatFollowupReport(
 export async function handleBrainstormFollowup(
   args: BrainstormFollowupArgs,
   config: AppConfig,
-  deps?: { notifier?: StreamNotifier; record?: RecordSession },
+  deps?: {
+    notifier?: StreamNotifier;
+    record?: RecordSession;
+    /** 记忆目录（groupchat-strengths P3）；缺省时记忆注入降级为零。 */
+    memoryDir?: string;
+  },
 ): Promise<CallToolResult> {
   if (args.question.trim() === "") {
     return blankInputError("question");
   }
+
+  // 记忆前缀构造器（P3）：memory !== false 且提供 memoryDir 时按专家构造；
+  // 无记忆 → 空串零注入（userContent 逐字节还原现状）。
+  const memoryPrefixFor = (expertId: string): string => {
+    if (args.memory === false || !deps?.memoryDir) return "";
+    return buildMemoryBlock(loadExpertMemories(deps.memoryDir, expertId));
+  };
 
   // Turns degradation (Q3): unusable turns → context-free follow-up + marker.
   const degraded = !isValidTurns(args.turns);
@@ -217,9 +238,11 @@ export async function handleBrainstormFollowup(
       prevTurns,
       target
     );
+    const mem = memoryPrefixFor(target.expert.id);
+    const memPrefix = mem ? `${mem}\n\n` : "";
     const userContent = transcript
-      ? `${args.question}\n\n${FOLLOWUP_INSTRUCTION}\n\n${SPECIFIC_EMPHASIS}\n\n此前讨论实录:\n${transcript}`
-      : `${args.question}\n\n${FOLLOWUP_INSTRUCTION}\n\n${SPECIFIC_EMPHASIS}`;
+      ? `${memPrefix}${args.question}\n\n${FOLLOWUP_INSTRUCTION}\n\n${SPECIFIC_EMPHASIS}\n\n此前讨论实录:\n${transcript}`
+      : `${memPrefix}${args.question}\n\n${FOLLOWUP_INSTRUCTION}\n\n${SPECIFIC_EMPHASIS}`;
 const newTurns: DialogueTurn[] = [];
     record?.append({ type: "cards", cards: toCardRefs(selection.selected) });
     try {
@@ -274,9 +297,11 @@ const targets = selection.selected;
   record?.append({ type: "cards", cards: toCardRefs(targets) });
 
   const runTarget = async (target: ResolvedCard, transcript: string) => {
+    const mem = memoryPrefixFor(target.expert.id);
+    const memPrefix = mem ? `${mem}\n\n` : "";
     const userContent = transcript
-      ? `${args.question}\n\n${FOLLOWUP_INSTRUCTION}\n\n此前讨论实录:\n${transcript}`
-      : `${args.question}\n\n${FOLLOWUP_INSTRUCTION}`;
+      ? `${memPrefix}${args.question}\n\n${FOLLOWUP_INSTRUCTION}\n\n此前讨论实录:\n${transcript}`
+      : `${memPrefix}${args.question}\n\n${FOLLOWUP_INSTRUCTION}`;
     try {
       const answer = await askExpert(target, userContent, config);
       const t: DialogueTurn = {

@@ -32,7 +32,20 @@ export const STREAM_LOGGER = "talkio.stream";
 export type StreamEvent =
   | { type: "consult.card"; card: string; status: "ok" | "failed" }
   | { type: "brainstorm.round"; round: number; total: number }
-  | { type: "brainstorm.vote" };
+  | { type: "brainstorm.vote" }
+  /**
+   * 卡粒度实况（groupchat-strengths R1）：brainstorm 轮内每张卡发言
+   * settle 即发（成功 / ⚠️ 缺席），宿主 AI 可实时转述"谁已发言"。
+   * PII 纪律同上：expertName 来自配置文件而非用户输入，安全；不含 content。
+   */
+  | {
+      type: "brainstorm.turn";
+      round: number;
+      total: number;
+      card: string;
+      expertName: string;
+      ok: boolean;
+    };
 
 /** 编排器注入的可选增量通知回调。实现不得抛出、不得阻塞业务流。 */
 export interface StreamNotifier {

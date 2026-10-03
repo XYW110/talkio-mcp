@@ -71,7 +71,11 @@ export function formatErrorSection(items: ConsultationItem[]): string {
  * Build the Markdown transcript for the brainstorm tool (design §3.2).
  * Turns are grouped by round with a round header and per-expert entries.
  */
-export function formatTranscript(turns: DialogueTurn[]): string {
+export function formatTranscript(
+  turns: DialogueTurn[],
+  /** 主持人插话（groupchat-strengths P2）：按 afterRound 渲染在对应轮之后；缺省零输出。 */
+  interjections?: Array<{ afterRound: number; message: string }>
+): string {
   if (turns.length === 0) return "";
   const lines: string[] = [];
   // Group turns by round while preserving order.
@@ -81,6 +85,11 @@ export function formatTranscript(turns: DialogueTurn[]): string {
     arr.push(turn);
     rounds.set(turn.round, arr);
   }
+  const interjByAfter = new Map(
+    (interjections ?? [])
+      .filter((i) => i.message.trim() !== "")
+      .map((i) => [i.afterRound, i.message.trim()])
+  );
   for (const round of rounds.keys()) {
     const roundTurns = rounds.get(round)!;
     lines.push(`### 第 ${round} 轮`);
@@ -89,6 +98,13 @@ export function formatTranscript(turns: DialogueTurn[]): string {
       lines.push(`**${turn.icon} ${turn.expertName}:**`);
       lines.push("");
       lines.push(turn.content);
+      lines.push("");
+    }
+    // 主持人插话（P2）：镜像 prompt 注入位置——afterRound 轮结束后、下一轮
+    // 发言之前；与 prompt 使用同一原文（透明度：读者看到的就是专家看到的）。
+    const interj = interjByAfter.get(round);
+    if (interj !== undefined) {
+      lines.push(`> 🎙️ **主持人（第 ${round} 轮后插话）**：${interj}`);
       lines.push("");
     }
   }
@@ -119,6 +135,11 @@ export interface BrainstormReportExtras {
    * 实录后渲染「### 证据引用统计」小节；缺省时两小节零输出。
    */
   evidence?: string[];
+  /**
+   * 主持人插话（groupchat-strengths P2）：传入 formatTranscript 在对应轮
+   * 之后渲染 🎙️ 块（与 prompt 注入原文一致）；缺省零输出。
+   */
+  interjections?: Array<{ afterRound: number; message: string }>;
   /** SP 赢家（R1.5）：仅计算成功时提供；与 roundVotes 一同渲染「### 聚合结果」。 */
   spWinner?: string;
 }
@@ -236,7 +257,7 @@ export function formatBrainstormReport(
     );
     lines.push("");
   }
-  lines.push(formatTranscript(turns));
+  lines.push(formatTranscript(turns, extras?.interjections));
   lines.push("");
   // 证据引用统计（R2.4）：实录之后、魔鬼代言人轮换之前；per-expert [En]
   // 客观正则扫描。无 evidence、或证据提供了但零引用 → 零字节输出。
