@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查测试覆盖与质量门"}
+{"file": ".trellis/spec/backend/dialogue-prompts.md", "reason": "检查零改动原则与匿名安全未被破坏"}
+{"file": ".trellis/spec/backend/records-persistence.md", "reason": "检查 JSONL additive 与吞错红线"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "检查日志无泄漏"}

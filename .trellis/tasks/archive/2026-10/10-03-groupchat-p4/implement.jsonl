@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "MemoryPage/ChatPage 改动必须遵守组件契约"}
+{"file": ".trellis/spec/backend/records-persistence.md", "reason": "memory 文件契约与 admin API 语义（GET/DELETE /api/memory）"}
+{"file": ".trellis/spec/backend/dialogue-prompts.md", "reason": "interjections 校验规则与注入语义（与工具层一致）"}
+{"file": ".trellis/tasks/archive/2026-10/10-02-groupchat-strengths/research/agentmore-groupchat-analysis.md", "reason": "P4 群聊感设计参照"}

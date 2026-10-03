@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端分层入口：memory 模块落位与目录约定"}
+{"file": ".trellis/spec/backend/dialogue-prompts.md", "reason": "插话/记忆注入必须遵守 claim-0 三语义、注入矩阵与票文解析白名单安全"}
+{"file": ".trellis/spec/backend/records-persistence.md", "reason": "interjection 事件 additive 契约与 IO 不影响主流程红线"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "插话参数校验错误文案与 handler 早退约定"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "[memory] warn 行格式与 stderr 约定"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "vitest 既有模式与质量门"}
+{"file": ".trellis/tasks/10-02-groupchat-strengths/research/agentmore-groupchat-analysis.md", "reason": "AgentMore 群聊优点映射依据"}

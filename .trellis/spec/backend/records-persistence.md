@@ -159,3 +159,24 @@ const rotated = [...aliases.slice(run - 1), ...aliases.slice(0, run - 1)];
 // 固定专家顺序，只轮换代号字符串
 rotateAliases(experts, offset) // alias(architect) 在 run1=专家A、run2=专家B…
 ```
+
+## 专家记忆文件（10-02-groupchat-strengths，memory/<expertId>.jsonl）
+
+- 位置/解析链与 recordsDir 同约定：`TALKIO_MEMORY_DIR` > `<experts.json 目录>/memory`；`.gitignore` 已含 `/memory/`。
+- 一行一条 `{ ts, text }`；expertId 作文件名依赖 config.ts idRegex（`/^[a-z0-9][a-z0-9_-]*$/i`，防穿越）——admin DELETE 路由用同型正则二次校验。
+- admin API：`GET /api/memory`（总览 + 配置内空态专家；目录 ENOENT 视为空列表仍返回空态）、`DELETE /api/memory/:expertId`（文件不存在 404）。鉴权由 authGate /api/* 域统一覆盖。
+- JSONL 新事件（records 落盘侧）：`{ type: "interjection", round, message, run? }`——round = 注入目标轮，落盘位置在 afterRound 的 round_end 之后、目标轮 turn 之前（时间线镜像 prompt 注入位）。additive：不用插话的会话零新增行。
+
+### Wrong vs Correct
+#### Wrong
+```ts
+// 「记忆：无」时不剥离指令行——报告残留执行痕迹（真实踩坑）
+if (parsed.memory !== null && parsed.memory !== "无") {
+  t.content = parsed.content; // 只有收获成功才剥离 → 「无」场景正文污染
+```
+#### Correct
+```ts
+if (parsed.memory === null) continue;
+t.content = parsed.content;         // 指令行一律剥离
+if (parsed.memory !== "无") { … }   // 「无」仅意味着不落盘
+```

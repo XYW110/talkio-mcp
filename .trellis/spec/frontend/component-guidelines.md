@@ -97,3 +97,8 @@
 
 - 减少 `useEffect` 的滥用。优先考虑通过事件回调（Event Handlers）处理动作，或使用状态派生（Derived State）解决数据同步。
 - 若必须使用副作用监听（例如 Tauri 的底层窗口事件或生命周期绑定），务必提供相应的 `cleanup` 函数（`return () => { ... }`），防止由于热更新或卸载引发内存泄漏。
+## 群聊页与记忆页（10-03-groupchat-p4）
+
+- **ChatPage 实况时间线**：SSE `progress` 帧载荷 = StreamEvent 联合（`brainstorm.turn`/`brainstorm.round`），监听器按 `type` 分支消费；turn 行 = 头像（专家名首字符，info/ok/warn 哈希三色，**字面量类名数组**防 Tailwind purge）+ 已发言/缺席徽标（ok/bad token）；round 行 = 分隔线。`seqRef` 自增做稳定 key（事件无 id）；`timelineEndRef.scrollIntoView({block:"nearest"})` 滚底。done 后保留时间线，start() 重置。
+- **MemoryPage**：列表页范式 = NavBar + useFeedback(confirm/toast) + api.listMemory/clearMemory；空态分两层——全空 EmptyState、配置内无记忆专家尾注列举。清空必须 `danger: true` 二次确认。
+- **api client 扩展**：新端点在 `api.ts` 的 api 对象集中声明（http<T> 泛型 + Bearer 自动附带 + 401 统一登出）；类型镜像后端（`mirrors src/...` 注释）放 `types.ts`，禁止 page 内内联。

@@ -48,3 +48,12 @@
 - `formatBrainstormReport` 无 `initiatorContext` 时 claim-0 小节零字节输出。
 - 指令常量（`SEED_INSTRUCTION`/`DEBATE_INSTRUCTION`/`VOTE_INSTRUCTION`/`SUMMARIZER_SYSTEM`）是行为的一部分：修改文案 = 行为变更，须同步测试断言并在任务 PRD 记录动机。
 - 论据锚定约定（best-effort）：发言要求"主张 + 依据 + 来源"，投票理由要求引用被投者具体论据；总结须在票数分裂时输出「无共识」，不得强行归并多数。
+
+## 主持人插话与专家记忆注入（10-02-groupchat-strengths）
+
+- **公开块链次序**（debate ≥2 轮 / relay 各轮）：`memoryPrefix（私有）→ topic → DEBATE/RELAY_INSTRUCTION → evidencePrefix → claim0Prefix → interjectionPrefix → 实录`。所有前缀均为「空串拼接模式」：参数缺省/空白 → 逐字节还原旧版 prompt（AC6 红线，快照测试锚定）。
+- **主持人插话**（`INTERJECTION_HEADER`/`INTERJECTION_NOTE`）：注入目标轮 = `afterRound + 1`（工具层校验 1 ≤ afterRound ≤ rounds-1，rounds=1 直接拒绝并给出文案）；不进种子轮（保盲答）、不进投票轮。块头形态刻意避开「专家[A-Z]」与 claim-0/证据库标题——`parseVotedForAlias` 白名单天然不命中（票文解析安全）。报告以 🎙️ 引用块渲染在 afterRound 轮之后（与 prompt 同原文）。
+- **专家记忆**（`src/experts/memory.ts`）：注入 = prompt 头部私有块（最近 3 条 / 400 chars / 表头「【你的历史记忆…】」），匿名化不触碰（记忆属于阅读者本人）；收获 = 末轮 `MEMORY_HARVEST_INSTRUCTION` 追加在 userContent 末尾，`parseMemoryLine` 只认**最后一个**行首「记忆：」（全半角容错）。「记忆：无」= 指令行仍剥离但**不落盘**——指令执行痕迹不得留在报告（真实踩坑：最初版本只在收获成功时剥离，「无」场景报告残留指令行）。
+- **收获时序**：`harvestRoundMemories` 必须先于 `absorbRound`——「记忆：」行不得进入增量概要与后续注入（含投票轮）。
+- **IO 分层**：编排层零 IO（`memories: Map` 由工具层预读注入）；落盘（`appendMemory`：redactPII → 50 字截断 → appendFileSync）与读取（`loadExpertMemories`：坏行跳过 + warn）全在 `src/experts/memory.ts`，吞错红线与 records store 同款。
+- **默认开**（Q1=A 用户拍板）：`remember`/`memory` 缺省 true——无记忆文件时零字节注入不破坏现状；显式 false = 与旧版逐字节一致。
