@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "质量门与测试覆盖检查标准"}
+{"file": ".trellis/spec/backend/auth-tokens.md", "reason": "检查 /api/keys 鉴权合规"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "检查无密钥泄漏"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "检查组件契约合规"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "admin-web 门禁"}

@@ -542,3 +542,31 @@ admin token（env TALKIO_ADMIN_TOKEN 静态）+ MCP token（后台动态生成/�
 ### Status
 
 [OK] **Completed**
+
+## Session 18: 09-30-provider-keys-ui 渠道 Key 网页直配上线 + groupchat 成果抢救
+
+**Date**: 2026-10-03
+**Task**: 09-30-provider-keys-ui
+**Branch**: `master`
+
+### Summary
+
+两段式收尾。(1) **工作区变更摸底**：发现 zai 并行会话（10-02 groupchat-strengths + 10-03 groupchat-p4）journal 记录的 4 个提交哈希是幻影（cat-file 查无、无分支无 stash），约 1800 行成果只以未提交改动存在——经用户拍板按流抢救提交（backend/admin-web/readme/trellis 四连），journal 哈希修正为真实值。(2) **keys-ui 实施**：trellis-implement 完成步骤 3-10（凭据切 keys 单例、validate-then-write-then-swap 热生效、GET/PUT /api/keys 掩码、8 测试文件迁 `test/helpers/keys.ts`、ProvidersPage 直配、README/.env.example 反转）→ trellis-check **PASS-with-notes**（自修复掩码断言强度：整串 grep→≥5 字符片段级 `expectNoKeyFragment`）→ spec 沉淀 auth-tokens.md「渠道 Key 直配」7 段式 → 三流提交。用户批 Q4A 后全流程部署：push → CI 绿 → 上海 1Panel 升级 latest + **state/ 目录挂载修复** → CUSTOM_API_KEY 迁入 keys.json → 公网 401 探测 + smoke-sse 远程三断言 + **真实 consult 全链路 PASS（DeepSeek V4 Flash，24.9s）**，服务不断供，compose env 留作 0.2.0 回滚锚。
+
+踩坑记录：(1) 单文件 bind mount + tmp+rename 原子写 = **落盘静默失效**——PUT /api/keys 返回 ok 但宿主 keys.json 零增长，mcp-tokens.json 0 字节之谜同根因（rename 覆盖挂载点 inode 被拆）；改 state/ 目录挂载后 token/keys 持久化即恢复。(2) 并行会话 journal 哈希不可信，处置前必 cat-file 验证。(3) PUT /api/keys 请求体字段是 `apiKey`（不是 key）；MCP 工具注册名是 snake_case（consult_experts）。(4) POST /messages 需把 MCP token 以 `?token=` 拼到 endpoint 上（SSE endpoint 事件只给 sessionId）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2159900` | feat(groupchat): 群聊感全链路（R1-R3 抢救提交） |
+| `563f940` | feat(admin-web): 群聊发言实况时间线 + 专家记忆管理页（P4 抢救提交） |
+| `3bad2b1` | docs(readme): 群聊实况/插话/记忆章节 |
+| `c48f271` | docs(trellis): zai journal 哈希修正 + 归档 2026-10 |
+| `e67359e` | feat(keys): 渠道 API Key keys.json 直配（后端） |
+| `4cc8927` | feat(admin-web): ProvidersPage 渠道密钥直配 |
+| `6cd5296` | docs: 密钥安全章节反转 + auth-tokens spec 渠道 Key 契约 |
+
+### Status
+
+[OK] **Completed** — typecheck ✅ / vitest 362/362 ✅ / build ✅ / build:web ✅ / 双冒烟 PASS ✅ / CI 绿 / 现网迁移+公网真实 consult PASS ✅；P3 遗留：compose 陈旧注释、并发 PUT tmp 交错（理论）、401 矩阵可补 /api/keys 项。

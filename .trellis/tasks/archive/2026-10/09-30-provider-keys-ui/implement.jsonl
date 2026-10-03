@@ -1,0 +1,20 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "401/400 JSON 契约与错误文案规范"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "[keys] 日志行规范，绝不输出密钥"}
+{"file": ".trellis/spec/backend/records-persistence.md", "reason": "IO 失败不影响主请求红线 + tmp+rename 原子写模式"}
+{"file": ".trellis/spec/backend/auth-tokens.md", "reason": "新增 /api/keys 端点必须挂在 admin token 门禁之后"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "vitest 既有 fixture/集成测试模式"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "ProvidersPage 密钥输入（掩码+留空=不改）组件契约"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "密钥状态与反馈系统接法"}
+{"file": ".trellis/spec/deployment/docker-publish.md", "reason": "CI 镜像发布与服务器部署链路"}
+{"file": "src/config.ts", "reason": "validateExpertsFile 纯校验核心抽出（admin PUT 写盘前复用，无 exit）；resolveProviderCredentials 改读 keys 单例，missing key（管理后台-渠道页）；providerSchema.apiKeyEnv 宽容 optional（0.2.0 回滚锚）"}
+{"file": "src/server.ts", "reason": "createServer 签名改 state={config} 可变持有者，工具 handler 每次取 state.config（R4 热生效）；disabledTools 注册面仍启动静态（已知限制）"}
+{"file": "src/admin/api.ts", "reason": "新增 GET /api/keys（掩码）与 PUT /api/keys/:pid（空串清除/404/即时生效）；PUT /api/config 改 validate-then-write-then-swap（configRef 原位替换，{ok:true} 无 restartRequired）；/api/env/status 与 restartHint 删除"}
+{"file": "src/index.ts", "reason": "keys 装配：TALKIO_KEYS_FILE > experts.json 同目录 keys.json，initKeysStore 后与 createServer/createAdminApi 共享 configRef；启动 [keys] 未配置渠道提示（mock 模式跳过）"}
+{"file": "src/tools/select-cards.ts", "reason": "hasProviderKey/missingKeyReason 改读 keys 单例（不读 env）；SkippedMissingKey.apiKeyEnv→missingReason，MISSING_KEY_HINT 统一文案"}
+{"file": "src/tools/list-cards.ts", "reason": "CardSummary.missingEnv→missingReason（值=MISSING_KEY_HINT），报告行与 hint 文案同步"}
+{"file": "test/helpers/keys.ts", "reason": "keys fixture helper：installKeysStore 注入内存态进程级密钥池；8 个存量测试文件 + admin-keys 用它替代 env fixture 的共用入口"}
+{"file": "test/admin-keys.test.ts", "reason": "keys 路由集成：掩码无明文红线、PUT 即时生效/清除/404/400、PUT /api/config 热替换 configRef + 非法配置不写盘"}
+{"file": "admin-web/src/pages/ProvidersPage.tsx", "reason": "API Key 直配浮层（指纹+updatedAt+更换/清除/留空=不改，独立 PUT /api/keys 不走全局保存）；预设去 apiKeyEnv/.env 引导；行/卡显示 key 状态徽标"}
+{"file": "README.md", "reason": "「密钥安全」反转：keys.json 网页直配 + GET/PUT /api/keys 契约 + missing key 语义 + 0.2.0 env 迁移与回滚锚说明；MCP 客户端示例与 docker 段去 env 密钥"}
+{"file": ".env.example", "reason": "清渠道 key 示例（留 ADMIN_TOKEN）；补 TALKIO_KEYS_FILE 与 0.2.0 回滚锚注释"}
+{"file": ".gitignore + keys.json.example", "reason": "gitignore 增 keys.json/keys.json.tmp；新增脱敏示例文件"}
