@@ -14,6 +14,7 @@ import {
   Rocket,
   Save,
   Settings,
+  Sparkles,
   type LucideIcon,
 } from "lucide-react";
 import { api, authCheck, clearToken, getStoredToken, setUnauthorizedHandler } from "./api";
@@ -26,6 +27,7 @@ import { CardsPage } from "./pages/CardsPage";
 import { RecordsPage } from "./pages/RecordsPage";
 import { UsagePage } from "./pages/UsagePage";
 import { ChatPage } from "./pages/ChatPage";
+import { MemoryPage } from "./pages/MemoryPage";
 import { TokensPage } from "./pages/TokensPage";
 import { LoginView } from "./pages/LoginView";
 import { ChevronRow, SectionLabel, Card } from "./components/ui";
@@ -50,6 +52,7 @@ type Page =
   | { name: "records" }
   | { name: "usage" }
   | { name: "tokens" }
+  | { name: "memory" }
   | { name: "chat" };
 
 export default function App() {
@@ -371,6 +374,14 @@ const providers = Object.entries(config.providers) as [string, ProviderConfig][]
       subtitle: "查看 consult / brainstorm 调用留痕",
     },
     {
+      page: { name: "memory" },
+      icon: Sparkles,
+      title: "专家记忆",
+      count: 0,
+      unit: "",
+      subtitle: "专家跨会话沉淀的经验与清空",
+    },
+    {
       page: { name: "usage" },
       icon: ChartNoAxesColumn,
       title: "用量",
@@ -460,6 +471,8 @@ const editOverlay = editing && (
     );
   } else if (page.name === "records") {
     content = <RecordsPage onBack={() => setPage({ name: "settings" })} />;
+  } else if (page.name === "memory") {
+    content = <MemoryPage onBack={() => setPage({ name: "settings" })} />;
   } else if (page.name === "usage") {
     content = <UsagePage onBack={() => setPage({ name: "settings" })} />;
   } else if (page.name === "tokens") {

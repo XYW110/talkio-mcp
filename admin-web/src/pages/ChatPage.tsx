@@ -12,6 +12,30 @@ interface Props {
 
 type ChatStatus = "idle" | "running" | "done" | "error";
 
+/** 实况时间线项（groupchat-p4 R2）：turn = 卡粒度发言事件，round = 轮边界。 */
+type TimelineItem =
+  | { kind: "round"; round: number; total: number; seq: number }
+  | {
+      kind: "turn";
+      round: number;
+      expertName: string;
+      ok: boolean;
+      seq: number;
+    };
+
+/** 头像配色（字面量类名保证 Tailwind 不被 purge）：按专家名哈希取色。 */
+const AVATAR_COLORS = [
+  "bg-info-bg text-info-text",
+  "bg-ok-bg text-ok-text",
+  "bg-warn-bg text-warn-text",
+] as const;
+
+function avatarColor(name: string): string {
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.codePointAt(0)!) >>> 0;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length]!;
+}
+
 const MODES: { value: "debate" | "relay"; label: string; desc: string }[] = [
   { value: "debate", label: "辩论", desc: "每位专家逐轮围绕话题发表观点" },
   { value: "relay", label: "接龙", desc: "专家依次接力，基于上一位的发言继续" },
@@ -30,8 +54,17 @@ export function ChatPage({ cards }: Props) {
   const [report, setReport] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // 实况时间线（groupchat-p4 R2）：turn 事件流 + 轮边界分隔。
+  const [timeline, setTimeline] = useState<TimelineItem[]>([]);
+  const seqRef = useRef(0);
+  const timelineEndRef = useRef<HTMLDivElement | null>(null);
 
   const esRef = useRef<EventSource | null>(null);
+
+  // 新事件到达时滚动到时间线底部（群聊"向上滚"的感觉）。
+  useEffect(() => {
+    timelineEndRef.current?.scrollIntoView({ block: "nearest" });
+  }, [timeline]);
 
   // 离开页面时关闭 SSE
   useEffect(() => {
@@ -86,6 +119,8 @@ export function ChatPage({ cards }: Props) {
     setProgress(null);
     setReport("");
     setError("");
+    setTimeline([]);
+    seqRef.current = 0;
     try {
       const { sessionId } = await api.runBrainstorm({
         topic: t,
@@ -99,13 +134,46 @@ export function ChatPage({ cards }: Props) {
 
       es.addEventListener("progress", (ev) => {
         try {
+          // progress 帧载荷 = StreamEvent（consult.card 在本页不会出现）。
           const data = JSON.parse((ev as MessageEvent).data) as {
             type?: string;
             round?: number;
             total?: number;
+            expertName?: string;
+            ok?: boolean;
           };
-          if (data.round !== undefined && data.total !== undefined) {
+          if (data.type === "brainstorm.turn") {
+            if (
+              typeof data.round === "number" &&
+              typeof data.expertName === "string" &&
+              typeof data.ok === "boolean"
+            ) {
+              setTimeline((prev) => [
+                ...prev,
+                {
+                  kind: "turn",
+                  round: data.round!,
+                  expertName: data.expertName!,
+                  ok: data.ok!,
+                  seq: seqRef.current++,
+                },
+              ]);
+            }
+          } else if (
+            data.type === "brainstorm.round" &&
+            data.round !== undefined &&
+            data.total !== undefined
+          ) {
             setProgress({ round: data.round, total: data.total });
+            setTimeline((prev) => [
+              ...prev,
+              {
+                kind: "round",
+                round: data.round!,
+                total: data.total!,
+                seq: seqRef.current++,
+              },
+            ]);
           }
         } catch {
           // 忽略无法解析的进度帧
@@ -190,6 +258,56 @@ es.addEventListener("error", (ev) => {
             <p className="mt-1.5 text-[12px] text-info-text">
               每位专家每轮约需数秒~数十秒，请稍候…
             </p>
+          </div>
+        )}
+
+        {/* 发言实况时间线（groupchat-p4 R2）：进行中实时滚动；done 后保留供回看谁发言/谁缺席。 */}
+        {timeline.length > 0 && (
+          <div className="mt-4 mb-4">
+            <SectionLabel>发言实况</SectionLabel>
+            <Card className="p-3">
+              <div className="flex max-h-72 flex-col gap-1 overflow-y-auto pr-1">
+                {timeline.map((item) =>
+                  item.kind === "turn" ? (
+                    <div
+                      key={item.seq}
+                      className="flex items-center gap-2.5 rounded-lg bg-hover/50 px-2.5 py-1.5"
+                    >
+                      <span
+                        className={`flex h-7 w-7 shrink-0 select-none items-center justify-center rounded-full text-[13px] font-semibold ${avatarColor(item.expertName)}`}
+                        aria-hidden="true"
+                      >
+                        {item.expertName.slice(0, 1)}
+                      </span>
+                      <span className="text-[13px] font-medium text-ink">
+                        {item.expertName}
+                      </span>
+                      <span className="text-[11px] text-ink-faint">
+                        第 {item.round} 轮
+                      </span>
+                      <span
+                        className={`ml-auto rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                          item.ok
+                            ? "bg-ok-bg text-ok-text"
+                            : "bg-bad-bg text-bad-text"
+                        }`}
+                      >
+                        {item.ok ? "已发言" : "缺席"}
+                      </span>
+                    </div>
+                  ) : (
+                    <div key={item.seq} className="flex items-center gap-2 py-1">
+                      <span className="h-px flex-1 bg-line" />
+                      <span className="text-[11px] text-ink-faint">
+                        第 {item.round} / {item.total} 轮结束
+                      </span>
+                      <span className="h-px flex-1 bg-line" />
+                    </div>
+                  ),
+                )}
+                <div ref={timelineEndRef} />
+              </div>
+            </Card>
           </div>
         )}
 

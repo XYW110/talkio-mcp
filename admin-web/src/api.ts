@@ -20,6 +20,7 @@ import type {
   McpTokenInfo,
   CreatedMcpToken,
   AuthCheckResult,
+  ExpertMemory,
 } from "./types";
 
 const TOKEN_KEY = "talkio.adminToken";
@@ -150,6 +151,14 @@ deleteRecords: (ids?: string[]) =>
   },
   /** Token 用量聚合（days ∈ [1,90]，后端钳制；缺省 30）。 */
   getUsage: (days: number) => http<UsageAggregate>(`/api/usage?days=${days}`),
+  /** 专家记忆总览（含配置内空态专家；memoryDir 未装配的部署 404）。 */
+  listMemory: () => http<ExpertMemory[]>("/api/memory"),
+  /** 清空单个专家记忆。 */
+  clearMemory: (expertId: string) =>
+    http<{ ok: boolean; expertId: string }>(
+      `/api/memory/${encodeURIComponent(expertId)}`,
+      { method: "DELETE" },
+    ),
   /** MCP 访问令牌列表（不含明文/哈希）。 */
   listTokens: () => http<McpTokenInfo[]>(`/api/tokens`),
   /** 生成 MCP 访问令牌；明文仅本响应出现一次。 */

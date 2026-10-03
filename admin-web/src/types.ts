@@ -280,18 +280,48 @@ export interface RunBrainstormBody {
   rounds?: number; // 1-5
   summarize?: boolean;
   cards?: string[]; // 角色卡 id 列表
+  /** 主持人插话（groupchat-p4）：afterRound ∈ [1, rounds-1]，消息非空白 */
+  interjections?: Array<{ afterRound: number; message: string }>;
 }
 
 /**
  * GET /api/chat?session= 的 SSE 事件数据（event 名 = progress / done / error）。
- * - progress：{ type:"brainstorm.round", round, total }
+ * - progress：{ type:"brainstorm.turn", round, total, card, expertName, ok }（卡粒度实况）
+ *            或 { type:"brainstorm.round", round, total }（轮边界）
  * - done：{ isError, report, sessionId }
  * - error：{ message }
  */
 export type ChatSessionEvent =
+  | {
+      type: "brainstorm.turn";
+      round: number;
+      total: number;
+      card: string;
+      expertName: string;
+      ok: boolean;
+    }
   | { type: "brainstorm.round"; round: number; total: number }
   | { type: "done"; isError: boolean; report: string; sessionId: string }
   | { type: "error"; message: string };
+
+// ── 专家记忆（GET /api/memory 返回体，mirrors src/experts/memory.ts）──
+
+/** 单条记忆（JSONL 一行）。 */
+export interface ExpertMemoryEntry {
+  /** ISO 时间戳（写入时刻）。 */
+  ts: string;
+  /** 记忆正文（已脱敏、已截断）。 */
+  text: string;
+}
+
+/** 某专家的记忆总览项。 */
+export interface ExpertMemory {
+  expertId: string;
+  expertName: string;
+  icon: string;
+  count: number;
+  entries: ExpertMemoryEntry[];
+}
 
 // ── Token 用量聚合（GET /api/usage 返回体，mirrors src/records/store.ts UsageAggregate）──
 
