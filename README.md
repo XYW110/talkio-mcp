@@ -101,6 +101,8 @@ cp .env.example .env
 - 新增 Provider 时内置 **7 个预设**（Ollama / LM Studio / vLLM / OpenRouter / DeepSeek / Moonshot / 智谱），一键填充 `baseUrl` 与 `apiKeyEnv`；
 - 角色卡可勾选**信号组**（配合 MCP 侧 `select: "auto"` 路由选卡）；
 - 会话记录页面中 `runs > 1` 的多轮运行以 **R{n} 徽标**区分运行序号；
+- **发起群聊**：网页版发起 brainstorm（支持主持人插话），进行中以**发言实况时间线**逐卡展示"谁已发言/谁缺席"，与 MCP 面共享记忆（memoryDir 同目录装配）；
+- **专家记忆**页：查看各专家跨会话沉淀的经验（条数/原文/日期），支持单专家清空（`GET/DELETE /api/memory`）；
 - **令牌管理**：内置登录页（`TALKIO_ADMIN_TOKEN`）与「访问令牌」页（MCP 动态令牌生成/吊销），见「鉴权与令牌」。
 
 ### 开发模式
@@ -419,9 +421,34 @@ consult 行：`cards`=实际咨询卡数，`ok`/`failed`=成功 / 失败条数�
 `consult_experts` / `brainstorm` / `brainstorm_followup` 每次调用都会落盘一份 JSONL 会话记录，便于事后审计与回放：
 
 - **位置** — `<experts.json 所在目录>/records/<sessionId>.jsonl`（可用环境变量 `TALKIO_RECORDS_DIR` 覆盖）；
-- **结构** — 第 1 行固定为 `meta` 事件（所选卡片快照），最后一行固定为 `done`，中间为里程碑事件（卡片结果、对话 turn、轮次边界、总结）；`runs > 1` 时事件额外带 `run` 字段区分运行序号；
+- **结构** — 第 1 行固定为 `meta` 事件（所选卡片快照），最后一行固定为 `done`，中间为里程碑事件（卡片结果、对话 turn、轮次边界、插话、总结）；`runs > 1` 时事件额外带 `run` 字段区分运行序号。使用了主持人插话时，`afterRound` 轮的 `round_end` 之后会落一行 `interjection` 事件（`round` = 注入目标轮，`message` = 插话原文），时间线与 prompt 注入位置镜像；
 - **隐私** — 落盘的是已经过 PII 掩码后的文本（与发给 LLM 的一致），不会新增暴露面；
 - **可靠性** — 记录写入失败只在 stderr 打 `[records]` 警告，绝不影响工具调用本身。
+
+## 专家记忆（memory）
+
+借鉴群聊产品「越用越懂你」的体验：专家在 brainstorm 末轮可沉淀一条经验，后续所有工具调用（consult / brainstorm / followup）自动注入该专家的历史记忆，形成跨会话的成长感。
+
+- **收获** — `brainstorm` 的 `remember`（默认 true）在末轮给每位专家追加收获指令：发言末尾以「记忆：」行写一条 ≤50 字经验（没有值得记的可省略）。收获行会从报告与实录中剥离，不会污染讨论内容；
+- **注入** — `memory`（默认 true）把该专家最近 3 条记忆（总长 ≤400 字符）注入其 prompt 头部（私有上下文，匿名化不触碰、不参与互评投票）。无记忆文件时零字节注入，prompt 与旧版逐字节一致；
+- **位置** — `<experts.json 所在目录>/memory/<expertId>.jsonl`（一行一条 `{ ts, text }`），可用环境变量 `TALKIO_MEMORY_DIR` 覆盖；目录已加入 `.gitignore`；
+- **隐私** — 记忆写入前经过与 LLM 请求同款 PII 掩码（手机号/身份证/邮箱/银行卡/微信号）；文件只存本地，不上传；写入失败只在 stderr 打 `[memory]` 警告，绝不影响工具调用；
+- **管理** — 管理后台 API：`GET /api/memory` 返回各专家记忆总览（含空态专家），`DELETE /api/memory/<expertId>` 清空单个专家记忆（需 admin token，与 records 路由同鉴权域）。
+
+两个开关都支持显式关闭（`remember: false` / `memory: false`）以获得与旧版完全一致的行为。
+
+## 流式通知（streaming）
+
+工具执行过程中通过 MCP logging 通知（`notifications/message`，logger 名 `talkio.stream`）推送增量事件，宿主客户端订阅后可实时转述讨论进度：
+
+| 事件 | 载荷 | 时机 |
+| --- | --- | --- |
+| `consult.card` | `{ card, status }` | consult 每张卡结算（ok / failed） |
+| `brainstorm.turn` | `{ round, total, card, expertName, ok }` | brainstorm 轮内**每张卡发言完成即发**（谁已发言、是否缺席） |
+| `brainstorm.round` | `{ round, total }` | brainstorm 每轮结束 |
+| `brainstorm.vote` | `{}` | 互评投票完成 |
+
+事件只含卡标识 / 轮次 / 状态，**绝不携带发言内容**（PII 纪律与错误脱敏互不触碰）。通知 fire-and-forget：客户端未订阅不降级、发送失败不影响工具调用。
 
 ## 工具用法
 
@@ -454,6 +481,7 @@ consult 行：`cards`=实际咨询卡数，`ok`/`failed`=成功 / 失败条数�
 | `cards`    | string[] | 否   | 角色卡 id 列表；缺省使用有 key 的启用角色卡（最多 3 张） |
 | `parallel` | boolean  | 否   | 是否并行调用（默认 true）；false 时按顺序逐个调用     |
 | `select`   | "auto"   | 否   | 传 `auto` 时按问题内容信号路由自动选卡（内置中英关键词信号组，见 [信号路由](#信号路由选卡)） |
+| `memory`   | boolean  | 否   | 是否注入各专家的历史记忆（brainstorm 末轮沉淀的经验，最多 3 条）；**默认 true**，设 false 获得与旧版逐字节一致的 prompt（见 [专家记忆](#专家记忆memory)） |
 
 示例：
 
@@ -484,6 +512,9 @@ consult 行：`cards`=实际咨询卡数，`ok`/`failed`=成功 / 失败条数�
 | `judgeCard` | string          | 否   | 裁决者角色卡 id：由该卡（而非第一张卡）执行最终综合；该卡若同时参与议事会被剔除；无效时回退第一张卡并在报告注明 |
 | `select`    | "auto"          | 否   | 传 `auto` 按主题内容信号路由自动选卡；缺省按 cards/默认卡逻辑      |
 | `runs`      | 1 / 2 / 3       | 否   | 多轮运行：对同一主题完整重跑 N 次对话（每次轮换匿名别名）并去重合并结论，每条结论标注稳定性 [K/N RUNS]；>1 时成本按倍数增长，建议配合 vote + debate 使用（默认 1） |
+| `interjections` | Array       | 否   | **主持人插话**：`[{ afterRound: 1, message: "聚焦成本" }]`——在第 `afterRound` 轮结束后插入主持人的话，注入下一轮全体专家 prompt 并要求优先回应（方向修正/补充约束/追问）。须满足 1 ≤ afterRound ≤ rounds-1（rounds=1 时无可插话轮间隙，传入即报错）；不进入第 1 轮（保盲答）与投票轮；报告中以 🎙️ 块渲染在对应轮之后（最多 4 条） |
+| `remember`  | boolean         | 否   | 末轮记忆收获（**默认 true**）：每位专家可在发言末尾以「记忆：」行沉淀一条 ≤50 字经验，经 PII 脱敏后存入本地 `memory/`；收获行会从报告正文中剥离（见 [专家记忆](#专家记忆memory)） |
+| `memory`    | boolean         | 否   | 历史记忆注入（**默认 true**）：每个专家的 prompt 头部注入其历史记忆（最近 3 条）；设 false 关闭 |
 
 示例：
 
@@ -515,6 +546,7 @@ consult 行：`cards`=实际咨询卡数，`ok`/`failed`=成功 / 失败条数�
 | `cards`    | string[]        | 否   | 参与追问的卡 id 列表（缺省=启用且有 key，最多 3 张；传 `card` 时忽略） |
 | `card`     | string          | 否   | 指定单张卡 id 深化（仅该卡作答 1 条 turn）               |
 | `mode`     | debate 或 relay | 否   | 仅全体追问时有效（缺省 relay）                            |
+| `memory`   | boolean         | 否   | 是否注入各专家的历史记忆（默认 true；见 [专家记忆](#专家记忆memory)） |
 
 ### 信号路由选卡
 
