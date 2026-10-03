@@ -9,7 +9,8 @@ import type {
   ConfigFile,
   ProbeModel,
   SaveResult,
-  EnvVarStatus,
+  KeyStatus,
+  SetKeyResult,
   ProbeRequest,
   SessionDetail,
   SessionMeta,
@@ -125,7 +126,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify(req),
     }),
-  envStatus: () => http<EnvVarStatus[]>("/api/env/status"),
+  /** 渠道密钥掩码列表（GET /api/keys，无明文；mirrors src/admin/api.ts） */
+  getKeyStatuses: () => http<KeyStatus[]>("/api/keys"),
+  /** 写入/清除渠道密钥（PUT /api/keys/:pid，空串=清除，保存即热生效） */
+  setProviderKey: (providerId: string, apiKey: string) =>
+    http<SetKeyResult>(`/api/keys/${encodeURIComponent(providerId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ apiKey }),
+    }),
   getRecords: (limit?: number) =>
     http<SessionMeta[]>(`/api/records${limit ? `?limit=${limit}` : ""}`),
 getRecord: (id: string) => http<SessionDetail>(`/api/records/${encodeURIComponent(id)}`),

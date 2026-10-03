@@ -80,7 +80,7 @@ export function ModelPicker({
       {provider && (
         <div className="flex-shrink-0 border-b border-line bg-island-strong px-4 py-2">
           <p className="truncate text-[12px] text-ink-dim">
-            {provider[0]} · {provider[1].baseUrl} · 环境变量 {provider[1].apiKeyEnv}
+            {provider[0]} · {provider[1].baseUrl}
           </p>
         </div>
       )}
@@ -99,7 +99,7 @@ export function ModelPicker({
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && probe()}
-                placeholder={`${provider?.[1].apiKeyEnv ?? "API_KEY"} 的值`}
+                placeholder="API Key 的值"
                 className="flex-1"
                 autoFocus
               />

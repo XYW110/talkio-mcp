@@ -296,11 +296,7 @@ function AppShell() {
         return false;
       }
       setDirty(false);
-      if (result.restartRequired) {
-        toast("success", "已保存。MCP server 需重启后新配置才生效（重启 talkio-mcp 进程）。");
-      } else {
-        toast("success", "已保存");
-      }
+      toast("success", "已保存，新配置即时生效（无需重启）");
       return true;
     } catch (e) {
       toast("error", e instanceof Error ? e.message : String(e), { sticky: true });
@@ -347,7 +343,7 @@ const providers = Object.entries(config.providers) as [string, ProviderConfig][]
       title: "Provider",
       count: providers.length,
       unit: "个",
-      subtitle: "配置 API 端点与 key 环境变量",
+      subtitle: "配置 API 端点，密钥后台直配即时生效",
     },
     {
       page: { name: "models" },
@@ -571,7 +567,7 @@ const editOverlay = editing && (
           </Button>
         </div>
         <p className="mt-2 text-center text-[11px] text-ink-faint">
-          保存后需重启 MCP server，新配置才生效
+          保存后即时生效，无需重启
         </p>
       </div>
     </div>
@@ -748,7 +744,7 @@ function PcSidebar({
           </span>
         </Button>
         <p className="mt-1.5 hidden text-center text-[11px] text-ink-faint lg:block">
-          {dirty ? "有未保存的修改" : "保存后需重启 MCP server 生效"}
+          {dirty ? "有未保存的修改" : "保存后即时生效"}
         </p>
       </div>
     </aside>

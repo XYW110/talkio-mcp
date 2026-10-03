@@ -3,7 +3,8 @@
 export interface ProviderConfig {
   type: "openai" | "anthropic" | "openai-compatible";
   baseUrl: string;
-  apiKeyEnv: string;
+  // 遗留 apiKeyEnv 字段（0.2.0 env 方案）后端已宽容忽略；前端不再编辑该字段，
+  // 加载/保存时对象原样透传，保证旧 experts.json 的字段不被清除（回滚兼容）。
 }
 
 export type ProviderMap = Record<string, ProviderConfig>;
@@ -130,12 +131,23 @@ export interface SaveResult {
   ok: boolean;
   error?: string;
   issueCount?: number;
-  restartRequired?: boolean;
 }
 
-export interface EnvVarStatus {
-  name: string;
-  configured: boolean;
+/** GET /api/keys 列表项（掩码；fingerprint = key 明文尾 4 位。mirrors src/admin/api.ts） */
+export interface KeyStatus {
+  providerId: string;
+  hasKey: boolean;
+  fingerprint?: string;
+  updatedAt?: string;
+}
+
+/** PUT /api/keys/:pid 响应（不含明文） */
+export interface SetKeyResult {
+  ok: boolean;
+  providerId: string;
+  hasKey: boolean;
+  fingerprint?: string;
+  updatedAt?: string;
 }
 
 // ── 鉴权与 MCP 访问令牌（GET /api/auth/check、/api/tokens，mirrors src/auth/tokens.ts）──
