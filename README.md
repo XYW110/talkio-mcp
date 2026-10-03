@@ -17,7 +17,7 @@
 - **多 Provider 支持** — OpenAI、Anthropic，以及任意 OpenAI 兼容 API（DeepSeek、Moonshot、Qwen 等，纯配置接入，无需新代码）。
 - **三概念体系** — **专家**（人设/参数）与**模型**（引擎）解绑为独立一等概念，通过**角色卡**绑定专家+模型。`experts.json` 分三段存储。
 - **双传输模式** — Stdio（本地，默认）与 HTTP/SSE（远程）。
-- **密钥安全** — API Key 仅通过环境变量注入，绝不写入配置文件。
+- **密钥安全** — API Key 在管理后台直接配置，独立存服务器 `keys.json`（接口/日志只回显尾 4 位指纹），保存后即时生效，绝不写入 `experts.json`；支持从旧版环境变量方案平滑迁移（见「渠道 API Key 管理」）。
 - **HTTP 面鉴权** — 双 token 体系（管理后台静态令牌 + MCP 动态访问令牌），未配置时 fail-closed 全部 401，详见「鉴权与令牌」。
 - **容器化部署** — 多阶段 Dockerfile + docker-compose 一键启动。
 
@@ -70,14 +70,13 @@ node scripts/smoke-stdio.mjs
 
 ### 5. 配置真实 API Key（可选）
 
-本地开发可在项目根目录创建 `.env`（已被 `.gitignore` 忽略，不会提交）：
+SSE 模式下打开管理后台 → **Provider** 页，在每个 provider 的编辑浮层「API Key」区粘贴密钥并点「保存密钥」——密钥写入服务器 `keys.json`，**保存即生效，无需重启**。
 
-```bash
-cp .env.example .env
-# 编辑 .env，填入你实际拥有的 provider 密钥
-```
+- `keys.json` 默认与 `experts.json` 同目录（`TALKIO_KEYS_FILE` 可覆盖路径），已被 `.gitignore` 忽略；
+- stdio 模式无管理界面：手工/脚本编辑 `keys.json`（参考 `keys.json.example`）后重启 stdio 进程生效；
+- 接口与日志只会回显密钥尾 4 位指纹，任何响应不包含明文。
 
-`experts.json` 中每个 provider 的 `apiKeyEnv` 字段对应 `.env` 里的变量名。修改后重启服务器生效。
+仍需要 `TALKIO_ADMIN_TOKEN` 时才使用 `.env`（见 `.env.example`）。从 0.2.0 的环境变量方案迁移见「渠道 API Key 管理」。
 
 ## 常见命令速查
 
@@ -98,7 +97,7 @@ cp .env.example .env
 
 `admin-web/` 是基于 React + Vite 的可视化管理界面，用于维护 **专家（Expert）/ 模型（Model）/ 角色卡（Card）** 三段式配置。亮点：
 
-- 新增 Provider 时内置 **7 个预设**（Ollama / LM Studio / vLLM / OpenRouter / DeepSeek / Moonshot / 智谱），一键填充 `baseUrl` 与 `apiKeyEnv`；
+- 新增 Provider 时内置 **7 个预设**（Ollama / LM Studio / vLLM / OpenRouter / DeepSeek / Moonshot / 智谱），一键填充 `baseUrl`；API Key 在编辑浮层内直配、即时生效；
 - 角色卡可勾选**信号组**（配合 MCP 侧 `select: "auto"` 路由选卡）；
 - 会话记录页面中 `runs > 1` 的多轮运行以 **R{n} 徽标**区分运行序号；
 - **发起群聊**：网页版发起 brainstorm（支持主持人插话），进行中以**发言实况时间线**逐卡展示"谁已发言/谁缺席"，与 MCP 面共享记忆（memoryDir 同目录装配）；
@@ -141,15 +140,15 @@ cd admin-web && npm run build
 ```jsonc
 {
   "providers": {
+    // 真实 API Key 不存 experts.json：存同目录 keys.json（管理后台直配，保存即生效）。
+    // 旧文件中的 apiKeyEnv 字段会被宽容忽略并原样透传（0.2.0 回滚兼容）。
     "openai": {
       "type": "openai", // openai | anthropic | openai-compatible
-      "baseUrl": "https://api.openai.com/v1",
-      "apiKeyEnv": "OPENAI_API_KEY" // 指向环境变量名，不直接写 key
+      "baseUrl": "https://api.openai.com/v1"
     },
     "anthropic": {
       "type": "anthropic",
-      "baseUrl": "https://api.anthropic.com",
-      "apiKeyEnv": "ANTHROPIC_API_KEY"
+      "baseUrl": "https://api.anthropic.com"
     }
   },
   "experts": [
@@ -184,20 +183,32 @@ cd admin-web && npm run build
 }
 ```
 
-### 环境变量（API Key）
+### 渠道 API Key 管理（keys.json）
 
-Key 只通过环境变量提供，`experts.json` 中 `apiKeyEnv` 指定变量名。本地开发可在根目录创建 `.env`（已通过 dotenv 自动加载，且被 gitignore）：
+渠道密钥**不再从环境变量读取**：存独立的 `keys.json`（默认与 `experts.json` 同目录，`TALKIO_KEYS_FILE` 可覆盖；已 gitignore），结构如下：
 
-```bash
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
-DEEPSEEK_API_KEY=sk-...
-
-# 管理后台登录令牌（SSE 模式必需；未设置时 /api/*、/sse、/messages 全部 401，fail-closed）
-TALKIO_ADMIN_TOKEN=change-me-to-a-long-random-string
+```jsonc
+{
+  "version": 1,
+  "providers": {
+    "custom": { "apiKey": "sk-...", "updatedAt": "2026-09-30T12:00:00.000Z" }
+  }
+}
 ```
 
-缺 key 的 Provider 在调用时惰性报错（`Provider X: missing env var Y`），不影响其他专家返回。
+管理端（SSE 模式，均位于 admin token 门禁之后）：
+
+| 接口 | 语义 |
+| --- | --- |
+| `GET /api/keys` | 掩码列表：`providerId` + `hasKey` + 指纹（尾 4 位）+ `updatedAt`，**无明文无哈希** |
+| `PUT /api/keys/:pid` | `{ "apiKey": "..." }` 写入；空串 = 清除；未知渠道 404；**写入即热生效** |
+
+`PUT /api/config`（experts.json）同样热生效：保存校验通过后进程内立即使用新配置，`restartRequired` 恒为 false，**无需重启**。
+
+- **缺 key 语义（fail-closed）**：调用报 `Provider X: missing key（管理后台-渠道页可配置）`；`list_cards` 中该卡 `ready: false` 且带 `missingReason` 指引，不影响其他卡。
+- **stdio 模式**：无 HTTP 面，编辑 `keys.json` 后重启 stdio 进程生效。
+- **从 0.2.0 迁移**：旧镜像从环境变量（如 `CUSTOM_API_KEY`）读 key。升级新镜像后，把原 env 值通过管理后台「Provider → API Key」写入（或直接编辑 `keys.json`）即可；compose 里的 env 条目可暂时保留——新代码不读 env，保留它只为 0.2.0 镜像回滚时密钥立即可用（`docker pull dockercom110/talkio-mcp:0.2.0` 原样 up 即回滚）。
+- experts.json 中遗留的 `apiKeyEnv` 字段会被宽容忽略并原样透传（保回滚兼容），新配置无需再写该字段。
 
 ## 鉴权与令牌
 
@@ -291,11 +302,8 @@ TALKIO_ADMIN_TOKEN=dev node scripts/smoke-sse.mjs
   "mcpServers": {
     "talkio-mcp": {
       "command": "node",
-      "args": ["/absolute/path/to/talkio_mcp/dist/index.js"],
-      "env": {
-        "OPENAI_API_KEY": "sk-...",
-        "ANTHROPIC_API_KEY": "sk-ant-..."
-      }
+      "args": ["/absolute/path/to/talkio_mcp/dist/index.js"]
+      // 渠道密钥不再经 env 注入：配置在管理后台或 keys.json（见「渠道 API Key 管理」）
     }
   }
 }
@@ -310,16 +318,14 @@ TALKIO_ADMIN_TOKEN=dev node scripts/smoke-sse.mjs
   "mcpServers": {
     "talkio-mcp": {
       "command": "node",
-      "args": ["/absolute/path/to/talkio_mcp/dist/index.js"],
-      "env": {
-        "OPENAI_API_KEY": "sk-..."
-      }
+      "args": ["/absolute/path/to/talkio_mcp/dist/index.js"]
+      // 渠道密钥不再经 env 注入：配置在管理后台或 keys.json
     }
   }
 }
 ```
 
-接入后先调用 `list_cards` 查看角色卡 id 与就绪状态，再把 id 传给 `consult_experts` / `brainstorm` 的 `cards` 参数。缺 key 的角色卡仍可显式指定，但该项会失败。
+接入后先调用 `list_cards` 查看角色卡 id 与就绪状态，再把 id 传给 `consult_experts` / `brainstorm` 的 `cards` 参数。未配置 API Key 的角色卡仍可显式指定，但该项会失败；在管理后台「Provider」页配置密钥后即时生效。
 
 ### Snow CLI
 
@@ -330,10 +336,8 @@ TALKIO_ADMIN_TOKEN=dev node scripts/smoke-sse.mjs
   "mcpServers": {
     "talkio-mcp": {
       "command": "node",
-      "args": ["/absolute/path/to/talkio_mcp/dist/index.js"],
-      "env": {
-        "OPENAI_API_KEY": "sk-..."
-      }
+      "args": ["/absolute/path/to/talkio_mcp/dist/index.js"]
+      // 渠道密钥不再经 env 注入：配置在管理后台或 keys.json
     }
   }
 }
@@ -454,7 +458,7 @@ consult 行：`cards`=实际咨询卡数，`ok`/`failed`=成功 / 失败条数�
 
 ### list_cards — 列出可用角色卡
 
-只读发现工具，不调用任何 AI Provider。默认只返回 `enabled: true` 的角色卡。每张卡带 `ready` 与解析出的专家名/模型名；缺 key 时仍列出，并标明缺哪个环境变量（`missingEnv`），不会从发现列表删除。
+只读发现工具，不调用任何 AI Provider。默认只返回 `enabled: true` 的角色卡。每张卡带 `ready` 与解析出的专家名/模型名；缺 key 时仍列出，并带 `missingReason`（未配置 API Key 的指引），不会从发现列表删除。
 
 | 参数              | 类型    | 必填 | 说明                             |
 | ----------------- | ------- | ---- | -------------------------------- |
@@ -599,16 +603,16 @@ docker build -t talkio-mcp .
 
 ### 运行容器
 
-注入 API 密钥与管理后台令牌（`TALKIO_ADMIN_TOKEN` 未设置时 HTTP 面 fail-closed，全部 401）：
+注入管理后台令牌（`TALKIO_ADMIN_TOKEN` 未设置时 HTTP 面 fail-closed，全部 401）。渠道 API Key 不再走 env：容器启动后打开管理后台「Provider」页直配（写入挂载目录的 `keys.json`，即时生效）：
 
 ```bash
-docker run -e OPENAI_API_KEY=sk-... -e TALKIO_ADMIN_TOKEN=<强随机字符串> -p 3100:3100 talkio-mcp
+docker run -e TALKIO_ADMIN_TOKEN=<强随机字符串> -p 3100:3100 talkio-mcp
 ```
 
-使用 env 文件（推荐，从 `.env.example` 复制后填真实密钥）：
+使用 env 文件（从 `.env.example` 复制，主要提供 `TALKIO_ADMIN_TOKEN`）：
 
 ```bash
-cp .env.example .env   # 填入真实密钥与 TALKIO_ADMIN_TOKEN
+cp .env.example .env   # 填入 TALKIO_ADMIN_TOKEN（渠道密钥在管理后台直配）
 docker run --env-file .env -p 3100:3100 talkio-mcp
 ```
 
@@ -641,10 +645,10 @@ cp .env.example .env   # 可选；不配密钥也可用 mock 模式，但务必�
 docker compose up -d
 ```
 
-`docker-compose.yml` 默认：构建当前目录镜像、映射 `3100:3100`、加载 `.env`（缺失不报错）、可写挂载 `./experts.json`、`restart: unless-stopped`。修改配置后需重启容器生效：
+`docker-compose.yml` 默认：构建当前目录镜像、映射 `3100:3100`、加载 `.env`（缺失不报错）、可写挂载 `./experts.json`、`restart: unless-stopped`。管理界面保存配置与密钥后**即时生效，无需重启**（keys.json / experts.json 与 experts.json 同目录落盘；若只挂载了 experts.json 单文件，请改为挂载目录，否则 keys.json 会落到容器层、重建即丢）：
 
 ```bash
-docker compose restart
+docker compose restart   # 仅在手工编辑容器内文件、或改 compose env 时需要
 ```
 
 > ⚠️ 公网部署务必注入 `TALKIO_ADMIN_TOKEN`（写在 `.env` 或 compose 的 `environment:` 段；1Panel 的 compose API 会清掉 `.env` 文件时直接内联 `environment:`）。部署/升级与令牌注入应在**同一次变更**内完成，避免出现无凭证窗口。MCP 令牌落盘在 experts.json 同目录 `mcp-tokens.json`，与 experts.json 同一挂载层级，重建容器不丢。
@@ -655,7 +659,7 @@ docker compose restart
 
 镜像内的 `/app/experts.json` 由仓库中脱敏的 `experts.default.json` 在构建时生成（保留全部内置专家人设，provider 指向 OpenAI 官方端点）。因此：
 
-- 只注入 `OPENAI_API_KEY` 即可开箱运行，或用 `TALKIO_MOCK_PROVIDER=1` 跑 mock；
+- 用 `TALKIO_MOCK_PROVIDER=1` 可跑 mock；真实调用需在管理后台「Provider」页直配 API Key（或挂载预填好的 `keys.json`）；
 - 想使用自己的专家 / 模型 / 角色卡，把本地 `experts.json` 挂载进容器覆盖即可（见上一节）；
 - 仓库只跟踪脱敏模板，本地真实 `experts.json` 继续被 `.gitignore` 忽略，既不会被提交，也不会进入镜像构建上下文。
 
